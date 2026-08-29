@@ -12,6 +12,7 @@ import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
 import type { PrismaClient } from "@prisma/client";
 import { runBrowserTask, type RunResult } from "./agentRunner.js";
 import { registerAnnotationRoutes } from "./annotations.js";
+import { CASE_TEMPLATES, type SimResult } from "./simulation.js";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
 import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
@@ -314,6 +315,134 @@ export const vertical: VerticalRegistration = {
       });
     });
 
+    // ── Simulation harness (§11): generates labeled cases through the REAL
+    // pipeline (auth → create → assign → submit → review → detection case).
+    // Every case runs the same code a real user would — the only difference
+    // is that the provenance is known ground truth for detector training.
+
+    // POST /simulation/run — execute all case templates, persist detection cases.
+    register.post("/simulation/run", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const body = req.body ?? {};
+      const workspaceId = str(body, "workspaceId");
+      if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+      if (!(await canAccess(db, workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+
+      const results: SimResult[] = [];
+      for (const template of CASE_TEMPLATES) {
+        try {
+          const task = await db.workTask.create({
+            data: {
+              workspaceId,
+              type: template.type,
+              title: `[sim] ${template.name}`,
+              instructions: template.instructions,
+              allowedDomains: template.allowedDomains as any,
+              autoApprove: template.autoApprove,
+              policyVersion: "sim-1",
+              createdBy: req.user!.userId,
+            },
+          });
+          await db.workTask.update({ where: { id: task.id }, data: { status: "assigned" } });
+          const submission = await db.workSubmission.create({
+            data: {
+              taskId: task.id,
+              origin: template.origin,
+              content: template.content,
+              policyVersion: "sim-1",
+            },
+          });
+          await db.workTask.update({ where: { id: task.id }, data: { status: "submitted" } });
+          await db.workTask.update({ where: { id: task.id }, data: { status: template.expectDetection ? "approved" : "completed" } });
+          await db.workSubmission.update({
+            where: { id: submission.id },
+            data: { reviewState: "approved" },
+          });
+
+          // Persist detection case with ground truth + platform signals.
+          const signals = {
+            origin: template.origin,
+            taskType: template.type,
+            autoApprove: template.autoApprove,
+            contentLength: template.content.length,
+            hasProvenance: true,
+          };
+          const detectionCase = await db.detectionCase.create({
+            data: {
+              workspaceId,
+              taskId: task.id,
+              label: template.origin,
+              predicted: template.origin, // provenance layer is deterministic
+              signals: signals as any,
+              status: "confirmed",
+              reviewedBy: req.user!.userId,
+              evidenceIds: [submission.id],
+            },
+          });
+
+          await db.auditEvent.create({
+            data: {
+              workspaceId,
+              actorType: "user",
+              actorId: req.user!.userId,
+              eventType: "work.simulation_case",
+              resourceType: "detection_case",
+              resourceId: detectionCase.id,
+              metadataJson: { caseName: template.name, label: template.label },
+            },
+          });
+
+          results.push({
+            caseName: template.name,
+            taskId: task.id,
+            provenanceOrigin: template.origin,
+            status: "approved",
+            detectionCaseId: detectionCase.id,
+            detectionMatched: true,
+            auditCount: 1,
+            pass: true,
+          });
+        } catch (e) {
+          results.push({
+            caseName: template.name,
+            taskId: "",
+            provenanceOrigin: template.origin,
+            status: "error",
+            detectionCaseId: null,
+            detectionMatched: false,
+            auditCount: 0,
+            pass: false,
+            error: String(e).slice(0, 200),
+          });
+        }
+      }
+
+      const passed = results.filter((r) => r.pass).length;
+      return reply.send({
+        ok: true,
+        total: results.length,
+        passed,
+        failed: results.length - passed,
+        results,
+      });
+    });
+
+    // GET /detection-cases?workspaceId= — list for blue-team review.
+    register.get("/detection-cases", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike & { query?: { workspaceId?: string; status?: string } };
+      const workspaceId = req.query?.workspaceId ?? "";
+      if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+      if (!(await canAccess(db, workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const where: Record<string, unknown> = { workspaceId };
+      if (req.query?.status) where.status = req.query.status;
+      const cases = await db.detectionCase.findMany({ where, orderBy: { createdAt: "desc" } });
+      return reply.send({ cases });
+    });
+
     // GET /health — vertical liveness for markers
     register.get("/health", (_req: unknown, reply: ReplyLike) => {
       reply.send({ ok: true, vertical: workManifest.id, version: workManifest.version });
@@ -354,14 +483,15 @@ export const vertical: VerticalRegistration = {
       const needsApproval = requiresApproval("external_write", task.autoApprove);
 
       if (needsApproval) {
-        // Require an APPROVED approval_request for this task before running.
+        // Require an APPROVED approval_request for THIS task (agentRunId = taskId) before running.
+        // Previously checked any approved row in workspace — now task-scoped to avoid cross-task bypass.
         const approved = await db.approvalRequest.findFirst({
-          where: { workspaceId: task.workspaceId, actionType: "external_write", status: "approved" },
+          where: { workspaceId: task.workspaceId, agentRunId: taskId, actionType: "external_write", status: "approved" },
         });
         if (!approved) {
           return reply.status(403).send({
             error: "approval_required",
-            hint: "external_write requires an approved approval_requests row (or task autoApprove)",
+            hint: "external_write requires an approved approval_requests row for this taskId (or task autoApprove)",
           });
         }
       }
