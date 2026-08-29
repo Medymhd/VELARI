@@ -280,3 +280,67 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
   font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em;
   text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
 }
+
+/* -- Billion-dollar polish: confidence colors, speaker bar, tabs, transitions -- */
+
+/* Confidence indicator on transcript segments */
+.conf-high { border-left-color: var(--success) !important; }
+.conf-med  { border-left-color: var(--warn) !important; }
+.conf-low  { border-left-color: var(--danger) !important; }
+
+/* Speaker talk-time split bar */
+.speaker-bar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--surface-3); gap: 2px;
+}
+.speaker-bar .seg { border-radius: 2px; transition: width var(--duration-med) var(--ease-spring); }
+.speaker-bar .seg.user { background: var(--accent); }
+.speaker-bar .seg.interviewer { background: var(--success); }
+
+/* Tab strip */
+.tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+}
+.tabs button {
+  border: none; background: none; color: var(--muted); padding: 8px 14px;
+  border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  font-size: 12.5px; font-weight: 550; transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.tabs button:hover { color: var(--text); }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Provider status dot */
+.provider-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--success); box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent);
+}
+
+/* Page crossfade */
+.screen-enter { animation: screenIn var(--duration-med) var(--ease-spring) both; }
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Insight arrival — accent flash + spring */
+.insight-arrive { animation: insightPop 0.35s var(--ease-spring) both; }
+@keyframes insightPop {
+  0% { opacity: 0; transform: translateY(8px) scale(0.98); border-color: var(--accent); }
+  60% { border-color: var(--accent); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Sidebar active-item glow */
+.nav-item.active {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-3));
+  border-left: 2px solid var(--accent);
+  padding-left: calc(10px - 2px);
+}
+
+/* Card hover micro-interaction */
+.card.hoverable { transition: transform 0.15s var(--ease-spring), box-shadow 0.15s ease, border-color 0.15s ease; }
+.card.hoverable:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+
+/* Transcript word-level highlight on partial ? final transition */
+.transcript .seg-enter { animation: segIn 0.2s ease both; }
+@keyframes segIn { from { opacity: 0; } to { opacity: 1; } }

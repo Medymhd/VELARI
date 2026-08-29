@@ -182,7 +182,7 @@ export default function App() {
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        actions={paletteActions(setScreen)}
+        actions={paletteActions}
       />
     </div>
   );
