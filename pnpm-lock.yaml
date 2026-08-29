@@ -41,6 +41,9 @@ importers:
       '@app/vertical-interview-intelligence':
         specifier: workspace:*
         version: link:../../verticals/interview-intelligence
+      '@app/vertical-work':
+        specifier: workspace:*
+        version: link:../../verticals/work
       '@aws-sdk/client-s3':
         specifier: ^3.1118.0
         version: 3.1118.0
@@ -332,6 +335,25 @@ importers:
         version: 5.9.3
 
   verticals/interview-intelligence:
+    dependencies:
+      '@app/agent-sdk':
+        specifier: workspace:*
+        version: link:../../packages/agent-sdk
+      '@app/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@app/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  verticals/work:
     dependencies:
       '@app/agent-sdk':
         specifier: workspace:*

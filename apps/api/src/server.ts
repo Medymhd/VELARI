@@ -19,6 +19,7 @@ import { VerticalManifest } from "@app/contracts";
 import { validateRegistration } from "@app/agent-sdk";
 import { vertical as interviewVertical } from "@app/vertical-interview-intelligence";
 import { vertical as codingVertical } from "@app/vertical-coding-assistant";
+import { vertical as velariWorkVertical } from "@app/vertical-work";
 
 const log = logger({ svc: "api" });
 
@@ -54,7 +55,7 @@ async function buildApp() {
   recallRoutes(app, prisma);
 
   // Vertical registry — validates each manifest and mounts under /v1/verticals/:id
-  const verticals = [interviewVertical, codingVertical];
+  const verticals = [interviewVertical, codingVertical, velariWorkVertical];
   for (const v of verticals) {
     const parsed = VerticalManifest.safeParse(v.manifest);
     if (!parsed.success) throw new Error(`${v.manifest.id} manifest invalid: ${parsed.error.message}`);
