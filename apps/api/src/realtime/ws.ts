@@ -12,10 +12,8 @@ import {
   createJudgeState,
   judgeSuggestion,
   type CoachFramework,
-  captureStyleProfile,
-  withStyle,
-  type StyleProfile,
 } from "@app/vertical-interview-intelligence";
+import { captureStyleProfile, withStyle, type StyleProfile } from "@app/ai-runtime";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
 
 const log = logger({ svc: "realtime" });
