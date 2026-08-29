@@ -62,20 +62,23 @@ async function buildApp() {
     if (problems.length > 0) throw new Error(`${v.manifest.id} registration problems: ${problems.join("; ")}`);
     await app.register(
       async (scope) => {
-        v.registerRoutes?.({
-          get(path: string, handler: never) {
-            scope.get(path, handler);
+        v.registerRoutes?.(
+          {
+            get(path: string, handler: never) {
+              scope.get(path, handler);
+            },
+            post(path: string, handler: never) {
+              scope.post(path, handler);
+            },
+            patch(path: string, handler: never) {
+              scope.patch(path, handler);
+            },
+            delete(path: string, handler: never) {
+              scope.delete(path, handler);
+            },
           },
-          post(path: string, handler: never) {
-            scope.post(path, handler);
-          },
-          patch(path: string, handler: never) {
-            scope.patch(path, handler);
-          },
-          delete(path: string, handler: never) {
-            scope.delete(path, handler);
-          },
-        });
+          { db: prisma },
+        );
       },
       { prefix: `/v1/verticals/${v.manifest.id}` },
     );

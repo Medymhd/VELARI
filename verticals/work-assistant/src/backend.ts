@@ -1,168 +1,318 @@
 /**
  * Work vertical backend — policy-gated commercial work.
- * Mirrors valeriworkvertical.md §5 work modes, §6 task model, §10 agent runtime.
- * Brand-neutral: uses neutral ids, no hard-coded product name.
- * Concise, senior-grade: strict types, handled errors, tests alongside.
+ * Mirrors valeriworkvertical.md §5 work modes, §6 task model + lifecycle,
+ * §10 agent runtime, §11 provenance/audit.
+ *
+ * Persistence: Prisma (WorkTask / WorkSubmission — schema §14 subset).
+ * Tenancy: every route resolves the caller's workspace membership from
+ * `req.user`; rows are workspace-scoped. Provenance is immutable and
+ * audited. Brand-neutral: neutral ids, no hard-coded product name.
  */
-import type { VerticalRegistration } from "@app/agent-sdk";
+import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
+import type { PrismaClient } from "@prisma/client";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
-import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
 
-type StoredTask = WorkTask & { createdBy: string };
+type Db = PrismaClient;
 
-// In-memory store for MVP — replace with Prisma task_templates/tasks when schema adds §14 entities.
-// Keeps the vertical decoupled per VELARI ARCHITECTURE.md §3 module rule.
-const tasks = new Map<string, StoredTask>();
+const TASK_TYPES = new Set([
+  "text_classification",
+  "document_extraction",
+  "image_annotation",
+  "video_annotation",
+  "audio_transcription",
+  "audio_quality_review",
+  "rubric_based_assessment",
+  "research_synthesis",
+  "policy_compliance_review",
+  "data_validation",
+  "customer_workflow_execution",
+  "code_review",
+  "workflow_execution",
+  "browser_task_execution",
+]);
 
-function nowIso(): string {
-  return new Date().toISOString();
+const ORIGINS = new Set(["human", "agent", "human_with_agent_assist", "simulation_adversarial"]);
+
+function str(body: Record<string, unknown>, key: string): string {
+  const v = body[key];
+  return typeof v === "string" ? v : "";
 }
 
-function newId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+function strArray(body: Record<string, unknown>, key: string): string[] {
+  const v = body[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-function policyFromReq(req: unknown): { allowedDomains: string[]; autoApprove: boolean; version: string } {
-  const body = (req as { body?: Record<string, unknown> }).body ?? {};
-  const query = (req as { query?: Record<string, unknown> }).query ?? {};
-  // Default blank [] for now; canonical outlierclone.io when populated — valeriworkvertical.md §5, §10
-  const allowedDomains = ((body.allowedDomains as string[] | undefined) ?? (query.allowedDomains as string[] | undefined) ?? []) as string[];
-  const autoApprove = Boolean((body.autoApprove as boolean | undefined) ?? (query.autoApprove as boolean | undefined) ?? false);
-  const version = (body.policyVersion as string | undefined) ?? "v1";
-  return { allowedDomains, autoApprove, version };
+interface RequestLike {
+  body?: Record<string, unknown>;
+  params?: Record<string, string>;
+  query?: Record<string, unknown>;
+  user?: { userId: string };
+}
+
+interface ReplyLike {
+  status(code: number): { send(body: unknown): unknown };
+  send(body: unknown): unknown;
+}
+
+/** Membership gate — Owner/Admin/Manager/Reviewer/Worker all pass; outsiders don't. */
+async function canAccess(db: Db, workspaceId: string, userId: string): Promise<boolean> {
+  const member = await db.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+  });
+  return Boolean(member);
 }
 
 export const vertical: VerticalRegistration = {
   manifest: workManifest,
-  registerRoutes(register) {
-    // POST /tasks — create work task (real client task or synthetic)
-    register.post("/tasks", (req, reply) => {
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const title = typeof body.title === "string" ? body.title : "Untitled work";
-      const type = typeof body.type === "string" ? (body.type as WorkTask["type"]) : "workflow_execution";
-      const instructions = typeof body.instructions === "string" ? body.instructions : "";
-      const workspaceId = (body.workspaceId as string) ?? "workspace-demo";
-      const { allowedDomains, autoApprove, version } = policyFromReq(req);
-      const task: StoredTask = {
-        id: newId(),
-        workspaceId,
-        templateId: (body.templateId as string) ?? "template-generic",
-        type,
-        status: "draft",
-        title,
-        instructions,
-        inputs: Array.isArray(body.inputs) ? (body.inputs as unknown[]) : [],
-        assignmentPolicy: { mode: "single" },
-        automationPolicy: { allowedTools: ["work.browser_task_execution"], allowedDomains, autoApprove, budget: { maxActions: 20 } },
-        simulationTag: (body.simulationTag as WorkTask["simulationTag"]) ?? "client_authorized",
-        policyVersion: version,
-        createdAt: nowIso(),
-        createdBy: "user-demo",
-      };
-      tasks.set(task.id, task);
-      (reply as { send(v: unknown): unknown }).send({ task });
+  registerRoutes(register, services) {
+    const db = services.db as PrismaClient;
+
+    // POST /tasks — create a work task in a workspace the caller belongs to.
+    register.post("/tasks", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const body = req.body ?? {};
+      const workspaceId = str(body, "workspaceId");
+      if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+      if (!(await canAccess(db, workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const type = str(body, "type") || "workflow_execution";
+      if (!TASK_TYPES.has(type)) {
+        return reply.status(400).send({ error: `unknown task type: ${type}` });
+      }
+      const task = await db.workTask.create({
+        data: {
+          workspaceId,
+          type,
+          title: str(body, "title") || "Untitled work",
+          instructions: str(body, "instructions"),
+          allowedDomains: strArray(body, "allowedDomains"),
+          autoApprove: body.autoApprove === true,
+          policyVersion: str(body, "policyVersion") || "v1",
+          createdBy: req.user!.userId,
+        },
+      });
+      return reply.status(201).send({ task });
     });
 
-    // GET /tasks — list
-    register.get("/tasks", (_req, reply) => {
-      (reply as { send(v: unknown): unknown }).send({ tasks: [...tasks.values()] });
+    // GET /tasks?workspaceId= — list tasks for one of the caller's workspaces.
+    register.get("/tasks", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike & { query?: { workspaceId?: string } };
+      const workspaceId = req.query?.workspaceId ?? "";
+      if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+      if (!(await canAccess(db, workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const tasks = await db.workTask.findMany({
+        where: { workspaceId },
+        orderBy: { createdAt: "desc" },
+      });
+      return reply.send({ tasks });
     });
 
     // GET /tasks/:id
-    register.get("/tasks/:id", (req, reply) => {
-      const { id } = (req as { params?: { id?: string } }).params ?? {};
-      const t = id ? tasks.get(id) : undefined;
-      if (!t) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "task not found" });
-      (reply as { send(v: unknown): unknown }).send({ task: t });
+    register.get("/tasks/:id", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const id = req.params?.id ?? "";
+      const task = await db.workTask.findUnique({ where: { id } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      return reply.send({ task });
     });
 
     // POST /tasks/:id/assign — draft → assigned
-    register.post("/tasks/:id/assign", (req, reply) => {
-      const { id } = (req as { params?: { id?: string } }).params ?? {};
-      const t = id ? tasks.get(id) : undefined;
-      if (!t) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "task not found" });
-      if (t.status !== "draft") return (reply as { status(n: number): { send(v: unknown): unknown } }).status(409).send({ error: `cannot assign from ${t.status}` });
-      t.status = "assigned";
-      (reply as { send(v: unknown): unknown }).send({ task: t });
-    });
-
-    // POST /tasks/:id/submit — in_progress/assigned → submitted (with provenance)
-    register.post("/tasks/:id/submit", (req, reply) => {
-      const { id } = (req as { params?: { id?: string } }).params ?? {};
-      const t = id ? tasks.get(id) : undefined;
-      if (!t) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "task not found" });
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const origin = (body.origin as string) ?? "human";
-      const provenance = { origin, policyVersion: t.policyVersion, reviewState: "unreviewed" as const };
-      t.status = "submitted";
-      (reply as { send(v: unknown): unknown }).send({ task: t, provenance });
-    });
-
-    // POST /tasks/:id/review — submitted → approved/returned (human approval or auto-approve)
-    register.post("/tasks/:id/review", (req, reply) => {
-      const { id } = (req as { params?: { id?: string } }).params ?? {};
-      const t = id ? tasks.get(id) : undefined;
-      if (!t) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "task not found" });
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const decision = body.decision === "returned" ? "returned" : "approved";
-      // Auto-approve path — major test with other team: when automationPolicy.autoApprove true, external_write auto-approves
-      const canAuto = t.automationPolicy.autoApprove;
-      if (decision === "approved" && !canAuto) {
-        // Manual approval required — caller must have manager/owner role (checked at API layer in real impl)
+    register.post("/tasks/:id/assign", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const id = req.params?.id ?? "";
+      const task = await db.workTask.findUnique({ where: { id } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
       }
-      t.status = decision === "approved" ? "approved" : "returned";
-      (reply as { send(v: unknown): unknown }).send({ task: t, decision, autoApproved: canAuto && decision === "approved" });
+      if (task.status !== "draft") {
+        return reply.status(409).send({ error: `cannot assign from ${task.status}` });
+      }
+      const updated = await db.workTask.update({ where: { id }, data: { status: "assigned" } });
+      return reply.send({ task: updated });
     });
 
-    // POST /browser/execute — bounded browser task on allowlisted domain (default [] blank for now)
-    // Demonstrates Google OAuth / email+password / API key vault patterns via credentialRef (secret_ref)
-    register.post("/browser/execute", (req, reply) => {
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const url = typeof body.url === "string" ? body.url : "";
-      const credentialRef = typeof body.credentialRef === "string" ? body.credentialRef : undefined;
-      const { allowedDomains, autoApprove } = policyFromReq(req);
-      if (!url) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "url required" });
-      if (!isAllowedDomain(url, allowedDomains)) {
-        return (reply as { status(n: number): { send(v: unknown): unknown } }).status(403).send({
-          error: "domain not allowlisted",
-          allowedDomains,
-          hint: "default is blank [] for now; set allowedDomains to [\"outlierclone.io\"] or client domain via workspaces/:id/policy",
+    // POST /tasks/:id/submit — lifecycle: draft/assigned → submitted, with
+    // immutable provenance (§6: origin is one of the declared values).
+    register.post("/tasks/:id/submit", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const id = req.params?.id ?? "";
+      const task = await db.workTask.findUnique({ where: { id } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const body = req.body ?? {};
+      const origin = str(body, "origin") || "human";
+      if (!ORIGINS.has(origin)) {
+        return reply.status(400).send({ error: `invalid origin: ${origin}` });
+      }
+      if (task.status !== "draft" && task.status !== "assigned") {
+        return reply.status(409).send({ error: `cannot submit from ${task.status}` });
+      }
+      const submission = await db.workSubmission.create({
+        data: {
+          taskId: id,
+          origin,
+          content: str(body, "content"),
+          policyVersion: task.policyVersion,
+        },
+      });
+      const updated = await db.workTask.update({ where: { id }, data: { status: "submitted" } });
+      await db.auditEvent.create({
+        data: {
+          workspaceId: task.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.submitted",
+          resourceType: "work_task",
+          resourceId: id,
+          metadataJson: { origin, submissionId: submission.id },
+        },
+      });
+      return reply.send({
+        task: updated,
+        provenance: {
+          id: submission.id,
+          origin,
+          policyVersion: task.policyVersion,
+          reviewState: submission.reviewState,
+        },
+      });
+    });
+
+    // POST /tasks/:id/review — submitted → approved/returned; reviewState is
+    // recorded per submission (§7 human-approval workflow).
+    register.post("/tasks/:id/review", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const id = req.params?.id ?? "";
+      const task = await db.workTask.findUnique({ where: { id } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const body = req.body ?? {};
+      const decision = body.decision === "returned" ? "returned" : "approved";
+      if (task.status !== "submitted") {
+        return reply.status(409).send({ error: `cannot review from ${task.status}` });
+      }
+      const lastSubmission = await db.workSubmission.findFirst({
+        where: { taskId: id },
+        orderBy: { createdAt: "desc" },
+      });
+      if (lastSubmission) {
+        await db.workSubmission.update({
+          where: { id: lastSubmission.id },
+          data: { reviewState: decision === "approved" ? "approved" : "returned" },
         });
       }
-      const needsApproval = requiresApproval("external_write", autoApprove);
-      // Vaulted credential — never log raw, only secret_ref pattern (VELARI ARCHITECTURE.md §5)
-      const credentialKind = credentialRef ? (credentialRef.startsWith("oauth:") ? "google_api" : credentialRef.startsWith("apikey:") ? "api_key" : "email_password") : "none";
-      (reply as { send(v: unknown): unknown }).send({
+      const updated = await db.workTask.update({ where: { id }, data: { status: decision } });
+      await db.auditEvent.create({
+        data: {
+          workspaceId: task.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.reviewed",
+          resourceType: "work_task",
+          resourceId: id,
+          metadataJson: { decision, autoApproved: task.autoApprove && decision === "approved" },
+        },
+      });
+      return reply.send({
+        task: updated,
+        decision,
+        autoApproved: task.autoApprove && decision === "approved",
+      });
+    });
+
+    // POST /browser/execute — bounded browser task. Policy comes from the
+    // TASK RECORD (never the request body): allowedDomains + autoApprove are
+    // stored at creation, so callers cannot widen their own allowlist.
+    register.post("/browser/execute", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const body = req.body ?? {};
+      const url = str(body, "url");
+      const taskId = str(body, "taskId");
+      if (!url) return reply.status(400).send({ error: "url required" });
+      if (!taskId) return reply.status(400).send({ error: "taskId required" });
+      const task = await db.workTask.findUnique({ where: { id: taskId } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+
+      const allowedDomains = (task.allowedDomains as unknown as string[]) ?? [];
+      if (!isAllowedDomain(url, allowedDomains)) {
+        return reply.status(403).send({
+          error: "domain not allowlisted",
+          allowedDomains,
+          hint: 'set the task allowedDomains to ["outlierclone.io"] or a client domain at creation',
+        });
+      }
+
+      const credentialRef = str(body, "credentialRef") || undefined;
+      const credentialKind = credentialRef
+        ? credentialRef.startsWith("oauth:")
+          ? "google_api"
+          : credentialRef.startsWith("apikey:")
+            ? "api_key"
+            : "email_password"
+        : "none";
+
+      const needsApproval = requiresApproval("external_write", task.autoApprove);
+      let approvalId: string | null = null;
+      let approval: string;
+      if (needsApproval) {
+        const request = await db.approvalRequest.create({
+          data: {
+            workspaceId: task.workspaceId,
+            agentRunId: taskId,
+            actionType: "external_write",
+            payloadJson: { url, taskId, credentialKind } as any,
+            status: "pending",
+          },
+        });
+        approvalId = request.id;
+        approval = "pending";
+      } else {
+        approval = "auto_approved";
+      }
+
+      await db.auditEvent.create({
+        data: {
+          workspaceId: task.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.browser_execute",
+          resourceType: "work_task",
+          resourceId: taskId,
+          metadataJson: { url, credentialKind, approval, approvalId } as any,
+        },
+      });
+
+      // Execution (Playwright runner) is a later phase — this returns the
+      // policy decision + approval checkpoint, redacting credential material.
+      return reply.send({
         ok: true,
         url,
         allowed: true,
         credentialKind,
-        approval: needsApproval ? "pending" : "auto_approved",
-        message: needsApproval ? "workflow requires approval_requests pending → approved" : "auto-approve enabled via policy — major test path",
+        approval,
+        ...(approvalId ? { approvalId } : {}),
       });
     });
 
     // GET /health — vertical liveness for markers
-    register.get("/health", (_req, reply) => {
-        (reply as { send(v: unknown): unknown }).send({ ok: true, vertical: workManifest.id, version: workManifest.version, tasks: tasks.size });
-    });
-
-    // POST /code/explain — coding category (merged from coding-assistant)
-    register.post("/code/explain", (req, reply) => {
-        const body = (req as { body?: { code?: string; language?: string } }).body ?? {};
-        if (!body.code) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "code required" });
-        (reply as { send(v: unknown): unknown }).send({ messages: buildCodeExplainMessages(body.code, body.language) });
-    });
-
-    // POST /code/review — coding category
-    register.post("/code/review", (req, reply) => {
-        const body = (req as { body?: { code?: string } }).body ?? {};
-        if (!body.code) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "code required" });
-        (reply as { send(v: unknown): unknown }).send({ messages: buildCodeReviewMessages(body.code) });
+    register.get("/health", (_req: unknown, reply: ReplyLike) => {
+      reply.send({ ok: true, vertical: workManifest.id, version: workManifest.version });
     });
   },
 };
-
-export { workManifest as velariWorkManifest };
-export * from "./types.js";

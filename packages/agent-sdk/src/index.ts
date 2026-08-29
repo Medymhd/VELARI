@@ -30,8 +30,16 @@ export interface AgentToolImpl {
 export interface VerticalRegistration {
   manifest: VerticalManifest;
   tools?: AgentToolImpl[];
-  /** Fastify-compatible route factory: receives the scoped prefix path. */
-  registerRoutes?: (app: RouteRegistrar) => void;
+  /** Fastify-compatible route factory: receives the scoped prefix path and
+   *  platform services (db). Verticals stay decoupled from Prisma imports. */
+  registerRoutes?: (app: RouteRegistrar, services: VerticalServices) => void;
+}
+
+/** Platform services handed to verticals at mount time. */
+export interface VerticalServices {
+  /** PrismaClient instance — typed as unknown here to keep the SDK
+   *  framework- and ORM-agnostic; verticals narrow it on their side. */
+  db: unknown;
 }
 
 /**

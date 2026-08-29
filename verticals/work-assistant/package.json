@@ -13,7 +13,7 @@
   "dependencies": {
     "@app/agent-sdk": "workspace:*",
     "@app/contracts": "workspace:*",
-    "@app/domain": "workspace:*"
+    "@prisma/client": "^6.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

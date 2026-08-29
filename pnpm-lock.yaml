@@ -342,9 +342,9 @@ importers:
       '@app/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@app/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
+      '@prisma/client':
+        specifier: ^6.2.1
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.10.5

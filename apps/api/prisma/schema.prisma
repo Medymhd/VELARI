@@ -209,6 +209,41 @@ model AuditEvent {
   @@map("audit_events")
 }
 
+/// Work vertical — task lifecycle (valeriworkvertical.md §6).
+model WorkTask {
+  id             String   @id @default(uuid())
+  workspaceId    String   @map("workspace_id")
+  type           String
+  status         String   @default("draft")
+  title          String
+  instructions   String   @default("")
+  allowedDomains Json     @default("[]")
+  autoApprove    Boolean  @default(false)
+  policyVersion  String   @default("v1") @map("policy_version")
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  submissions WorkSubmission[]
+  @@index([workspaceId, createdAt])
+  @@map("work_tasks")
+}
+
+/// Immutable provenance per submission (§6, §11 — blue-team evidence).
+model WorkSubmission {
+  id            String   @id @default(uuid())
+  taskId        String   @map("task_id")
+  origin        String
+  content       String   @default("")
+  reviewState   String   @default("unreviewed") @map("review_state")
+  policyVersion String   @map("policy_version")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  task WorkTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("work_submissions")
+}
+
 /// Vector recall for interview sessions (pgvector). Embeddings are written
 /// via raw SQL (Prisma has no vector client type); dim is fixed at 256 —
 /// the free lexical embedder's native size. Swapping in a cloud embedding
