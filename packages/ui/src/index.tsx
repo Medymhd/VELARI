@@ -90,3 +90,34 @@ export function Keyframes(): ReactNode {
     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
   );
 }
+
+// Premium primitives — @app/ui single source, no per-vertical duplication (Phase A)
+// Used by interview, work, research, code, sheet — spring motion + skeleton replace Spinner-only
+export function Skeleton(props: { width?: string; height?: string; radius?: string }): ReactNode {
+  return <div className="skeleton" style={{ width: props.width ?? "100%", height: props.height ?? "14px", borderRadius: props.radius ?? "var(--radius-sm)" }} />;
+}
+
+export function MotionCard(props: { children: ReactNode; delay?: number }): ReactNode {
+  return (
+    <div className="card fade-in" style={{ animationDelay: `${props.delay ?? 0}s` }}>
+      {props.children}
+    </div>
+  );
+}
+
+export function Section(props: { kicker?: string; title?: ReactNode; actions?: ReactNode; children: ReactNode }): ReactNode {
+  return (
+    <div className="card col">
+      {(props.kicker || props.title) && (
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            {props.kicker && <span className="kicker">{props.kicker}</span>}
+            {props.title && <h3 style={{ margin: "4px 0 0" }}>{props.title}</h3>}
+          </div>
+          {props.actions}
+        </div>
+      )}
+      {props.children}
+    </div>
+  );
+}

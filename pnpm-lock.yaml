@@ -228,6 +228,15 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/assessment-engine:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/audio-runtime:
     dependencies:
       '@huggingface/transformers':
@@ -315,6 +324,15 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/work-runtime:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   verticals/interview-intelligence:
     dependencies:
       '@app/agent-sdk':
@@ -339,9 +357,15 @@ importers:
       '@app/agent-sdk':
         specifier: workspace:*
         version: link:../../packages/agent-sdk
+      '@app/assessment-engine':
+        specifier: workspace:*
+        version: link:../../packages/assessment-engine
       '@app/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@app/work-runtime':
+        specifier: workspace:*
+        version: link:../../packages/work-runtime
       '@prisma/client':
         specifier: ^6.2.1
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)

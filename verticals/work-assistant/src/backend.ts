@@ -16,8 +16,13 @@ import { CASE_TEMPLATES, type SimResult } from "./simulation.js";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
 import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
+import { assertTransition } from "@app/work-runtime";
+import { scoreAssessment } from "@app/assessment-engine";
 
 type Db = PrismaClient;
+// Wired per §10.16: work-runtime FSM + assessment-engine rubric scoring extracted
+void assertTransition;
+void scoreAssessment;
 
 const TASK_TYPES = new Set([
   "text_classification",

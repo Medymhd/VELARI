@@ -75,4 +75,60 @@ export function validateRegistration(reg: VerticalRegistration): string[] {
   return problems;
 }
 
+// ── Shared vertical helpers (hoisted from work-assistant §E) ──────────────
+
+/** Narrow `services.db` to a typed facade without importing Prisma in verticals. */
+export interface WorkspaceDb {
+  workspaceMember: {
+    findUnique(args: { where: { workspaceId_userId: { workspaceId: string; userId: string } } }): Promise<unknown>;
+  };
+  auditEvent: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+}
+
+/** Tenancy gate — returns true if the user is a member of the workspace. */
+export async function canAccessWorkspace(db: unknown, workspaceId: string, userId: string): Promise<boolean> {
+  const wdb = db as WorkspaceDb;
+  const member = await wdb.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+  });
+  return Boolean(member);
+}
+
+/** Write an audit event (fire-and-forget — audit must never break the route). */
+export async function writeVerticalAudit(db: unknown, entry: {
+  workspaceId: string;
+  actorId: string;
+  eventType: string;
+  resourceType: string;
+  resourceId: string;
+  metadataJson?: Record<string, unknown>;
+}): Promise<void> {
+  const wdb = db as WorkspaceDb;
+  try {
+    await wdb.auditEvent.create({
+      data: { ...entry, actorType: "user" },
+    });
+  } catch {
+    // audit must never break the route
+  }
+}
+
+/** Domain allowlist check — default blank [] blocks until policy is set. */
+export function isDomainAllowed(url: string, allowedDomains: string[]): boolean {
+  if (allowedDomains.length === 0) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/** Approval gate: external_write requires approval unless autoApprove is set. */
+export function needsApproval(risk: string, autoApprove: boolean): boolean {
+  return risk === "external_write" && !autoApprove;
+}
+
 

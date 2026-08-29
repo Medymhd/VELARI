@@ -21,8 +21,30 @@
   --radius-sm: 10px;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 10px 40px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --shadow-glass: 0 18px 60px rgba(0, 0, 0, 0.55);
   --ring: 0 0 0 3px rgba(108, 123, 255, 0.25);
   --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Premium spacing + blur + motion + z-index — @app/ui single source, no per-vertical duplication */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --blur-sm: 8px;
+  --blur-md: 14px;
+  --blur-lg: 18px;
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.15s;
+  --duration-med: 0.22s;
+  --duration-slow: 0.4s;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --sidebar-width: 232px;
+  --content-width: 1080px;
+  --text-xs: 11px;
+  --text-sm: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -145,7 +167,7 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 /* ── App shell: sidebar + content ─────────────────────────────────── */
 .shell { display: flex; height: 100vh; }
 .sidebar {
-  width: 232px; flex: none; display: flex; flex-direction: column; gap: 4px;
+  width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; gap: 4px;
   padding: 18px 14px; border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
 }
@@ -171,7 +193,7 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 }
 .sidebar .foot { margin-top: auto; padding: 10px 8px 0; border-top: 1px solid var(--border); }
 .content { flex: 1; min-width: 0; overflow-y: auto; }
-.content-inner { max-width: 1080px; margin: 0 auto; padding: 28px; }
+.content-inner { max-width: var(--content-width); margin: 0 auto; padding: 28px; }
 
 /* ── Page header ──────────────────────────────────────────────────── */
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
@@ -203,8 +225,23 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 .scroll > div { animation: fadeSlide 0.22s ease both; }
 
 .topbar {
-  position: sticky; top: 0; z-index: 20;
-  backdrop-filter: blur(14px);
+  position: sticky; top: 0; z-index: var(--z-overlay);
+  backdrop-filter: blur(var(--blur-md));
   background: color-mix(in srgb, var(--bg) 78%, transparent);
   border-bottom: 1px solid var(--border);
+}
+
+/* Premium motion — spring + skeleton — @app/ui only, no per-vertical duplication */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition: none !important; }
 }

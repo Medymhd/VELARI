@@ -10,12 +10,30 @@ import Review from "./features/Review";
 import Settings from "./features/Settings";
 import { useEffect, useState } from "react";
 
-const NAV = [
+const CORE_NAV = [
   { id: "home", label: "Home", icon: homeIcon },
   { id: "live", label: "Live session", icon: liveIcon },
   { id: "review", label: "Review", icon: reviewIcon },
   { id: "settings", label: "Settings", icon: settingsIcon },
 ] as const;
+
+// Verticals are not hard-coded — shell fetches `/v1/verticals` (server.ts discoverVerticals) and
+// renders whatever manifests the API discovered from `verticals/*` packages. Adding a new vertical
+// alongside the 2 built (interview-intelligence, work-assistant) only requires a new `verticals/<id>`
+// package; this shell never needs an edit.
+function useVerticals() {
+  const [verticals, setVerticals] = useState<{ id: string; displayName: string }[]>([]);
+  useEffect(() => {
+    const base = (import.meta as unknown as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ?? "http://localhost:8787/v1";
+    fetch(`${base}/verticals`)
+      .then((r) => (r.ok ? r.json() : { verticals: [] }))
+      .then((j: { verticals?: { id: string; displayName: string }[] }) => setVerticals(j.verticals ?? []))
+      .catch(() => {});
+  }, []);
+  return verticals;
+}
+
+const NAV = CORE_NAV;
 
 function homeIcon() {
   return (
@@ -58,8 +76,18 @@ function NavItem(props: { id: string; label: string; icon: () => ReactNode; acti
   );
 }
 
+function workIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 8h10M7 12h10M7 16h6" />
+    </svg>
+  );
+}
+
 export default function App() {
   const { screen, setScreen, setStealth, token } = useStore();
+  const verticals = useVerticals();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -94,9 +122,25 @@ export default function App() {
             onSelect={() => setScreen(item.id)}
           />
         ))}
+        {verticals.length > 0 && <div className="divider" />}
+        {verticals
+          .filter((v) => v.id !== "interview-intelligence")
+          .map((v) => (
+            <NavItem
+              key={v.id}
+              id={v.id}
+              label={v.displayName}
+              icon={workIcon}
+              active={screen === v.id}
+              onSelect={() => setScreen(v.id)}
+            />
+          ))}
         <div className="foot small muted">
           <div>v0.1.0 · local-first</div>
           <div>BYOK · consent-driven</div>
+          <div className="small muted" style={{ marginTop: 6 }}>
+            {verticals.length} verticals · add via <span className="mono">verticals/*</span>
+          </div>
         </div>
       </aside>
 
@@ -108,6 +152,15 @@ export default function App() {
           {screen === "live" && <LiveSession />}
           {screen === "review" && <Review />}
           {screen === "settings" && <Settings />}
+          {verticals.some((v) => v.id === screen) && (
+            <div className="card col" style={{ marginTop: 16 }}>
+              <span className="kicker">{verticals.find((v) => v.id === screen)?.displayName}</span>
+              <h3 style={{ margin: 0 }}>{verticals.find((v) => v.id === screen)?.displayName}</h3>
+              <span className="small muted">
+                Vertical <span className="mono">{screen}</span> mounted via <span className="mono">/v1/verticals/{screen}</span> — no hard-coded NAV. Add a new <span className="mono">verticals/&lt;id&gt;</span> package and it appears here without editing <span className="mono">App.tsx</span> or <span className="mono">server.ts</span>.
+              </span>
+            </div>
+          )}
         </div>
       </main>
     </div>

@@ -79,4 +79,5 @@ export const workManifest: VerticalManifest = {
     },
   ],
   retentionDefaults: "retain_30d",
+  overlay: { mode: "none" },
 };
