@@ -7,6 +7,7 @@
 import type { VerticalRegistration } from "@app/agent-sdk";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
+import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
 
 type StoredTask = WorkTask & { createdBy: string };
 
@@ -145,6 +146,20 @@ export const vertical: VerticalRegistration = {
     // GET /health — vertical liveness for markers
     register.get("/health", (_req, reply) => {
         (reply as { send(v: unknown): unknown }).send({ ok: true, vertical: workManifest.id, version: workManifest.version, tasks: tasks.size });
+    });
+
+    // POST /code/explain — coding category (merged from coding-assistant)
+    register.post("/code/explain", (req, reply) => {
+        const body = (req as { body?: { code?: string; language?: string } }).body ?? {};
+        if (!body.code) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "code required" });
+        (reply as { send(v: unknown): unknown }).send({ messages: buildCodeExplainMessages(body.code, body.language) });
+    });
+
+    // POST /code/review — coding category
+    register.post("/code/review", (req, reply) => {
+        const body = (req as { body?: { code?: string } }).body ?? {};
+        if (!body.code) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "code required" });
+        (reply as { send(v: unknown): unknown }).send({ messages: buildCodeReviewMessages(body.code) });
     });
   },
 };

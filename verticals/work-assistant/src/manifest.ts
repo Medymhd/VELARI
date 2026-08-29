@@ -21,6 +21,8 @@ export const workManifest: VerticalManifest = {
     { method: "POST", path: "/tasks/:id/review", handlerId: "tasks.review" },
     { method: "POST", path: "/rubrics", handlerId: "rubrics.create" },
     { method: "GET", path: "/rubrics/:id", handlerId: "rubrics.get" },
+    { method: "POST", path: "/code/explain", handlerId: "code.explain" },
+    { method: "POST", path: "/code/review", handlerId: "code.review" },
   ],
   tools: [
     {
@@ -50,6 +52,20 @@ export const workManifest: VerticalManifest = {
         required: ["taskId", "rubricId"],
       },
       risk: "read",
+    },
+    {
+      id: "work.code_suggest_fix",
+      description: "Coding work: propose a concrete fix for reviewed code (merged from the coding-assistant vertical).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          language: { type: "string" },
+          code: { type: "string" },
+        },
+        required: ["taskId", "code"],
+      },
+      risk: "external_write",
     },
   ],
   retentionDefaults: "retain_30d",

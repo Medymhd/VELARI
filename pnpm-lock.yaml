@@ -35,15 +35,12 @@ importers:
       '@app/security':
         specifier: workspace:*
         version: link:../../packages/security
-      '@app/vertical-coding-assistant':
-        specifier: workspace:*
-        version: link:../../verticals/coding-assistant
       '@app/vertical-interview-intelligence':
         specifier: workspace:*
         version: link:../../verticals/interview-intelligence
-      '@app/vertical-work':
+      '@app/vertical-work-assistant':
         specifier: workspace:*
-        version: link:../../verticals/work
+        version: link:../../verticals/work-assistant
       '@aws-sdk/client-s3':
         specifier: ^3.1118.0
         version: 3.1118.0
@@ -318,22 +315,6 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  verticals/coding-assistant:
-    dependencies:
-      '@app/agent-sdk':
-        specifier: workspace:*
-        version: link:../../packages/agent-sdk
-      '@app/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.5
-        version: 22.20.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
   verticals/interview-intelligence:
     dependencies:
       '@app/agent-sdk':
@@ -353,7 +334,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  verticals/work:
+  verticals/work-assistant:
     dependencies:
       '@app/agent-sdk':
         specifier: workspace:*
