@@ -180,24 +180,6 @@ model AgentRun {
   @@map("agent_runs")
 }
 
-/// Detection cases (valeriworkvertical.md §11) — ground-truth labeled cases
-/// for blue-team detector training. Evidence links to audit_events.
-model DetectionCase {
-  id          String   @id @default(uuid())
-  workspaceId String   @map("workspace_id")
-  taskId      String   @map("task_id")
-  label       String
-  predicted   String?
-  signals     Json     @default("{}") @map("signals_json")
-  status      String   @default("open")
-  reviewedBy  String?  @map("reviewed_by")
-  evidenceIds Json     @default("[]") @map("evidence_ids")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  @@index([workspaceId, status])
-  @@map("detection_cases")
-}
-
 model ApprovalRequest {
   id          String    @id @default(uuid())
   workspaceId String    @map("workspace_id")
