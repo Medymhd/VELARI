@@ -8,6 +8,20 @@ import type {
   VerticalManifest,
 } from "@app/contracts";
 
+function parseHost(url: string): string | null {
+  try {
+    const idx = url.indexOf("://");
+    if (idx === -1) return null;
+    const rest = url.slice(idx + 3);
+    const slashIdx = rest.indexOf("/");
+    const host = (slashIdx === -1 ? rest : rest.slice(0, slashIdx)).toLowerCase();
+    const colonIdx = host.indexOf(":");
+    return colonIdx === -1 ? host : host.slice(0, colonIdx);
+  } catch {
+    return null;
+  }
+}
+
 export interface ToolContext {
   workspaceId: string;
   userId: string;
@@ -118,12 +132,9 @@ export async function writeVerticalAudit(db: unknown, entry: {
 /** Domain allowlist check — default blank [] blocks until policy is set. */
 export function isDomainAllowed(url: string, allowedDomains: string[]): boolean {
   if (allowedDomains.length === 0) return false;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
-  } catch {
-    return false;
-  }
+  const host = parseHost(url);
+  if (!host) return false;
+  return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
 /** Approval gate: external_write requires approval unless autoApprove is set. */
