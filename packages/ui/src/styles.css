@@ -245,3 +245,38 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition: none !important; }
 }
+
+/* -- Premium motion + skeleton + stagger (Phase A) -- */
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.15s; --duration-med: 0.22s;
+  --z-overlay: 40; --z-modal: 50;
+  --text-xs: 11px; --text-sm: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.stagger > * { animation: fadeSlide var(--duration-med, 0.22s) var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.09s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.15s; }
+.stagger > *:nth-child(6) { animation-delay: 0.18s; }
+
+.section-label {
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+}

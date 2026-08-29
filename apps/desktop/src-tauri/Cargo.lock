@@ -74,6 +74,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cpal",
  "image 0.25.10",
  "ringbuf",

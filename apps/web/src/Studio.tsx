@@ -31,6 +31,8 @@ export default function Studio() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [agentRunId, setAgentRunId] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<string | null>(null);
 
   const [taskTitle, setTaskTitle] = useState("");
   const [taskType, setTaskType] = useState<string>("text_classification");
@@ -104,6 +106,35 @@ export default function Studio() {
     }
   }
 
+  async function runAgent(taskId: string) {
+    if (!taskId) return;
+    setBusy(true); setAgentStatus(null); setAgentRunId(null);
+    try {
+      const url = taskDomains.split(",")[0]?.trim() || "https://outlierclone.io";
+      const credentialRef = `apikey:${process.env.VITE_AGENT_API_KEY ?? "dev-key"}`;
+      const res = await api<{ run: { id: string; status: string; result?: string } }>("/verticals/work/agent-runs", {
+        method: "POST",
+        body: JSON.stringify({ taskId, url, credentialRef }),
+      });
+      setAgentRunId(res.run.id);
+      setAgentStatus(res.run.status);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stopAgent(runId: string) {
+    setBusy(true);
+    try {
+      await api(`/verticals/work/agent-runs/${runId}/stop`, { method: "POST" });
+      setAgentStatus("stopped");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="col">
       <PageHeader
@@ -153,9 +184,31 @@ export default function Studio() {
                 <span style={{ fontWeight: 550, fontSize: 13 }}>{t.title}</span>
                 <span className="small muted mono">{t.id.slice(0, 8)} · {t.type}</span>
               </div>
-              <StatusPill status={t.status} />
+              <div className="row" style={{ gap: 6 }}>
+                <StatusPill status={t.status} />
+                {t.status !== "approved" && t.status !== "completed" && (
+                  <button className="ghost" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => void runAgent(t.id)} disabled={busy}>
+                    Run agent
+                  </button>
+                )}
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {agentRunId && (
+        <div className="card col fade-in">
+          <span className="kicker">Agent run</span>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span className="small mono">{agentRunId}</span>
+            <span className="badge accent">{agentStatus}</span>
+          </div>
+          {agentStatus === "running" && (
+            <button className="ghost" style={{ color: "var(--danger)" }} onClick={() => void stopAgent(agentRunId)}>
+              Stop (kill switch)
+            </button>
+          )}
         </div>
       )}
 
