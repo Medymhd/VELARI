@@ -23,6 +23,10 @@ export const workManifest: VerticalManifest = {
     { method: "GET", path: "/rubrics/:id", handlerId: "rubrics.get" },
     { method: "POST", path: "/code/explain", handlerId: "code.explain" },
     { method: "POST", path: "/code/review", handlerId: "code.review" },
+    { method: "POST", path: "/agent-runs", handlerId: "agent-runs.create" },
+    { method: "GET", path: "/agent-runs/:runId", handlerId: "agent-runs.get" },
+    { method: "POST", path: "/agent-runs/:runId/approve", handlerId: "agent-runs.approve" },
+    { method: "POST", path: "/agent-runs/:runId/stop", handlerId: "agent-runs.stop" },
   ],
   tools: [
     {

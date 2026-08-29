@@ -243,7 +243,6 @@ model WorkSubmission {
   @@index([taskId])
   @@map("work_submissions")
 }
-
 /// Vector recall for interview sessions (pgvector). Embeddings are written
 /// via raw SQL (Prisma has no vector client type); dim is fixed at 256 —
 /// the free lexical embedder's native size. Swapping in a cloud embedding

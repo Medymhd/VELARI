@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { registerAuth } from "./auth.js";
+import { secretBox } from "./secrets.js";
 import { authRoutes } from "./routes/auth.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { providerRoutes } from "./routes/providers.js";
@@ -77,7 +78,24 @@ async function buildApp() {
               scope.delete(path, handler);
             },
           },
-          { db: prisma },
+          {
+            db: prisma,
+            openSecret: (credentialRef: string) => {
+              // credentialRef = "<kind>:<secret_ref or inline secret>". Sealed
+              // v1.* payloads resolve through the vault; inline plaintext (dev)
+              // passes through. The result is never logged.
+              const idx = credentialRef.indexOf(":");
+              const payload = idx === -1 ? credentialRef : credentialRef.slice(idx + 1);
+              if (payload.startsWith("v1.")) {
+                try {
+                  return secretBox.open(payload);
+                } catch {
+                  return null;
+                }
+              }
+              return payload || null;
+            },
+          },
         );
       },
       { prefix: `/v1/verticals/${v.manifest.id}` },

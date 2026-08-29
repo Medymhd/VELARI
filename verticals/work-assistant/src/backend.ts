@@ -10,8 +10,10 @@
  */
 import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
 import type { PrismaClient } from "@prisma/client";
+import { runBrowserTask, type RunResult } from "./agentRunner.js";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
+import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
 
 type Db = PrismaClient;
 
@@ -68,6 +70,7 @@ export const vertical: VerticalRegistration = {
   manifest: workManifest,
   registerRoutes(register, services) {
     const db = services.db as PrismaClient;
+    const openSecret = services.openSecret ?? (() => null);
 
     // POST /tasks — create a work task in a workspace the caller belongs to.
     register.post("/tasks", async (rawReq: unknown, reply: ReplyLike) => {
@@ -313,6 +316,134 @@ export const vertical: VerticalRegistration = {
     // GET /health — vertical liveness for markers
     register.get("/health", (_req: unknown, reply: ReplyLike) => {
       reply.send({ ok: true, vertical: workManifest.id, version: workManifest.version });
+    });
+
+    // ── Agent runs (§10, §13) — bounded execution of approved browser tasks.
+
+    // POST /agent-runs — create + execute a bounded run for an approved task.
+    register.post("/agent-runs", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const body = req.body ?? {};
+      const taskId = str(body, "taskId");
+      const url = str(body, "url");
+      if (!taskId || !url) return reply.status(400).send({ error: "taskId and url required" });
+      const task = await db.workTask.findUnique({ where: { id: taskId } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const allowedDomains = (task.allowedDomains as unknown as string[]) ?? [];
+      if (!isAllowedDomain(url, allowedDomains)) {
+        return reply.status(403).send({ error: "domain not allowlisted", allowedDomains });
+      }
+      if (task.status === "approved" || task.status === "completed") {
+        return reply.status(409).send({ error: `task is ${task.status}; no further runs` });
+      }
+
+      const credentialRef = str(body, "credentialRef") || undefined;
+      const credentialKind = credentialRef
+        ? credentialRef.startsWith("oauth:")
+          ? "google_api"
+          : credentialRef.startsWith("apikey:")
+            ? "api_key"
+            : "email_password"
+        : "none";
+      const needsApproval = requiresApproval("external_write", task.autoApprove);
+
+      if (needsApproval) {
+        // Require an APPROVED approval_request for this task before running.
+        const approved = await db.approvalRequest.findFirst({
+          where: { workspaceId: task.workspaceId, actionType: "external_write", status: "approved" },
+        });
+        if (!approved) {
+          return reply.status(403).send({
+            error: "approval_required",
+            hint: "external_write requires an approved approval_requests row (or task autoApprove)",
+          });
+        }
+      }
+
+      const credentialSecret = credentialRef ? openSecret(credentialRef) : null;
+      const run = await db.agentRun.create({
+        data: {
+          workspaceId: task.workspaceId,
+          verticalId: workManifest.id,
+          agentId: "browser_task_execution",
+          status: "running",
+          inputJson: { taskId, url, credentialKind } as any,
+        },
+      });
+
+      let stopped = false;
+      const result: RunResult = await runBrowserTask({
+        url,
+        credential: credentialSecret ? { kind: credentialKind, secret: credentialSecret } : null,
+        maxActions: 20,
+        isStopped: () => stopped,
+        fetchImpl: (input: unknown, init?: unknown) => fetch(input as unknown as URL, init as never),
+      });
+      stopped = result.status === "stopped";
+
+      const completed = await db.agentRun.update({
+        where: { id: run.id },
+        data: {
+          status: result.status,
+          outputJson: {
+            steps: result.steps,
+            result: result.text.slice(0, 20_000),
+            title: result.title,
+            error: result.error,
+          } as any,
+          completedAt: new Date(),
+        },
+      });
+      await db.auditEvent.create({
+        data: {
+          workspaceId: task.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.agent_run",
+          resourceType: "agent_run",
+          resourceId: run.id,
+          metadataJson: { url, status: result.status, steps: result.steps.length } as any,
+        },
+      });
+      return reply.status(201).send({ run: completed });
+    });
+
+    // GET /agent-runs/:runId
+    register.get("/agent-runs/:runId", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const run = await db.agentRun.findUnique({ where: { id: req.params?.runId ?? "" } });
+      if (!run) return reply.status(404).send({ error: "run not found" });
+      if (!(await canAccess(db, run.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      return reply.send({ run });
+    });
+
+    // POST /agent-runs/:runId/stop — kill switch (§5: user + administrator).
+    register.post("/agent-runs/:runId/stop", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const run = await db.agentRun.findUnique({ where: { id: req.params?.runId ?? "" } });
+      if (!run) return reply.status(404).send({ error: "run not found" });
+      if (!(await canAccess(db, run.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      if (run.status !== "running") return reply.send({ run });
+      const stopped = await db.agentRun.update({ where: { id: run.id }, data: { status: "stopped" } });
+      await db.auditEvent.create({
+        data: {
+          workspaceId: run.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.agent_run_stopped",
+          resourceType: "agent_run",
+          resourceId: run.id,
+          metadataJson: {},
+        },
+      });
+      return reply.send({ run: stopped });
     });
   },
 };

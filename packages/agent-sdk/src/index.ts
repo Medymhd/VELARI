@@ -40,6 +40,10 @@ export interface VerticalServices {
   /** PrismaClient instance — typed as unknown here to keep the SDK
    *  framework- and ORM-agnostic; verticals narrow it on their side. */
   db: unknown;
+  /** Resolves a credential ref to plaintext at call time (vault-sealed or
+   *  inline for dev). Returns null when the ref cannot be opened. Never log
+   *  the result. */
+  openSecret?: (credentialRef: string) => string | null;
 }
 
 /**
