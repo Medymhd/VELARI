@@ -18,7 +18,7 @@ import {
   type NativeAudioDevice,
 } from "../lib/nativeAudio";
 import { RelayDirectStream, resolveRelaySession } from "../lib/relayStt";
-import { StatusPill } from "@app/ui";
+import { StatusPill, Section } from "@app/ui";
 
 const nativeAvailable = isTauri();
 
@@ -436,8 +436,8 @@ export default function LiveSession() {
           I have consent to record and process this session.
         </label>
 
-        <div className="card">
-          <div className="small muted" style={{ marginBottom: 8 }}>Transcript â€” finals are persisted, partials are ephemeral</div>
+        <div className="card stagger">
+          <span className="kicker" style={{ marginBottom: 8, display: "block" }}>Transcript — finals are persisted, partials are ephemeral</span>
           <div className="scroll grid" style={{ gap: 8 }}>
             {transcript.length === 0 && <span className="small muted">No transcript yet. Start the session and speak.</span>}
             {transcript.slice(-80).map((t) => (

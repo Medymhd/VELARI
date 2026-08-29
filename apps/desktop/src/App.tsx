@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { APP_NAME } from "brand";
 import { useStore } from "./state/store";
 import { stealthGetState } from "./lib/tauri";
-import { Keyframes, cn } from "@app/ui";
+import { Keyframes, cn, CommandPalette } from "@app/ui";
 import Onboarding from "./features/Onboarding";
 import Home from "./features/Home";
 import LiveSession from "./features/LiveSession";
@@ -89,6 +89,22 @@ export default function App() {
   const { screen, setScreen, setStealth, token } = useStore();
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") { e.preventDefault(); setPaletteOpen((v) => !v); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  const paletteActions = [
+    ...(["home", "live", "review", "settings"] as const).map((s) => ({
+      label: `Go to ${s.charAt(0).toUpperCase() + s.slice(1)}`,
+      run: () => setScreen(s),
+    })),
+  ];
 
   useEffect(() => {
     document.title = `${APP_NAME} — Interview Intelligence`;
@@ -163,6 +179,11 @@ export default function App() {
           )}
         </div>
       </main>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        actions={paletteActions(setScreen)}
+      />
     </div>
   );
 }
