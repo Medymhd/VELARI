@@ -27,6 +27,10 @@ export const workManifest: VerticalManifest = {
     { method: "GET", path: "/agent-runs/:runId", handlerId: "agent-runs.get" },
     { method: "POST", path: "/agent-runs/:runId/approve", handlerId: "agent-runs.approve" },
     { method: "POST", path: "/agent-runs/:runId/stop", handlerId: "agent-runs.stop" },
+    { method: "POST", path: "/annotations", handlerId: "annotations.create" },
+    { method: "GET", path: "/annotations", handlerId: "annotations.list" },
+    { method: "POST", path: "/annotations/:id/review", handlerId: "annotations.review" },
+    { method: "GET", path: "/tasks/:taskId/annotation-agreement", handlerId: "annotations.agreement" },
   ],
   tools: [
     {

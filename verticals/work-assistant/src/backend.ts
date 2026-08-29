@@ -11,6 +11,7 @@
 import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
 import type { PrismaClient } from "@prisma/client";
 import { runBrowserTask, type RunResult } from "./agentRunner.js";
+import { registerAnnotationRoutes } from "./annotations.js";
 import { workManifest } from "./manifest.js";
 import { isAllowedDomain, requiresApproval, type WorkTask } from "./types.js";
 import { buildCodeExplainMessages, buildCodeReviewMessages } from "./codePrompts.js";
@@ -317,6 +318,8 @@ export const vertical: VerticalRegistration = {
     register.get("/health", (_req: unknown, reply: ReplyLike) => {
       reply.send({ ok: true, vertical: workManifest.id, version: workManifest.version });
     });
+
+    registerAnnotationRoutes(register, db);
 
     // ── Agent runs (§10, §13) — bounded execution of approved browser tasks.
 
