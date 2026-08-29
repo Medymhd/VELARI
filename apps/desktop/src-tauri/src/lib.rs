@@ -2,6 +2,7 @@ mod audio;
 mod overlay;
 mod screen;
 mod stealth;
+mod tts;
 mod vault;
 
 use stealth::StealthState;
@@ -155,6 +156,8 @@ pub fn run() {
             screen::cropper_select,
             overlay::overlay_show,
             overlay::overlay_hide,
+            tts::tts_piper_available,
+            tts::tts_speak,
             audio::list_input_devices,
             audio::list_output_devices,
             audio::start_microphone_capture,

@@ -1,3 +1,4 @@
+/** Coding work prompts — the coding-assistant category of the work vertical. */
 import type { ChatMessage } from "@app/contracts";
 
 export function buildCodeExplainMessages(code: string, language?: string): ChatMessage[] {

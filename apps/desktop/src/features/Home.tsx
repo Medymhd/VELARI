@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import { EmptyState, PageHeader, Spinner, StatusPill } from "@app/ui";
+import { EmptyState, PageHeader, Skeleton, Sparkline, StatusPill } from "@app/ui";
 
 type SessionRow = { id: string; title: string | null; status: string };
 
@@ -50,6 +50,7 @@ export default function Home() {
 
   const live = sessions.filter((s) => s.status === "live").length;
   const completed = sessions.filter((s) => s.status === "completed").length;
+  const sparkData = sessions.map((_, i) => sessions.length - i); // cumulative trend
 
   return (
     <div className="col">
@@ -66,9 +67,21 @@ export default function Home() {
       />
 
       <div className="stats">
-        <div className="card stat"><span className="label">Total</span><span className="value">{sessions.length}</span></div>
-        <div className="card stat"><span className="label">Live</span><span className="value">{live}</span></div>
-        <div className="card stat"><span className="label">Completed</span><span className="value">{completed}</span></div>
+        <div className="card stat">
+          <span className="label">Total</span>
+          <span className="value">{sessions.length}</span>
+          <Sparkline data={sessions.map((_, i) => sessions.length - i)} />
+        </div>
+        <div className="card stat">
+          <span className="label">Live</span>
+          <span className="value">{live}</span>
+          <span className="small muted">{live > 0 ? "actively running" : "none active"}</span>
+        </div>
+        <div className="card stat">
+          <span className="label">Completed</span>
+          <span className="value">{completed}</span>
+          <span className="small muted">{sessions.length ? `${Math.round((completed / sessions.length) * 100)}% completion` : "—"}</span>
+        </div>
       </div>
 
       <div className="card row">
@@ -85,14 +98,18 @@ export default function Home() {
       {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}
 
       {loading ? (
-        <div className="card row"><Spinner /><span className="small muted">Loading sessions…</span></div>
+        <div className="col" style={{ gap: 10 }}>
+          <Skeleton height="60px" />
+          <Skeleton height="60px" />
+          <Skeleton height="60px" />
+        </div>
       ) : sessions.length === 0 ? (
         <EmptyState
           title="No sessions yet"
           description="Name your first session above and press Start — capture, transcription, and coaching are one click away."
         />
       ) : (
-        <div className="grid" style={{ gap: 10 }}>
+        <div className="grid stagger" style={{ gap: 10 }}>
           {sessions.map((s) => (
             <div
               key={s.id}

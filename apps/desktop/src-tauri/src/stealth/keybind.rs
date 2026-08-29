@@ -1,4 +1,6 @@
-//! Global chords — Windows implementation via `RegisterHotKey` (port of
+// Copyright (c) 2026. All rights reserved.
+// Proprietary — see stealth/LICENSE for terms.
+// Global chords — Windows implementation via `RegisterHotKey` (port of
 //! rival `KeybindManager.ts` / `winChord.ts` semantics).
 //!
 //! Threading contract: `WM_HOTKEY` is delivered to the thread that called

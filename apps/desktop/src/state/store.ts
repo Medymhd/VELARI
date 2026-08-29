@@ -2,7 +2,10 @@ import { create } from "zustand";
 import { STORAGE_PREFIX } from "brand";
 import type { StealthState } from "../lib/tauri";
 
-export type Screen = "onboarding" | "home" | "live" | "review" | "settings";
+export type Screen = string;
+// Core screens always present; vertical-specific screens are any `work/*` `interview/*` etc.
+// Adding a new vertical alongside the 2 built never edits this union — shell renders whatever
+// the manifest registry returns via `/v1/verticals` (dynamic, see App.tsx + server.ts discoverVerticals).
 
 interface TranscriptItem {
   id: string;

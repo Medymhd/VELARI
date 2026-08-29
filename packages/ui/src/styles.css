@@ -21,8 +21,30 @@
   --radius-sm: 10px;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 10px 40px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --shadow-glass: 0 18px 60px rgba(0, 0, 0, 0.55);
   --ring: 0 0 0 3px rgba(108, 123, 255, 0.25);
   --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Premium spacing + blur + motion + z-index — @app/ui single source, no per-vertical duplication */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --blur-sm: 8px;
+  --blur-md: 14px;
+  --blur-lg: 18px;
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.15s;
+  --duration-med: 0.22s;
+  --duration-slow: 0.4s;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --sidebar-width: 232px;
+  --content-width: 1080px;
+  --text-xs: 11px;
+  --text-sm: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -145,7 +167,7 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 /* ── App shell: sidebar + content ─────────────────────────────────── */
 .shell { display: flex; height: 100vh; }
 .sidebar {
-  width: 232px; flex: none; display: flex; flex-direction: column; gap: 4px;
+  width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; gap: 4px;
   padding: 18px 14px; border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
 }
@@ -171,7 +193,7 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 }
 .sidebar .foot { margin-top: auto; padding: 10px 8px 0; border-top: 1px solid var(--border); }
 .content { flex: 1; min-width: 0; overflow-y: auto; }
-.content-inner { max-width: 1080px; margin: 0 auto; padding: 28px; }
+.content-inner { max-width: var(--content-width); margin: 0 auto; padding: 28px; }
 
 /* ── Page header ──────────────────────────────────────────────────── */
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
@@ -203,8 +225,122 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 .scroll > div { animation: fadeSlide 0.22s ease both; }
 
 .topbar {
-  position: sticky; top: 0; z-index: 20;
-  backdrop-filter: blur(14px);
+  position: sticky; top: 0; z-index: var(--z-overlay);
+  backdrop-filter: blur(var(--blur-md));
   background: color-mix(in srgb, var(--bg) 78%, transparent);
   border-bottom: 1px solid var(--border);
 }
+
+/* Premium motion — spring + skeleton — @app/ui only, no per-vertical duplication */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition: none !important; }
+}
+
+/* -- Premium motion + skeleton + stagger (Phase A) -- */
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.15s; --duration-med: 0.22s;
+  --z-overlay: 40; --z-modal: 50;
+  --text-xs: 11px; --text-sm: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.stagger > * { animation: fadeSlide var(--duration-med, 0.22s) var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.09s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.15s; }
+.stagger > *:nth-child(6) { animation-delay: 0.18s; }
+
+.section-label {
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+}
+
+/* -- Billion-dollar polish: confidence colors, speaker bar, tabs, transitions -- */
+
+/* Confidence indicator on transcript segments */
+.conf-high { border-left-color: var(--success) !important; }
+.conf-med  { border-left-color: var(--warn) !important; }
+.conf-low  { border-left-color: var(--danger) !important; }
+
+/* Speaker talk-time split bar */
+.speaker-bar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--surface-3); gap: 2px;
+}
+.speaker-bar .seg { border-radius: 2px; transition: width var(--duration-med) var(--ease-spring); }
+.speaker-bar .seg.user { background: var(--accent); }
+.speaker-bar .seg.interviewer { background: var(--success); }
+
+/* Tab strip */
+.tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+}
+.tabs button {
+  border: none; background: none; color: var(--muted); padding: 8px 14px;
+  border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  font-size: 12.5px; font-weight: 550; transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.tabs button:hover { color: var(--text); }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Provider status dot */
+.provider-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--success); box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent);
+}
+
+/* Page crossfade */
+.screen-enter { animation: screenIn var(--duration-med) var(--ease-spring) both; }
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Insight arrival � accent flash + spring */
+.insight-arrive { animation: insightPop 0.35s var(--ease-spring) both; }
+@keyframes insightPop {
+  0% { opacity: 0; transform: translateY(8px) scale(0.98); border-color: var(--accent); }
+  60% { border-color: var(--accent); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Sidebar active-item glow */
+.nav-item.active {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-3));
+  border-left: 2px solid var(--accent);
+  padding-left: calc(10px - 2px);
+}
+
+/* Card hover micro-interaction */
+.card.hoverable { transition: transform 0.15s var(--ease-spring), box-shadow 0.15s ease, border-color 0.15s ease; }
+.card.hoverable:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+
+/* Transcript word-level highlight on partial ? final transition */
+.transcript .seg-enter { animation: segIn 0.2s ease both; }
+@keyframes segIn { from { opacity: 0; } to { opacity: 1; } }

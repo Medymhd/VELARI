@@ -8,6 +8,20 @@ import type {
   VerticalManifest,
 } from "@app/contracts";
 
+function parseHost(url: string): string | null {
+  try {
+    const idx = url.indexOf("://");
+    if (idx === -1) return null;
+    const rest = url.slice(idx + 3);
+    const slashIdx = rest.indexOf("/");
+    const host = (slashIdx === -1 ? rest : rest.slice(0, slashIdx)).toLowerCase();
+    const colonIdx = host.indexOf(":");
+    return colonIdx === -1 ? host : host.slice(0, colonIdx);
+  } catch {
+    return null;
+  }
+}
+
 export interface ToolContext {
   workspaceId: string;
   userId: string;
@@ -30,8 +44,20 @@ export interface AgentToolImpl {
 export interface VerticalRegistration {
   manifest: VerticalManifest;
   tools?: AgentToolImpl[];
-  /** Fastify-compatible route factory: receives the scoped prefix path. */
-  registerRoutes?: (app: RouteRegistrar) => void;
+  /** Fastify-compatible route factory: receives the scoped prefix path and
+   *  platform services (db). Verticals stay decoupled from Prisma imports. */
+  registerRoutes?: (app: RouteRegistrar, services: VerticalServices) => void;
+}
+
+/** Platform services handed to verticals at mount time. */
+export interface VerticalServices {
+  /** PrismaClient instance — typed as unknown here to keep the SDK
+   *  framework- and ORM-agnostic; verticals narrow it on their side. */
+  db: unknown;
+  /** Resolves a credential ref to plaintext at call time (vault-sealed or
+   *  inline for dev). Returns null when the ref cannot be opened. Never log
+   *  the result. */
+  openSecret?: (credentialRef: string) => string | null;
 }
 
 /**
@@ -61,6 +87,59 @@ export function validateRegistration(reg: VerticalRegistration): string[] {
     }
   }
   return problems;
+}
+
+// ── Shared vertical helpers (hoisted from work-assistant §E) ──────────────
+
+/** Narrow `services.db` to a typed facade without importing Prisma in verticals. */
+export interface WorkspaceDb {
+  workspaceMember: {
+    findUnique(args: { where: { workspaceId_userId: { workspaceId: string; userId: string } } }): Promise<unknown>;
+  };
+  auditEvent: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+}
+
+/** Tenancy gate — returns true if the user is a member of the workspace. */
+export async function canAccessWorkspace(db: unknown, workspaceId: string, userId: string): Promise<boolean> {
+  const wdb = db as WorkspaceDb;
+  const member = await wdb.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+  });
+  return Boolean(member);
+}
+
+/** Write an audit event (fire-and-forget — audit must never break the route). */
+export async function writeVerticalAudit(db: unknown, entry: {
+  workspaceId: string;
+  actorId: string;
+  eventType: string;
+  resourceType: string;
+  resourceId: string;
+  metadataJson?: Record<string, unknown>;
+}): Promise<void> {
+  const wdb = db as WorkspaceDb;
+  try {
+    await wdb.auditEvent.create({
+      data: { ...entry, actorType: "user" },
+    });
+  } catch {
+    // audit must never break the route
+  }
+}
+
+/** Domain allowlist check — default blank [] blocks until policy is set. */
+export function isDomainAllowed(url: string, allowedDomains: string[]): boolean {
+  if (allowedDomains.length === 0) return false;
+  const host = parseHost(url);
+  if (!host) return false;
+  return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/** Approval gate: external_write requires approval unless autoApprove is set. */
+export function needsApproval(risk: string, autoApprove: boolean): boolean {
+  return risk === "external_write" && !autoApprove;
 }
 
 

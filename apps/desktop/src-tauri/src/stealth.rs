@@ -1,3 +1,7 @@
+// Copyright (c) 2026. All rights reserved.
+// Proprietary — see stealth/LICENSE for terms.
+// You may READ this code for audit but you may NOT redistribute or reuse it.
+
 pub mod keybind;
 pub mod keyboard;
 

@@ -73,6 +73,7 @@
       <section class="sec">
         <label>Framework</label>
         <ol class="outline" id="outline"></ol>
+        <button class="btn" id="speakBtn" style="margin-top:6px">🔊 Speak</button>
       </section>
       <section class="sec">
         <label>Talking points</label>
@@ -164,7 +165,49 @@
           outline.appendChild(li);
         }
         $("points").textContent = (c.talking_points ?? []).join(" · ") || "—";
+        lastInsight = c;
       });
+
+      let lastInsight = null;
+      let speakText = "";
+      $("speakBtn").addEventListener("click", async () => {
+        if (!lastInsight) return;
+        const parts = [];
+        if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
+        if (lastInsight.suggested_outline?.length) parts.push(lastInsight.suggested_outline.join(". "));
+        if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
+        speakText = parts.join(". ");
+        if (!speakText) return;
+
+        // Try Piper (premium local voice) → fallback to Web Speech API.
+        try {
+          const b64 = await invoke("tts_speak", { text: speakText });
+          playWav(b64);
+        } catch {
+          webSpeak(speakText);
+        }
+      });
+
+      function webSpeak(text) {
+        try {
+          speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.rate = 1.1;
+          utter.pitch = 1;
+          speechSynthesis.speak(utter);
+        } catch { /* no voices available */ }
+      }
+
+      function playWav(b64) {
+        try {
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const blob = new Blob([bytes], { type: "audio/wav" });
+          const audio = new Audio(URL.createObjectURL(blob));
+          audio.play();
+        } catch { webSpeak(speakText); }
+      }
     </script>
   </body>
 </html>

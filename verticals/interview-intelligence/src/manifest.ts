@@ -32,5 +32,6 @@ export const interviewIntelligenceManifest: VerticalManifest = {
     },
   ],
   retentionDefaults: "retain_30d",
+  overlay: { mode: "stealth", size: [440, 430] },
 };
 

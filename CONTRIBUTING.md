@@ -6,11 +6,18 @@ Thanks for your interest in contributing. This project is currently proprietary 
 
 1. **By opening a pull request you grant the project owners a perpetual, worldwide, royalty-free right to use, modify, sublicense, and distribute your contribution** as part of the project under any license the owners choose. If you cannot accept this, do not open a PR.
 2. Sign off every commit (`git commit -s`) — this certifies the [Developer Certificate of Origin](https://developercertificate.org/): you have the right to submit the code you are contributing.
-3. Code must pass the full gate: `pnpm build`, `pnpm test`, and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`.
+3. Code must pass the full gate: `pnpm build` (18/18 turbo tasks), `pnpm test`, and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` (24/24).
+
+## Local development
+
+- Postgres runs on port **5433** via the tests-override compose (see README Getting Started).
+- Prisma commands must run from `apps/api` via the local `.bin` binary.
+- `pnpm dev:api` auto-loads `.env` — no manual env export needed.
+- Integration tests (security, RAG) **skip cleanly** when Postgres is unreachable.
 
 ## Code standards
 
-- **Brand-neutral**: no product names in source, identifiers, event names, or comments — identity lives only in the brand package (see `docs/adr/0002`).
+- Brand-neutral: no product names in source, identifiers, event names, or comments - identity lives only in the brand package.
 - **No watermarks**: no authorship markers, AI-generation notes, or vanity tags.
 - Strict typing everywhere; errors handled, never swallowed; no dead code; comments only for non-obvious rationale.
 - Tests ship with the code they change (TS: `node --test` per package; Rust: `cargo test`).

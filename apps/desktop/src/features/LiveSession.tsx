@@ -18,7 +18,7 @@ import {
   type NativeAudioDevice,
 } from "../lib/nativeAudio";
 import { RelayDirectStream, resolveRelaySession } from "../lib/relayStt";
-import { StatusPill } from "@app/ui";
+import { StatusPill, Section } from "@app/ui";
 
 const nativeAvailable = isTauri();
 
@@ -436,19 +436,43 @@ export default function LiveSession() {
           I have consent to record and process this session.
         </label>
 
-        <div className="card">
-          <div className="small muted" style={{ marginBottom: 8 }}>Transcript â€” finals are persisted, partials are ephemeral</div>
+        {(() => {
+          const userCount = transcript.filter((t) => t.speaker === "user").length;
+          const ivCount = transcript.filter((t) => t.speaker === "interviewer").length;
+          const total = userCount + ivCount;
+          if (total === 0) return null;
+          const userPct = Math.round((userCount / total) * 100);
+          return (
+            <div className="col" style={{ gap: 4 }}>
+              <div className="speaker-bar">
+                <div className="seg user" style={{ width: `${userPct}%` }} />
+                <div className="seg interviewer" style={{ width: `${100 - userPct}%` }} />
+              </div>
+              <div className="row small muted" style={{ justifyContent: "space-between" }}>
+                <span>You {userPct}%</span>
+                <span>Interviewer {100 - userPct}%</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        <div className="card stagger">
+          <span className="kicker" style={{ marginBottom: 8, display: "block" }}>Transcript — finals are persisted, partials are ephemeral</span>
           <div className="scroll grid" style={{ gap: 8 }}>
             {transcript.length === 0 && <span className="small muted">No transcript yet. Start the session and speak.</span>}
-            {transcript.slice(-80).map((t) => (
-              <div key={t.id} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10 }}>
-                <div style={{ fontSize: 13 }}>
-                  {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
-                  {t.text}
+            {transcript.slice(-80).map((t) => {
+              const conf = t.confidence ?? 0;
+              const confClass = conf >= 0.8 ? "conf-high" : conf >= 0.5 ? "conf-med" : conf > 0 ? "conf-low" : "";
+              return (
+                <div key={t.id} className={`seg-enter ${confClass}`} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10 }}>
+                  <div style={{ fontSize: 13 }}>
+                    {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
+                    {t.text}
+                  </div>
+                  <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
                 </div>
-                <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `Â· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -458,12 +482,12 @@ export default function LiveSession() {
           <span className="kicker">Coaching</span>
           {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
           {insights.slice(-6).reverse().map((ins) => (
-            <div key={ins.id} className="card" style={{ background: "var(--surface-2)" }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{String(ins.contentJson.detected_question ?? "â€”")}</div>
+            <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)" }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{String(ins.contentJson.detected_question ?? "—")}</div>
               <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
                 {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
               </ul>
-              <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" Â· ")}</div>
+              <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
             </div>
           ))}
         </div>

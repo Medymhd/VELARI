@@ -277,6 +277,9 @@ export const VerticalRouteSchema = z.object({
 });
 export type VerticalRouteSchema = z.infer<typeof VerticalRouteSchema>;
 
+export const OverlayMode = z.enum(["stealth", "assist", "none"]);
+export type OverlayMode = z.infer<typeof OverlayMode>;
+
 export const VerticalManifest = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]*$/),
   version: z.string().regex(/^\d+\.\d+\.\d+(-[\w.]+)?$/),
@@ -286,6 +289,14 @@ export const VerticalManifest = z.object({
   routes: z.array(VerticalRouteSchema),
   tools: z.array(AgentToolSchema),
   retentionDefaults: RetentionPolicy,
+  // Overlay capability — lets 10 apps share 1 shell with 3 behaviors without hard-coding:
+  // stealth (interview hidden), assist (code/sheet visible), none (research immersive)
+  overlay: z
+    .object({
+      mode: OverlayMode,
+      size: z.tuple([z.number(), z.number()]).optional(),
+    })
+    .optional(),
 });
 export type VerticalManifest = z.infer<typeof VerticalManifest>;
 

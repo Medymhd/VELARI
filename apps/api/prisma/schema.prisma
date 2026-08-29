@@ -209,6 +209,64 @@ model AuditEvent {
   @@map("audit_events")
 }
 
+/// Work vertical — task lifecycle (valeriworkvertical.md §6).
+model WorkTask {
+  id             String   @id @default(uuid())
+  workspaceId    String   @map("workspace_id")
+  type           String
+  status         String   @default("draft")
+  title          String
+  instructions   String   @default("")
+  allowedDomains Json     @default("[]")
+  autoApprove    Boolean  @default(false)
+  policyVersion  String   @default("v1") @map("policy_version")
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  submissions WorkSubmission[]
+  @@index([workspaceId, createdAt])
+  @@map("work_tasks")
+}
+
+/// Immutable provenance per submission (§6, §11 — blue-team evidence).
+model WorkSubmission {
+  id            String   @id @default(uuid())
+  taskId        String   @map("task_id")
+  origin        String
+  content       String   @default("")
+  reviewState   String   @default("unreviewed") @map("review_state")
+  policyVersion String   @map("policy_version")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  task WorkTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("work_submissions")
+}
+
+/// Work vertical — multimodal labels (valeriworkvertical.md §8). One row per
+/// label on one unit; human QC updates reviewState/finalLabel. Agreement is
+/// computed across rows sharing a `unit` key.
+model WorkAnnotation {
+  id          String   @id @default(uuid())
+  workspaceId String   @map("workspace_id")
+  taskId      String   @map("task_id")
+  unit        String   @default("")
+  kind        String
+  label       String
+  labelData   Json     @default("{}") @map("label_data")
+  confidence  Float?
+  origin      String   @default("human")
+  status      String   @default("pending_review")
+  reviewedBy  String?  @map("reviewed_by")
+  finalLabel  String?  @map("final_label")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([taskId])
+  @@index([workspaceId])
+  @@map("work_annotations")
+}
+
 /// Vector recall for interview sessions (pgvector). Embeddings are written
 /// via raw SQL (Prisma has no vector client type); dim is fixed at 256 —
 /// the free lexical embedder's native size. Swapping in a cloud embedding

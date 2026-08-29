@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { registerAuth } from "./auth.js";
+import { secretBox } from "./secrets.js";
 import { authRoutes } from "./routes/auth.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { providerRoutes } from "./routes/providers.js";
@@ -18,7 +19,7 @@ import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
 import { validateRegistration } from "@app/agent-sdk";
 import { vertical as interviewVertical } from "@app/vertical-interview-intelligence";
-import { vertical as codingVertical } from "@app/vertical-coding-assistant";
+import { vertical as workVertical } from "@app/vertical-work-assistant";
 
 const log = logger({ svc: "api" });
 
@@ -54,7 +55,7 @@ async function buildApp() {
   recallRoutes(app, prisma);
 
   // Vertical registry — validates each manifest and mounts under /v1/verticals/:id
-  const verticals = [interviewVertical, codingVertical];
+  const verticals = [interviewVertical, workVertical];
   for (const v of verticals) {
     const parsed = VerticalManifest.safeParse(v.manifest);
     if (!parsed.success) throw new Error(`${v.manifest.id} manifest invalid: ${parsed.error.message}`);
@@ -62,20 +63,40 @@ async function buildApp() {
     if (problems.length > 0) throw new Error(`${v.manifest.id} registration problems: ${problems.join("; ")}`);
     await app.register(
       async (scope) => {
-        v.registerRoutes?.({
-          get(path: string, handler: never) {
-            scope.get(path, handler);
+        v.registerRoutes?.(
+          {
+            get(path: string, handler: never) {
+              scope.get(path, handler);
+            },
+            post(path: string, handler: never) {
+              scope.post(path, handler);
+            },
+            patch(path: string, handler: never) {
+              scope.patch(path, handler);
+            },
+            delete(path: string, handler: never) {
+              scope.delete(path, handler);
+            },
           },
-          post(path: string, handler: never) {
-            scope.post(path, handler);
+          {
+            db: prisma,
+            openSecret: (credentialRef: string) => {
+              // credentialRef = "<kind>:<secret_ref or inline secret>". Sealed
+              // v1.* payloads resolve through the vault; inline plaintext (dev)
+              // passes through. The result is never logged.
+              const idx = credentialRef.indexOf(":");
+              const payload = idx === -1 ? credentialRef : credentialRef.slice(idx + 1);
+              if (payload.startsWith("v1.")) {
+                try {
+                  return secretBox.open(payload);
+                } catch {
+                  return null;
+                }
+              }
+              return payload || null;
+            },
           },
-          patch(path: string, handler: never) {
-            scope.patch(path, handler);
-          },
-          delete(path: string, handler: never) {
-            scope.delete(path, handler);
-          },
-        });
+        );
       },
       { prefix: `/v1/verticals/${v.manifest.id}` },
     );
