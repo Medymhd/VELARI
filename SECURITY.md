@@ -16,7 +16,7 @@ In scope:
 - Secret handling (BYOK sealing, vault, redaction) and key-material exposure
 - The realtime WebSocket pipeline (injection, replay, DoS via malformed frames)
 - Browser extension isolation (world leakage, guard fingerprinting)
-- Desktop stealth layer behaviors (this is a declared red-team exercise — see `docs/red-team/handoff-brief.md` for the intended detection surface)
+- Desktop stealth layer behaviors (declared red-team exercise - capture exclusion, window masquerade, keyboard interception)
 - Agent-run execution (`/agent-runs` routes): domain-allowlist bypass, credential leakage via `openSecret`, kill-switch bypass
 - Browser task execution (`/browser/execute`): allowlist widening via request body, credential material in responses
 - Annotation service: cross-task label injection, agreement metric manipulation

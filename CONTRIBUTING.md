@@ -17,7 +17,7 @@ Thanks for your interest in contributing. This project is currently proprietary 
 
 ## Code standards
 
-- **Brand-neutral**: no product names in source, identifiers, event names, or comments — identity lives only in the brand package (see `docs/adr/0002`).
+- Brand-neutral: no product names in source, identifiers, event names, or comments - identity lives only in the brand package.
 - **No watermarks**: no authorship markers, AI-generation notes, or vanity tags.
 - Strict typing everywhere; errors handled, never swallowed; no dead code; comments only for non-obvious rationale.
 - Tests ship with the code they change (TS: `node --test` per package; Rust: `cargo test`).
