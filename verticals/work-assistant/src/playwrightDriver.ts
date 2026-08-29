@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 
 export interface PlaywrightStep {
   action: "navigate" | "fill" | "click" | "extract" | "screenshot";
+  url?: string;
   selector?: string;
   value?: string;
   detail?: string;
