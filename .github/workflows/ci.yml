@@ -35,6 +35,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Enable pgvector extension
+        run: docker exec ${{ job.services.postgres.id }} psql -U app -d app -c "CREATE EXTENSION IF NOT EXISTS vector;"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @app/api db:push
       - run: pnpm build
