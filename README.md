@@ -1,22 +1,22 @@
 # App — Modular AI Agent Platform
 
-First vertical: **Interview Intelligence** — dual-channel live transcription (you + interviewer), streaming STT, coaching frameworks with vector recall, post-session review, and a capture-excluded stealth overlay. Built as a make-then-break exercise with a red team that tries to detect and break stealth features.
+First vertical: **Interview Intelligence** — dual-channel live transcription (you + interviewer), streaming STT, coaching frameworks with vector recall, post-session review, and a capture-excluded stealth overlay. Second vertical: **Velari Work** — persisted task lifecycle, policy-gated browser automation, annotation with agreement metrics, Studio authoring.
 
 Brand is configured in one place: `packages/brand/src/index.ts`. Change the values there to rebrand the entire workspace.
 
 ## Architecture
 
-See `VELARI ARCHITECTURE.md` for the full platform spec. Quick view:
-
 - `apps/desktop` — Tauri 2 + React shell: native dual-channel audio (CPAL mic + WASAPI loopback), stealth layer, capture-excluded overlay, cropper
-- `apps/web` — companion admin console (same API)
+- `apps/web` — companion admin console + Studio authoring (same API)
 - `apps/api` — Fastify + Prisma (Postgres + pgvector), WebSocket realtime (per-channel STT, judged coaching), STT relay, vision/OCR route, vector recall
 - `apps/worker` — BullMQ retention and post-session summaries (Redis)
 - `packages/audio-runtime` — STT engine chain: Deepgram streaming (paid) → Moonshine-tiny local (free, MIT) → sherpa Zipformer → Deepgram REST → local Whisper server → simulated
-- `packages/ai-runtime` — provider router + circuit breakers, embeddings, vision, image/OCR
-- `packages/contracts` / `domain` / `security` / `observability` / `ui` / `brand` — shared design system and contracts
-- `verticals/interview-intelligence` — manifest, coach prompts, auto-answer judge
-- `benchmarks/` — gateway, STT, vision, load, and rival-parity harnesses
+- `packages/ai-runtime` — provider router + circuit breakers, embeddings, vision, image/OCR, style profile
+- `packages/work-runtime` / `assessment-engine` — task queue, assignment, lifecycle FSM; rubric scoring + calibration
+- `packages/contracts` / `domain` / `security` / `observability` / `ui` / `brand` / `agent-sdk` — shared design system, contracts, approval framework
+- `verticals/interview-intelligence` — coach prompts, auto-answer judge, agreement
+- `verticals/work-assistant` — task lifecycle, policy gates, annotations, browser automation, coding review
+- `benchmarks/` — STT, coach, vision, load, evaluation harnesses
 - `infra/docker/` — Postgres (pgvector) / Redis / MinIO
 
 **Free-and-open operating mode:** everything runs end-to-end at $0 (local Moonshine/lexicon models, free cloud tiers Groq + b.ai + OpenRouter `:free`, simulated fallbacks). Paid providers are optional rungs behind the same contracts.
@@ -62,10 +62,10 @@ The pgvector extension is created automatically (the compose image is `pgvector/
 
 ```sh
 pnpm install
-pnpm build        # 16/16 turbo tasks
+pnpm build        # 18/18 turbo tasks
 pnpm dev:api      # http://localhost:8787  (health: /health) — auto-loads .env
 pnpm dev:desktop  # Tauri dev window
-pnpm dev:web      # admin console
+pnpm dev:web      # admin console + Studio
 pnpm dev:worker   # retention/summaries (needs Redis)
 ```
 
@@ -79,7 +79,7 @@ pnpm test         # node --test suites; api security/RAG integration tests auto-
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-Suites: contracts/domain/security (pure), audio-runtime (streaming engines, relay, moonshine, sherpa), ai-runtime (router, breakers, image/OCR, embeddings), api (STT relay HMAC, security: tenant isolation + auth + secret redaction, vector recall vs real pgvector).
+Suites: contracts/domain/security (pure), audio-runtime (streaming engines, relay, moonshine, sherpa), ai-runtime (router, breakers, image/OCR, embeddings, style profile), work-assistant (types, lifecycle, agreement), api (STT relay HMAC, security: tenant isolation + auth + secret redaction, vector recall vs real pgvector).
 
 ## Benchmarks
 
@@ -88,11 +88,9 @@ pnpm bench:stt ; pnpm bench:coach ; pnpm bench:vision
 node benchmarks/scoreboard.mjs                 # aggregates results/SCOREBOARD.md
 node benchmarks/run-moonshine-speech.mjs       # real-speech local STT (SAPI corpus)
 node benchmarks/run-sherpa-speech.mjs
+node benchmarks/run-work-eval.mjs              # real pipeline evaluation
 node tests/load/realtime.mjs --concurrency 30 --seconds 20   # against a running API
-node benchmarks/run-rival-parity.mjs           # rival-semantics comparison (see results/COMPARISON.md)
 ```
-
-`benchmarks/README.md` documents the key matrix; `results/COMPARISON.md` is the evidence annex to `ARCHITECTURE_COMPARISON_VELARI_VS_RIVAL.md`.
 
 ## Packaging
 
@@ -101,11 +99,9 @@ pnpm --filter @app/desktop exec tauri build --bundles nsis
 ```
 Updater keypair: `apps/desktop/keys/updater.key(.pub)`; signing env `TAURI_SIGNING_PRIVATE_KEY_PATH` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in `.env`. Produces the signed NSIS installer + `.sig` updater artifact.
 
-## Stealth — red-team surface
+## Stealth
 
-Capture invisibility (`SetWindowDisplayAffinity WDA_EXCLUDEFROMCAPTURE`), taskbar hiding (`WS_EX_TOOLWINDOW`), window-title masquerade, a `WH_KEYBOARD_LL` focus-free keyboard tap, and global chords (`RegisterHotKey` with a 10 s stolen-hotkey health poll) — all Tauri commands in `apps/desktop/src-tauri/src/stealth.rs` + `audio/` with self-verifying re-enforcement. See `docs/red-team/handoff-brief.md` for detection vectors and `docs/threat-model/threat-model.md` for scope.
-
-This mode exists only for the academic make-then-break exercise.
+Capture invisibility (`SetWindowDisplayAffinity WDA_EXCLUDEFROMCAPTURE`), taskbar hiding (`WS_EX_TOOLWINDOW`), window-title masquerade, a `WH_KEYBOARD_LL` focus-free keyboard tap, and global chords (`RegisterHotKey` with a 10 s stolen-hotkey health poll) — all Tauri commands in `apps/desktop/src-tauri/src/stealth.rs` with self-verifying re-enforcement. The overlay supports 3 modes per vertical (stealth / assist / none) declared in the manifest.
 
 ## Troubleshooting
 
@@ -115,14 +111,13 @@ This mode exists only for the academic make-then-break exercise.
 - **JSON config files corrupted after editing via PowerShell** — PS 5.1 `utf8` writes BOMs; write BOM-less (`UTF8Encoding($false)`).
 - **OneDrive file locks** — `EPERM` during builds is transient; retry.
 - **Local STT model missing** — Moonshine downloads on first use (~50 MB, HF hub); sherpa: `models/sherpa` via `ensureSherpaModel()`.
+- **Piper TTS** — set `PIPER_PATH` (binary) and `PIPER_MODEL_PATH` (.onnx voice model); falls back to Web Speech API on the frontend when unset.
 
 ## Project status
 
 Two verticals shipped on one binary:
 
 - **Interview Intelligence** — dual-channel live transcription (you + interviewer), streaming STT with per-channel speaker attribution, judged coaching with style adaptation + rolling summaries + vector recall, post-session review with search, capture-excluded stealth overlay with focus-free keyboard tap and Piper TTS speak button.
-- **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve, annotation service with Krippendorff's alpha agreement metrics, coding review (merged from coding-assistant), Studio authoring in the web console.
+- **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve, annotation service with Krippendorff's alpha agreement metrics, coding review, Studio authoring in the web console, agent runner with kill switch.
 
-Infrastructure: 5-rung STT chain, provider router + circuit breakers, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, integration APIs (Gmail/Calendar/Slack), TTS, signed NSIS installer, 18/18 build, ~91 TS tests + 24 cargo tests, CI pipeline.
-
-Backlog: `implementationplan.md` §5.1/§5.2 (macOS ports, real-corpus WER, rival-binary joint run, OAuth redirect flow).
+Infrastructure: 5-rung STT chain, provider router + circuit breakers, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, TTS, integration APIs, signed NSIS installer, 18/18 build, ~91 TS tests + 24 cargo tests, CI pipeline.
