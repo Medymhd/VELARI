@@ -3,6 +3,7 @@ export * from "./circuitBreaker.js";
 export * from "./router.js";
 export * from "./providers.js";
 export * from "./embeddings.js";
+export * from "./styleProfile.js";
 export * from "@app/audio-runtime";
 export * from "./vision.js";
 export * from "./image.js";

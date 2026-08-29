@@ -12,6 +12,9 @@ import {
   createJudgeState,
   judgeSuggestion,
   type CoachFramework,
+  captureStyleProfile,
+  withStyle,
+  type StyleProfile,
 } from "@app/vertical-interview-intelligence";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
 
@@ -263,10 +266,21 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       coachTimer = setTimeout(async () => {
         if (!workspaceCfg) return;
         const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
+        // Style adaptation: learn the user's voice from their own transcript
+        // lines so the coach output reads naturally in their register.
+        const userLines = assembler.finals.slice(-12)
+          .filter((s: { speaker?: string; text: string }) => s.speaker === "user" || !s.speaker)
+          .map((s: { text: string }) => s.text);
+        const styleProfile: StyleProfile | undefined = userLines.length >= 3
+          ? captureStyleProfile(userLines)
+          : undefined;
         const messages = buildCoachMessages({
           verbatimTranscript: verbatim.slice(-4000) || "No transcript yet.",
           rollingSummary,
         });
+        if (styleProfile) {
+          messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
+        }
 
         try {
           const outcome = await executeRouted(

@@ -29,6 +29,24 @@ pub fn overlay_show(app: AppHandle) -> Result<(), String> {
         .inner_size(WIDTH, height)
         .build()
         .map_err(|e| e.to_string())?;
+
+    // WS_EX_NOACTIVATE: the overlay never becomes the foreground window when
+    // clicked — clicks pass through to the meeting app below. Combined with
+    // the keyboard tap, users interact without any focus steal that would
+    // trigger the meeting app's blur detection.
+    if let Some(w) = app.get_webview_window("overlay") {
+      if let Ok(hwnd) = w.hwnd() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+          GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        let raw = windows::Win32::Foundation::HWND(hwnd.0);
+        unsafe {
+          let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
+          SetWindowLongPtrW(raw, GWL_EXSTYLE, current | WS_EX_NOACTIVATE.0 as isize);
+        }
+      }
+      let _ = w.show();
+    }
     Ok(())
 }
 
