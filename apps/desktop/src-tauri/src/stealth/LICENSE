@@ -1,0 +1,14 @@
+# Proprietary — All Rights Reserved
+#
+# The files in this directory (stealth.rs, keyboard.rs, keybind.rs) contain
+# proprietary source code. You may read this code in the repository for
+# audit and transparency purposes, but you may NOT:
+#   - Redistribute it
+#   - Use it in your own product
+#   - Create derivative works from it
+#   - Use it in any commercial capacity
+#
+# This restriction overrides any open-source license that may apply to the
+# surrounding project. See the project LICENSE.md for the full license map.
+#
+# Contact the maintainers for commercial licensing inquiries.

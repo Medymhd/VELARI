@@ -7,12 +7,12 @@ target/
 *.tsbuildinfo
 .turbo/
 
-# Secrets & local config â€” never commit
+# Secrets & local config Ã¢â‚¬â€ never commit
 .env
 .env.local
 *.local
 
-# Signing keys (private material â€” back up outside the repo)
+# Signing keys (private material Ã¢â‚¬â€ back up outside the repo)
 apps/desktop/keys/updater.key
 
 # Native model downloads & generated corpus
@@ -32,6 +32,11 @@ coverage/
 !SECURITY.md
 !.github/PULL_REQUEST_TEMPLATE.md
 !.github/ISSUE_TEMPLATE/**
+!LICENSE.md
+!LICENSE-APPL.md
+!LICENSE-CLIENT.md
+!CLA.md
+!apps/desktop/src-tauri/src/stealth/LICENSE
 
 # OS noise
 Thumbs.db
