@@ -111,7 +111,7 @@ export default function Studio() {
     setBusy(true); setAgentStatus(null); setAgentRunId(null);
     try {
       const url = taskDomains.split(",")[0]?.trim() || "https://outlierclone.io";
-      const credentialRef = `apikey:${process.env.VITE_AGENT_API_KEY ?? "dev-key"}`;
+      const credentialRef = "apikey:dev-key";
       const res = await api<{ run: { id: string; status: string; result?: string } }>("/verticals/work/agent-runs", {
         method: "POST",
         body: JSON.stringify({ taskId, url, credentialRef }),
