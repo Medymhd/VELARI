@@ -1,0 +1,9 @@
+{
+  "title": "App — §12 metrics",
+  "panels": [
+    { "metric": "stt.partial.latency_ms", "type": "histogram" },
+    { "metric": "llm.first_token_ms", "type": "histogram" },
+    { "metric": "provider.fallback.count", "type": "counter" },
+    { "metric": "session.completed.count", "type": "counter" }
+  ]
+}

@@ -1,0 +1,11 @@
+# Test-only override: run the stack on alternate ports so it never fights
+# other local projects for 5432/6379. Usage:
+#   docker compose -p velari-tests -f infra/docker/docker-compose.yml \
+#     -f infra/docker/docker-compose.tests.yml up -d postgres
+services:
+  postgres:
+    ports: !override
+      - "5433:5432"
+  redis:
+    ports: !override
+      - "6380:6379"

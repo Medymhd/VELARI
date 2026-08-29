@@ -1,0 +1,54 @@
+{
+  "startedAt": "2026-08-28T23:47:07.348Z",
+  "dtype": "q4",
+  "utterances": [
+    {
+      "file": "q1.wav",
+      "audioMs": 4725,
+      "firstPartialMs": null,
+      "partials": 0,
+      "finalText": "",
+      "realTimeFactor": 2.84
+    },
+    {
+      "file": "q2.wav",
+      "audioMs": 3955,
+      "firstPartialMs": null,
+      "partials": 0,
+      "finalText": "",
+      "realTimeFactor": 2.65
+    },
+    {
+      "file": "q3.wav",
+      "audioMs": 4045,
+      "firstPartialMs": null,
+      "partials": 0,
+      "finalText": "",
+      "realTimeFactor": 2.97
+    },
+    {
+      "file": "q4.wav",
+      "audioMs": 3830,
+      "firstPartialMs": null,
+      "partials": 0,
+      "finalText": "",
+      "realTimeFactor": 3.02
+    },
+    {
+      "file": "q5.wav",
+      "audioMs": 4105,
+      "firstPartialMs": null,
+      "partials": 0,
+      "finalText": "",
+      "realTimeFactor": 5.05
+    },
+    {
+      "file": "q6.wav",
+      "audioMs": 4445,
+      "firstPartialMs": 6522,
+      "partials": 10,
+      "finalText": "Describe a situation where you had to deliver bad news to your team.",
+      "realTimeFactor": 4.61
+    }
+  ]
+}

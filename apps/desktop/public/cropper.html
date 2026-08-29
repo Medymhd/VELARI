@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background: transparent; overflow: hidden; cursor: crosshair; user-select: none; }
+      #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.25); }
+      #sel { position: fixed; display: none; border: 1px solid #4a9eff; background: rgba(74, 158, 255, 0.12); box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.35); }
+      #hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #cfd8e3; font: 13px system-ui; text-shadow: 0 1px 2px #000; }
+    </style>
+  </head>
+  <body>
+    <div id="shade"></div>
+    <div id="sel"></div>
+    <div id="hint">Drag to select a region — Esc cancels</div>
+    <script>
+      const sel = document.getElementById("sel");
+      const { invoke } = window.__TAURI__.core;
+      let start = null;
+
+      document.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        start = { x: e.clientX, y: e.clientY };
+        sel.style.display = "block";
+        moveSel(e);
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (start) moveSel(e);
+      });
+      document.addEventListener("mouseup", async (e) => {
+        if (!start) return;
+        const rect = normRect(e);
+        start = null;
+        sel.style.display = "none";
+        if (rect.width < 4 || rect.height < 4) return; // accidental click
+        try {
+          const dataB64 = await invoke("cropper_select", rect);
+          await window.__TAURI__.event.emit("cropper://captured", { dataB64 });
+        } catch (err) {
+          console.error(err);
+        }
+        window.close();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") window.close();
+      });
+
+      function moveSel(e) {
+        const r = normRect(e);
+        sel.style.left = r.x + "px";
+        sel.style.top = r.y + "px";
+        sel.style.width = r.width + "px";
+        sel.style.height = r.height + "px";
+      }
+      function normRect(e) {
+        const x = Math.min(start.x, e.clientX);
+        const y = Math.min(start.y, e.clientY);
+        return { x, y, width: Math.abs(e.clientX - start.x), height: Math.abs(e.clientY - start.y) };
+      }
+    </script>
+  </body>
+</html>

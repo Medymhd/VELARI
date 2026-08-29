@@ -1,0 +1,228 @@
+// Velari platform schema — mirrors VELARI ARCHITECTURE.md §4.
+// UUID PKs, UTC timestamps, tenant (workspace_id) scoping on owned records.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// pgvector: the extension is created out-of-band (`CREATE EXTENSION vector;`
+// compose image `pgvector/pgvector:pg16` ships it) — declaring it here made
+// Prisma emit the wrong extension name.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  displayName String?  @map("display_name")
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("users")
+}
+
+model Workspace {
+  id         String   @id @default(uuid())
+  name       String
+  plan       String   @default("free")
+  policyJson Json     @default("{}") @map("policy_json")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  workspaceId String @map("workspace_id")
+  userId      String @map("user_id")
+  role        String
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model ProviderConnection {
+  id           String   @id @default(uuid())
+  workspaceId  String   @map("workspace_id")
+  provider     String
+  authMode     String   @map("auth_mode")
+  secretRef    String?  @map("secret_ref")
+  status       String   @default("active")
+  capabilities Json     @default("[]")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([workspaceId, createdAt])
+  @@map("provider_connections")
+}
+
+model ModelProfile {
+  id              String  @id @default(uuid())
+  workspaceId     String  @map("workspace_id")
+  name            String
+  taskClass       String  @map("task_class")
+  primaryModel    Json    @map("primary_model")
+  fallbackModels  Json    @default("[]") @map("fallback_models")
+  constraintsJson Json    @default("{}") @map("constraints_json")
+  enabled         Boolean @default(true)
+
+  @@index([workspaceId])
+  @@map("model_profiles")
+}
+
+model UsageRecord {
+  id                  String   @id @default(uuid())
+  workspaceId         String   @map("workspace_id")
+  sessionId           String?  @map("session_id")
+  provider            String
+  model               String
+  requestType         String   @map("request_type")
+  inputUnits          BigInt?  @map("input_units")
+  outputUnits         BigInt?  @map("output_units")
+  latencyMs           Int?     @map("latency_ms")
+  estimatedCostMicros BigInt   @default(0) @map("estimated_cost_micros")
+  outcome             String
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([workspaceId, createdAt])
+  @@map("usage_records")
+}
+
+model InterviewSession {
+  id              String    @id @default(uuid())
+  workspaceId     String    @map("workspace_id")
+  ownerUserId     String    @map("owner_user_id")
+  title           String?
+  status          String    @default("draft")
+  consentStatus   String    @default("pending") @map("consent_status")
+  retentionPolicy String    @default("retain_30d") @map("retention_policy")
+  startedAt       DateTime? @map("started_at") @db.Timestamptz
+  endedAt         DateTime? @map("ended_at") @db.Timestamptz
+  metadataJson    Json      @default("{}") @map("metadata_json")
+
+  @@index([workspaceId, startedAt])
+  @@map("interview_sessions")
+}
+
+model TranscriptSegment {
+  id          String   @id @default(uuid())
+  sessionId   String   @map("session_id")
+  speakerId   String?  @map("speaker_id")
+  sequenceNo  Int      @map("sequence_no")
+  startedAtMs Int      @map("started_at_ms")
+  endedAtMs   Int      @map("ended_at_ms")
+  text        String
+  confidence  Float?
+  isFinal     Boolean  @map("is_final")
+  source      String
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([sessionId, sequenceNo, isFinal])
+  @@index([sessionId, sequenceNo])
+  @@map("transcript_segments")
+}
+
+model SessionInsight {
+  id               String   @id @default(uuid())
+  sessionId        String   @map("session_id")
+  type             String
+  sourceSegmentIds String[] @map("source_segment_ids")
+  contentJson      Json     @map("content_json")
+  modelTraceId     String?  @map("model_trace_id")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([sessionId, createdAt])
+  @@map("session_insights")
+}
+
+model Artifact {
+  id               String   @id @default(uuid())
+  workspaceId      String   @map("workspace_id")
+  sessionId        String?  @map("session_id")
+  kind             String
+  storageKey       String   @map("storage_key")
+  contentType      String?  @map("content_type")
+  sizeBytes        BigInt?  @map("size_bytes")
+  encryptionKeyRef String?  @map("encryption_key_ref")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([workspaceId, createdAt])
+  @@map("artifacts")
+}
+
+model VerticalInstallation {
+  id          String  @id @default(uuid())
+  workspaceId String  @map("workspace_id")
+  verticalId  String  @map("vertical_id")
+  version     String
+  enabled     Boolean @default(true)
+  configJson  Json    @default("{}") @map("config_json")
+
+  @@unique([workspaceId, verticalId])
+  @@map("vertical_installations")
+}
+
+model AgentRun {
+  id           String    @id @default(uuid())
+  workspaceId  String    @map("workspace_id")
+  verticalId   String    @map("vertical_id")
+  agentId      String    @map("agent_id")
+  status       String    @default("queued")
+  inputJson    Json      @map("input_json")
+  outputJson   Json?     @map("output_json")
+  modelTraceId String?   @map("model_trace_id")
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz
+
+  @@index([status, startedAt])
+  @@map("agent_runs")
+}
+
+model ApprovalRequest {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  agentRunId  String    @map("agent_run_id")
+  actionType  String    @map("action_type")
+  payloadJson Json      @map("payload_json")
+  status      String    @default("pending")
+  decidedBy   String?   @map("decided_by")
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz
+
+  @@index([status, workspaceId])
+  @@map("approval_requests")
+}
+
+model AuditEvent {
+  id           String   @id @default(uuid())
+  workspaceId  String?  @map("workspace_id")
+  actorType    String   @map("actor_type")
+  actorId      String?  @map("actor_id")
+  eventType    String   @map("event_type")
+  resourceType String?  @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([workspaceId, createdAt])
+  @@map("audit_events")
+}
+
+/// Vector recall for interview sessions (pgvector). Embeddings are written
+/// via raw SQL (Prisma has no vector client type); dim is fixed at 256 —
+/// the free lexical embedder's native size. Swapping in a cloud embedding
+/// model with a different dim requires reindexing (column recreate).
+model SessionChunk {
+  id         String                          @id @default(uuid())
+  sessionId  String                          @map("session_id")
+  chunkIndex Int                             @map("chunk_index")
+  text       String
+  embedding  Unsupported("vector(256)")?
+  status     String                          @default("pending")
+  retryCount Int                             @default(0) @map("retry_count")
+  createdAt  DateTime                        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([sessionId, chunkIndex])
+  @@map("session_chunks")
+}

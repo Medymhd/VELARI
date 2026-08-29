@@ -1,0 +1,32 @@
+{
+    "name":  "app",
+    "private":  true,
+    "version":  "0.1.0",
+    "description":  "App â€” modular AI agent platform. First vertical: Interview Intelligence.",
+    "packageManager":  "pnpm@10.17.1",
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "scripts":  {
+                    "build":  "turbo run build",
+                    "typecheck":  "turbo run typecheck",
+                    "test":  "turbo run test",
+                    "lint":  "turbo run lint",
+                    "dev:api":  "pnpm --filter @app/api dev",
+                    "dev:worker":  "pnpm --filter @app/worker dev",
+                    "dev:desktop":  "pnpm --filter @app/desktop tauri dev",
+                    "dev:web":  "pnpm --filter @app/web dev",
+                    "db:migrate":  "pnpm --filter @app/api db:migrate",
+                    "infra:up":  "docker compose -f infra/docker/docker-compose.yml up -d",
+                    "infra:down":  "docker compose -f infra/docker/docker-compose.yml down",
+                    "bench:stt":  "node --env-file-if-exists=.env benchmarks/run-stt.mjs",
+                    "bench:coach":  "node --env-file-if-exists=.env benchmarks/run-coach.mjs",
+                    "bench:vision":  "node --env-file-if-exists=.env benchmarks/run-vision.mjs",
+                    "bench:scoreboard":  "node benchmarks/scoreboard.mjs"
+                },
+    "devDependencies":  {
+                            "turbo":  "^2.3.3",
+                            "typescript":  "^5.7.3"
+                        }
+}
+

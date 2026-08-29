@@ -1,0 +1,26 @@
+{
+  "name": "@app/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "prisma generate --schema=../api/prisma/schema.prisma && tsc -p tsconfig.json",
+    "typecheck": "prisma generate --schema=../api/prisma/schema.prisma && tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1",
+    "@app/observability": "workspace:*",
+    "@app/vertical-interview-intelligence": "workspace:*",
+    "bullmq": "^5.20.0",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
+

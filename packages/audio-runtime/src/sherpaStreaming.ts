@@ -1,0 +1,277 @@
+/**
+ * Local streaming STT — sherpa-onnx Zipformer (rival `LocalWhisperSTT` parity,
+ * upgraded to TRUE streaming partials like Deepgram's live socket).
+ *
+ * Runs fully offline via sherpa-onnx-node's prebuilt native bindings. The
+ * model (small streaming Zipformer, ~17 MB) is fetched on first use if
+ * missing. Init failures fire `onUnavailable` so the fallback chain degrades
+ * to REST/simulated instead of breaking the session.
+ */
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import type { SttEngine, SttPartial, SttFinal } from "./stt.js";
+
+export interface SherpaOnlineStream {
+  acceptWaveform(wave: { sampleRate: number; samples: Float32Array }): void;
+}
+
+export interface SherpaOnlineRecognizer {
+  createStream(): SherpaOnlineStream;
+  isReady(stream: SherpaOnlineStream): boolean;
+  decode(stream: SherpaOnlineStream): void;
+  getResult(stream: SherpaOnlineStream): { text?: string; result_text?: string };
+  isEndpoint(stream: SherpaOnlineStream): boolean;
+  reset(stream: SherpaOnlineStream): void;
+}
+
+export type SherpaModule = { OnlineRecognizer: new (config: unknown) => SherpaOnlineRecognizer };
+
+export const DEFAULT_SHERPA_MODEL_URL =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2";
+
+function loadSherpaModule(): SherpaModule {
+  const req = createRequire(import.meta.url);
+  return req("sherpa-onnx-node") as SherpaModule;
+}
+
+/** Recursively locate tokens.txt + encoder .onnx under `dir`. */
+function findModelFiles(dir: string): { tokens: string; encoder: string; decoder: string; joiner: string } | null {
+  if (!existsSync(dir)) return null;
+  let tokens: string | null = null;
+  const onnx: string[] = [];
+  const walk = (d: string): void => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.name === "tokens.txt") tokens = p;
+      else if (entry.name.startsWith("encoder") && entry.name.endsWith(".onnx")) onnx.push(p);
+    }
+  };
+  walk(dir);
+  if (!tokens) return null;
+  const encoder = onnx.find((p) => p.includes("int8")) ?? onnx[0]; // int8: faster CPU inference
+  if (!encoder) return null;
+  const base = path.basename(encoder);
+  return {
+    tokens,
+    encoder,
+    decoder: path.join(path.dirname(encoder), base.replace("encoder", "decoder")),
+    joiner: path.join(path.dirname(encoder), base.replace("encoder", "joiner")),
+  };
+}
+
+export function sherpaModelAvailable(modelDir?: string): boolean {
+  return findModelFiles(modelDir ?? defaultModelDir()) !== null;
+}
+
+function defaultModelDir(): string {
+  // Walk up from cwd so apps/api, packages/* and repo-root runs all resolve.
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i++) {
+    const candidate = path.join(dir, "models", "sherpa");
+    if (existsSync(path.join(candidate, "tokens.txt"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.join(process.cwd(), "models", "sherpa");
+}
+
+/** Download + extract the model if `tokens.txt` is absent. Returns the dir. */
+export async function ensureSherpaModel(
+  modelDir: string,
+  opts: { modelUrl?: string; fetchImpl?: typeof fetch } = {},
+): Promise<string> {
+  if (findModelFiles(modelDir)) return modelDir;
+  const url = opts.modelUrl ?? DEFAULT_SHERPA_MODEL_URL;
+  mkdirSync(modelDir, { recursive: true });
+  const archive = path.join(modelDir, "model.tar.bz2");
+  console.log(`[sherpa] downloading model: ${url}`);
+  const res = await (opts.fetchImpl ?? fetch)(url);
+  if (!res.ok) throw new Error(`sherpa model download failed: HTTP ${res.status}`);
+  writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
+  // bsdtar (Windows 10+) and GNU tar with bzip2 both handle .tar.bz2.
+  execFileSync("tar", ["-xf", archive, "-C", modelDir]);
+  rmSync(archive, { force: true });
+  if (!findModelFiles(modelDir)) throw new Error(`sherpa model extracted but tokens.txt not found under ${modelDir}`);
+  console.log(`[sherpa] model ready: ${modelDir}`);
+  return modelDir;
+}
+
+export interface SherpaEngineOptions {
+  modelDir?: string;
+  modelUrl?: string;
+  /** Inject the sherpa-onnx module (tests). */
+  loadModule?: () => SherpaModule;
+  sampleRate?: number;
+}
+
+export class SherpaStreamingSttEngine implements SttEngine {
+  readonly source = "local_stt" as const;
+
+  private readonly modelDir: string;
+  private readonly modelUrl: string | undefined;
+  private readonly loadModule: () => SherpaModule;
+  private readonly injected: boolean;
+  private readonly sampleRate: number;
+
+  private recognizer: SherpaOnlineRecognizer | null = null;
+  private stream: SherpaOnlineStream | null = null;
+  private unavailableFired = false;
+  private unavailableCb: (() => void) | null = null;
+  private onResult: ((r: SttPartial | SttFinal) => void) | null = null;
+  private lastPartial = "";
+  private utteranceStartedAtMs = 0;
+  private lastFeedAtMs = 0;
+  /** Decode cadence: sherpa decodes in ~100ms feature windows; feed ≥ that. */
+  private pendingSamples: number[] = [];
+
+  constructor(opts: SherpaEngineOptions = {}) {
+    this.modelDir = opts.modelDir ?? process.env.SHERPA_MODEL_DIR ?? defaultModelDir();
+    this.modelUrl = opts.modelUrl;
+    this.loadModule = opts.loadModule ?? loadSherpaModule;
+    this.injected = opts.loadModule !== undefined;
+    this.sampleRate = opts.sampleRate ?? 16_000;
+  }
+
+  onUnavailable(cb: () => void): void {
+    this.unavailableCb = cb;
+  }
+
+  close(): void {
+    this.recognizer = null;
+    this.stream = null;
+    this.pendingSamples = [];
+  }
+
+  private init(): boolean {
+    if (this.recognizer) return true;
+    if (this.unavailableFired) return false;
+    try {
+      // Injected modules (tests) get placeholder paths; the real loader
+      // requires the on-disk model.
+      const files = findModelFiles(this.modelDir);
+      if (!files && !this.injected) {
+        throw new Error(
+          `sherpa model not found under ${this.modelDir} — call ensureSherpaModel() or set SHERPA_MODEL_DIR`,
+        );
+      }
+      const resolved =
+        files ??
+        {
+          tokens: path.join(this.modelDir, "tokens.txt"),
+          encoder: path.join(this.modelDir, "encoder.onnx"),
+          decoder: path.join(this.modelDir, "decoder.onnx"),
+          joiner: path.join(this.modelDir, "joiner.onnx"),
+        };
+      const { OnlineRecognizer } = this.loadModule();
+      this.recognizer = new OnlineRecognizer({
+        modelConfig: {
+          transducer: { encoder: resolved.encoder, decoder: resolved.decoder, joiner: resolved.joiner },
+          tokens: resolved.tokens,
+          numThreads: 2,
+          sampleRate: this.sampleRate,
+          featureDim: 80,
+        },
+      });
+      this.stream = this.recognizer.createStream();
+      return true;
+    } catch (e) {
+      console.warn(`[sherpa] unavailable: ${String(e)}`);
+      this.unavailableFired = true;
+      this.unavailableCb?.();
+      return false;
+    }
+  }
+
+  feed(pcm: Buffer, atMs: number, onResult: (r: SttPartial | SttFinal) => void): void {
+    this.onResult = onResult;
+    if (!this.init() || !this.recognizer || !this.stream) return;
+
+    if (atMs < this.lastFeedAtMs || this.utteranceStartedAtMs === 0) this.utteranceStartedAtMs = atMs;
+    this.lastFeedAtMs = atMs;
+
+    // Int16 LE → Float32 [-1, 1)
+    for (let i = 0; i + 1 < pcm.length; i += 2) {
+      this.pendingSamples.push(pcm.readInt16LE(i) / 32768);
+    }
+    // Decode in ~100 ms windows (1600 samples) to amortize recognizer calls.
+    const WINDOW = this.sampleRate / 10;
+    while (this.pendingSamples.length >= WINDOW) {
+      const samples = new Float32Array(this.pendingSamples.splice(0, WINDOW));
+      this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples });
+      this.decodeCurrent();
+    }
+  }
+
+  flush(onResult: (r: SttFinal) => void): void {
+    this.onResult = (r) => {
+      if (r.isFinal) onResult(r);
+    };
+    if (!this.recognizer || !this.stream) return;
+
+    if (this.pendingSamples.length > 0) {
+      const samples = new Float32Array(this.pendingSamples.splice(0));
+      this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples });
+    }
+    // Flush the feature pipeline with trailing silence so tail words decode.
+    const tail = new Float32Array(this.sampleRate / 10);
+    this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples: tail });
+    while (this.recognizer.isReady(this.stream)) this.recognizer.decode(this.stream);
+
+    const raw = this.recognizer.getResult(this.stream);
+    const trimmed = (raw?.text ?? raw?.result_text ?? "").trim();
+    this.resetStream();
+    if (trimmed) {
+      const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
+      this.utteranceStartedAtMs = 0;
+      onResult({
+        isFinal: true,
+        text: trimmed,
+        confidence: 0.85,
+        startedAtMs,
+        endedAtMs: Math.max(this.lastFeedAtMs, startedAtMs + 200),
+      });
+    }
+    this.lastPartial = "";
+  }
+
+  private decodeCurrent(): void {
+    if (!this.recognizer || !this.stream) return;
+    while (this.recognizer.isReady(this.stream)) this.recognizer.decode(this.stream);
+
+    const raw = this.recognizer.getResult(this.stream) as { text?: string; result_text?: string } | undefined;
+    const text = (raw?.text ?? raw?.result_text ?? "").trim();
+    if (this.recognizer.isEndpoint(this.stream)) {
+      if (text && this.onResult) {
+        const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
+        this.onResult({
+          isFinal: true,
+          text,
+          confidence: 0.85,
+          startedAtMs,
+          endedAtMs: Math.max(this.lastFeedAtMs, startedAtMs + 200),
+        });
+      }
+      this.resetStream();
+      return;
+    }
+    if (text && text !== this.lastPartial && this.onResult) {
+      this.lastPartial = text;
+      this.onResult({ isFinal: false, text, confidence: 0.7 });
+    }
+  }
+
+  private resetStream(): void {
+    if (!this.recognizer || !this.stream) return;
+    try {
+      this.recognizer.reset(this.stream);
+    } catch {
+      // some builds replace the stream instead of resetting in place
+      this.stream = this.recognizer.createStream();
+    }
+    this.lastPartial = "";
+  }
+}

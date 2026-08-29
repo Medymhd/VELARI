@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "App Browser Companion",
+  "version": "0.1.0",
+  "description": "Capture page context for interview/coding assistant — isolated world, sensitive-page pause",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "ISOLATED"
+    }
+  ],
+  "externally_connectable": { "ids": [] },
+  "action": { "default_title": "Send to App" },
+  "icons": { "128": "icon.png" }
+}

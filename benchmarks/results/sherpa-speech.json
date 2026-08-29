@@ -1,0 +1,53 @@
+{
+  "startedAt": "2026-08-28T22:33:54.492Z",
+  "utterances": [
+    {
+      "file": "q1.wav",
+      "audioMs": 4725,
+      "firstPartialMs": 6568,
+      "partials": 6,
+      "finalText": "USE A STAKE HOLDER WITHOUT AUTHORITY",
+      "realTimeFactor": 2.81
+    },
+    {
+      "file": "q2.wav",
+      "audioMs": 3955,
+      "firstPartialMs": 5300,
+      "partials": 7,
+      "finalText": "U PRY ORATISE WHEN EVERYTHING IS URGENT",
+      "realTimeFactor": 2.9
+    },
+    {
+      "file": "q3.wav",
+      "audioMs": 4045,
+      "firstPartialMs": 4331,
+      "partials": 9,
+      "finalText": "'S COMPLEX SYSTEM YOU HAVE DESIGNED AND TO END",
+      "realTimeFactor": 3
+    },
+    {
+      "file": "q4.wav",
+      "audioMs": 3830,
+      "firstPartialMs": 5239,
+      "partials": 9,
+      "finalText": "O HANDLE DISAGREEING WITH YOUR MANAGER'S DECISION",
+      "realTimeFactor": 3.37
+    },
+    {
+      "file": "q5.wav",
+      "audioMs": 4105,
+      "firstPartialMs": 6153,
+      "partials": 8,
+      "finalText": "YOUR BIGGEST PROFESSIONAL FAILURE SO FAR",
+      "realTimeFactor": 3.3
+    },
+    {
+      "file": "q6.wav",
+      "audioMs": 4445,
+      "firstPartialMs": 5643,
+      "partials": 10,
+      "finalText": "A SITUATION WHERE YOU HAD TO DELIVER BAD NEWS TO YOUR TEAM",
+      "realTimeFactor": 3.14
+    }
+  ]
+}

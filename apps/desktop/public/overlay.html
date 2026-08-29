@@ -1,0 +1,170 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --glass: rgba(16, 17, 22, 0.86);
+        --border: rgba(255, 255, 255, 0.08);
+        --text: #e9ebf0;
+        --muted: #8f94a3;
+        --accent: #7c7cff;
+        --success: #34d399;
+        --radius: 14px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: Inter, system-ui, "Segoe UI", sans-serif; }
+      .panel {
+        height: 100%; display: flex; flex-direction: column; gap: 10px;
+        padding: 12px 14px; border-radius: var(--radius);
+        background: var(--glass); border: 1px solid var(--border);
+        backdrop-filter: blur(18px); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+        color: var(--text); -webkit-font-smoothing: antialiased;
+      }
+      header {
+        display: flex; align-items: center; gap: 8px; cursor: grab;
+        padding-bottom: 8px; border-bottom: 1px solid var(--border);
+      }
+      header b { font-size: 13px; letter-spacing: 0.02em; }
+      header .spacer { flex: 1; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px rgba(52, 211, 153, 0.6); }
+      .btn {
+        font: inherit; font-size: 11px; cursor: pointer; border-radius: 8px;
+        border: 1px solid var(--border); background: rgba(255, 255, 255, 0.06); color: var(--text);
+        padding: 4px 10px;
+      }
+      .btn:hover { background: rgba(255, 255, 255, 0.12); }
+      .btn.on { background: var(--accent); border-color: transparent; color: #fff; }
+      .sec { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+      .sec label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+      .q { font-size: 14px; font-weight: 600; line-height: 1.35; }
+      .outline { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.5; color: var(--text); }
+      .points { font-size: 12px; line-height: 1.5; color: var(--muted); }
+      .transcript {
+        flex: 1; min-height: 52px; overflow-y: auto; font-size: 12px; line-height: 1.5;
+        border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.25);
+      }
+      .transcript .line { margin-bottom: 4px; }
+      .transcript .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
+      .transcript .partial { opacity: 0.55; }
+      .notes {
+        min-height: 44px; max-height: 72px; overflow-y: auto; font-size: 12px; line-height: 1.5;
+        border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.2);
+        white-space: pre-wrap; word-break: break-word;
+      }
+      .notes:empty::before { content: 'Engage "Tap keys" and type — swallowed system-wide'; color: var(--muted); }
+      .muted { color: var(--muted); }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <header data-tauri-drag-region>
+        <span class="dot"></span><b>Live coach</b>
+        <span class="spacer" data-tauri-drag-region></span>
+        <button class="btn" id="tapBtn">Tap keys</button>
+        <button class="btn" id="hideBtn" title="Hide">✕</button>
+      </header>
+      <section class="sec">
+        <label>Detected question</label>
+        <div class="q" id="qText">Listening…</div>
+      </section>
+      <section class="sec">
+        <label>Framework</label>
+        <ol class="outline" id="outline"></ol>
+      </section>
+      <section class="sec">
+        <label>Talking points</label>
+        <div class="points" id="points">—</div>
+      </section>
+      <section class="sec" style="flex: 1;">
+        <label>Interviewer</label>
+        <div class="transcript" id="transcript"></div>
+      </section>
+      <section class="sec">
+        <label>Notes <span class="muted" id="tapState"></span></label>
+        <div class="notes" id="notes"></div>
+      </section>
+    </div>
+    <script>
+      const { invoke, event } = window.__TAURI__;
+      const $ = (id) => document.getElementById(id);
+      const tapState = { active: false, notes: "" };
+
+      $("tapBtn").addEventListener("click", async () => {
+        try {
+          if (tapState.active) await stopTap();
+          else {
+            await invoke("stealth_keyboard_start");
+            tapState.active = true;
+            tapState.notes = "";
+            renderNotes();
+            $("tapBtn").classList.add("on");
+            $("tapBtn").textContent = "Stop tap";
+            $("tapState").textContent = "· system keys swallowed";
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+      async function stopTap() {
+        await invoke("stealth_keyboard_stop").catch(() => {});
+        tapState.active = false;
+        $("tapBtn").classList.remove("on");
+        $("tapBtn").textContent = "Tap keys";
+        $("tapState").textContent = "";
+      }
+      $("hideBtn").addEventListener("click", () => invoke("overlay_hide"));
+
+      event.listen("keyboard://captured", (e) => {
+        if (!tapState.active) return;
+        const k = e.payload;
+        if (k.isOutsideMouseDown) { stopTap(); return; }
+        if (!k.isKeyDown) return;
+        if (k.keyCode === 53) { stopTap(); return; } // Esc
+        if (k.keyCode === 36 || k.keyCode === 76) {
+          const text = tapState.notes.trim();
+          if (text) event.emit("overlay://manual", { text });
+          tapState.notes = "";
+          renderNotes();
+          return;
+        }
+        if (k.keyCode === 51) { tapState.notes = tapState.notes.slice(0, -1); renderNotes(); return; }
+        if (k.chars) { tapState.notes += k.chars; renderNotes(); }
+      });
+      function renderNotes() { $("notes").textContent = tapState.notes; }
+
+      event.listen("overlay://transcript", (e) => {
+        const { speaker, text, isFinal } = e.payload;
+        if (speaker !== "interviewer") return; // the panel tracks the interviewer
+        const el = $("transcript");
+        const line = document.createElement("div");
+        line.className = "line" + (isFinal ? "" : " partial");
+        const who = document.createElement("span");
+        who.className = "who";
+        who.textContent = "IV";
+        line.appendChild(who);
+        line.appendChild(document.createTextNode(text));
+        const last = el.lastElementChild;
+        if (last && last.dataset.final === "false" && !isFinal) el.replaceChild(line, last);
+        else el.appendChild(line);
+        while (el.childElementCount > 6) el.removeChild(el.firstElementChild);
+        el.scrollTop = el.scrollHeight;
+      });
+
+      event.listen("overlay://insight", (e) => {
+        const c = e.payload.contentJson ?? {};
+        if (c.detected_question) $("qText").textContent = c.detected_question;
+        const outline = $("outline");
+        outline.textContent = "";
+        for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
+          const li = document.createElement("li");
+          li.textContent = item;
+          outline.appendChild(li);
+        }
+        $("points").textContent = (c.talking_points ?? []).join(" · ") || "—";
+      });
+    </script>
+  </body>
+</html>

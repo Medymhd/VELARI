@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "App",
+  "version": "0.1.0",
+  "identifier": "com.app.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "App",
+        "width": 1140,
+        "height": 760,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBRjdGRjA4NTZCRUM0OTYKUldTV3hMNVdDUC8zT2pJQzk3WU02NVc4TzN5dGt6RkJ4UDloVXFxbzQwa0drcHF3RXVkOVhPWDYK",
+      "endpoints": [
+        "https://updates.example.com/desktop/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    }
+  }
+}

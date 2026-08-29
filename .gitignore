@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+*.tsbuildinfo
+.turbo/
+
+# Secrets & local config — never commit
+.env
+.env.local
+*.local
+
+# Signing keys (private material — back up outside the repo)
+apps/desktop/keys/updater.key
+
+# Native model downloads & generated corpus
+models/
+benchmarks/corpus/
+
+# Local artifacts
+.data/
+coverage/
+*.log
+
+# Documentation: internal docs stay local (OneDrive); only the public README is tracked
+*.md
+!/README.md
+
+# OS noise
+Thumbs.db
+.DS_Store

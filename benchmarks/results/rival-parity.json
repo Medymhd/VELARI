@@ -1,0 +1,33 @@
+{
+  "startedAt": "2026-08-28T23:34:28.722Z",
+  "runs": 5,
+  "scenarios": {
+    "coach": {
+      "rival-semantics(race)": {
+        "committed": "groq",
+        "firstTokenMs": 317,
+        "totalMs": 860,
+        "jsonValidity": 1,
+        "errors": [],
+        "textHeads": [
+          "{\n\"detected_question\": \"Tell me about a conflict with a colleague and how you resolved it.\",\n\"sugges",
+          "{\n\"detected_question\": \"Describe a professional failure and what changed afterward.\",\n\"suggested_out",
+          "{\n  \"detected_question\": \"Walk through scaling a system past its original limits.\",\n  \"suggested_out",
+          "{\n\"detected_question\": \"How did you drive an outcome without formal authority?\",\n\"suggested_outline\"",
+          "{\n\"detected_question\": \"Two urgent projects, resources for one — how do you decide?\",\n\"suggested_out"
+        ]
+      },
+      "ours(best-single)": {
+        "committed": null,
+        "firstTokenMs": 457,
+        "totalMs": 910,
+        "jsonValidity": 1,
+        "errors": [],
+        "textHeads": []
+      }
+    },
+    "sttLocalFirstPartial": {
+      "ours(=rival model class moonshine-tiny)": 2049
+    }
+  }
+}
