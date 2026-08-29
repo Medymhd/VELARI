@@ -118,4 +118,11 @@ This mode exists only for the academic make-then-break exercise.
 
 ## Project status
 
-Interview Intelligence vertical: production-grade pipeline (audio → STT → judged coaching → recall → review → export), hardened API, signed installer, $0 operating mode. Remaining backlog lives in `implementationplan.md` §5.1/§5.2 (macOS native ports, real-corpus WER, rival-binary joint run) with the parity evidence trail in `ARCHITECTURE_COMPARISON_VELARI_VS_RIVAL.md` + `benchmarks/results/`.
+Two verticals shipped on one binary:
+
+- **Interview Intelligence** — dual-channel live transcription (you + interviewer), streaming STT with per-channel speaker attribution, judged coaching with style adaptation + rolling summaries + vector recall, post-session review with search, capture-excluded stealth overlay with focus-free keyboard tap and Piper TTS speak button.
+- **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve, annotation service with Krippendorff's alpha agreement metrics, coding review (merged from coding-assistant), Studio authoring in the web console.
+
+Infrastructure: 5-rung STT chain, provider router + circuit breakers, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, integration APIs (Gmail/Calendar/Slack), TTS, signed NSIS installer, 18/18 build, ~91 TS tests + 24 cargo tests, CI pipeline.
+
+Backlog: `implementationplan.md` §5.1/§5.2 (macOS ports, real-corpus WER, rival-binary joint run, OAuth redirect flow).

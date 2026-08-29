@@ -17,6 +17,9 @@ In scope:
 - The realtime WebSocket pipeline (injection, replay, DoS via malformed frames)
 - Browser extension isolation (world leakage, guard fingerprinting)
 - Desktop stealth layer behaviors (this is a declared red-team exercise — see `docs/red-team/handoff-brief.md` for the intended detection surface)
+- Agent-run execution (`/agent-runs` routes): domain-allowlist bypass, credential leakage via `openSecret`, kill-switch bypass
+- Browser task execution (`/browser/execute`): allowlist widening via request body, credential material in responses
+- Annotation service: cross-task label injection, agreement metric manipulation
 
 Out of scope:
 - Vulnerabilities in third-party services (report to the vendor)
