@@ -18,8 +18,9 @@ import { registerRealtime } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
 import { validateRegistration, type VerticalRegistration } from "@app/agent-sdk";
-import { CircuitBreakerRegistry, type ChatMessage } from "@app/ai-runtime";
+import { CircuitBreakerRegistry } from "@app/ai-runtime";
 import { executeRouted, loadWorkspaceAiConfig } from "./ai/runtime.js";
+import type { ChatMessage } from "@app/contracts";
 
 async function discoverVerticals(): Promise<VerticalRegistration[]> {
   const candidates: string[] = [];
@@ -150,7 +151,10 @@ async function buildApp() {
                   messages: input.messages as ChatMessage[],
                   ...(input.responseSchema ? { responseSchema: input.responseSchema as Record<string, unknown> } : {}),
                 } as never);
-                if (!outcome.ok) throw new Error(outcome.error ?? "no eligible provider");
+                if (!outcome.ok) {
+                  const err = outcome.error as { message?: string; kind?: string } | undefined;
+                  throw new Error(err?.message ?? err?.kind ?? "no eligible provider");
+                }
                 return {
                   text: outcome.text ?? "",
                   ...(outcome.structured ? { structured: outcome.structured } : {}),

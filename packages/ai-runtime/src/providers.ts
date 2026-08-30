@@ -180,25 +180,30 @@ export class LocalEchoProvider extends AIProvider {
     const raw = lastUser?.content ?? "";
     const transcript =
       typeof raw === "string" ? raw : raw.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-    const structured: Record<string, unknown> =
-      request.taskClass === "live_coach"
-        ? {
-            detected_question: extractQuestion(transcript),
-            suggested_outline: ["Context", "Challenge", "Action", "Result"],
-            talking_points: [
-              "Anchor on one specific example with measurable outcome",
-              "Name your role and the tradeoff you owned",
-              "Close with what you learned and would repeat",
-            ],
-            confidence: 0.55,
-            requires_user_review: true,
-          }
-        : {};
+    if (request.taskClass === "live_coach") {
+      const structured: Record<string, unknown> = {
+        detected_question: extractQuestion(transcript),
+        suggested_outline: ["Context", "Challenge", "Action", "Result"],
+        talking_points: [
+          "Anchor on one specific example with measurable outcome",
+          "Name your role and the tradeoff you owned",
+          "Close with what you learned and would repeat",
+        ],
+        confidence: 0.55,
+        requires_user_review: true,
+      };
+      return ok(JSON.stringify(structured), structured, 12, {
+        prompt_tokens: Math.ceil(transcript.length / 4),
+        completion_tokens: 64,
+      });
+    }
+    // Deterministic offline echo for chat-style tasks (research, deep_analysis):
+    // the honest free-local answer until a real provider is configured.
     return ok(
-      JSON.stringify(structured),
-      structured,
+      transcript || "No input received.",
+      null,
       12,
-      { prompt_tokens: Math.ceil(transcript.length / 4), completion_tokens: 64 },
+      { prompt_tokens: Math.ceil(transcript.length / 4), completion_tokens: 32 },
     );
   }
 }
