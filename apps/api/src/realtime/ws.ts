@@ -441,7 +441,25 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     socket.on("close", () => {
       if (coachTimer) clearTimeout(coachTimer);
-      for (const engine of sttEngines.values()) engine.close?.();
+      // Flush every engine so trailing audio finalizes instead of being lost
+      // when the client stops sending (partial-only sessions otherwise end
+      // with zero persisted segments).
+      for (const [channel, engine] of sttEngines) {
+        try {
+          engine.flush((r) => {
+            if (r.isFinal && r.text.trim()) {
+              const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+              void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker);
+              log.info("flush final on disconnect", { sessionId: session!.id, channel, chars: r.text.length });
+            } else {
+              log.info("flush on disconnect produced no text", { sessionId: session!.id, channel });
+            }
+          });
+        } catch (e) {
+          log.warn("flush on disconnect failed", { sessionId: session!.id, channel, error: String(e) });
+        }
+        engine.close?.();
+      }
       log.info("realtime disconnected", { traceId, sessionId: session!.id });
     });
 

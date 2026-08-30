@@ -64,6 +64,17 @@ async function buildApp() {
   await app.register(cors, { origin: true, credentials: true });
   await app.register(websocket, { options: { maxPayload: 1 << 20 } });
 
+  // Bodyless POSTs (start/pause/complete, approvals) send content-type json with
+  // no payload; default parser rejects that with 400. Treat empty as {}.
+  app.addContentTypeParser<string>("application/json", { parseAs: "string" }, (_req, body, done) => {
+    if (body === "" || body === undefined) return done(null, {});
+    try {
+      done(null, JSON.parse(body));
+    } catch (e) {
+      done(e as Error, undefined);
+    }
+  });
+
   app.setErrorHandler((err: unknown, _req, reply) => {
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     const message = (err as Error).message ?? String(err) ?? "internal error";

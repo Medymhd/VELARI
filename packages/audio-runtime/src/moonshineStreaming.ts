@@ -113,17 +113,25 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     if (this.pipeline) return true;
     if (this.unavailableFired) return false;
     if (!this.initPromise) {
-      this.initPromise = this.factory()
-        .then(async (p) => {
-          this.pipeline = p;
-          // Warmup decode: pays session/model init off the first-utterance path.
-          try {
-            await p(new Float32Array(this.sampleRate), { sampling_rate: this.sampleRate });
-          } catch {
-            // warmup is best-effort
-          }
-          return true;
-        })
+      // First load may fetch weights from the HF hub; a stalled network must
+      // degrade to the next rung instead of stalling the whole chain.
+      const INIT_TIMEOUT_MS = 10_000;
+      this.initPromise = Promise.race([
+        this.factory()
+          .then(async (p) => {
+            this.pipeline = p;
+            // Warmup decode: pays session/model init off the first-utterance path.
+            try {
+              await p(new Float32Array(this.sampleRate), { sampling_rate: this.sampleRate });
+            } catch {
+              // warmup is best-effort
+            }
+            return true;
+          }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`moonshine init exceeded ${INIT_TIMEOUT_MS}ms`)), INIT_TIMEOUT_MS),
+        ),
+      ])
         .catch((e) => {
           console.warn(`[moonshine] unavailable: ${String(e).slice(0, 160)}`);
           this.unavailableFired = true;
