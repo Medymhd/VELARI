@@ -43,10 +43,17 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
   req.user = user;
 }
 
-/** Protects every /v1 route except /v1/auth/* and the self-authenticating STT relay WS. */
+/** Protects every /v1 route except /v1/auth/* and the self-authenticating STT relay WS + public discovery. */
 export function registerAuth(app: FastifyInstance): void {
   app.addHook("preHandler", async (req, reply) => {
-    if (!req.url.startsWith("/v1/") || req.url.startsWith("/v1/auth") || req.url.startsWith("/v1/stt/relay")) return;
+    if (
+      !req.url.startsWith("/v1/") ||
+      req.url.startsWith("/v1/auth") ||
+      req.url.startsWith("/v1/stt/relay") ||
+      req.url.startsWith("/v1/health") ||
+      req.url.startsWith("/v1/verticals")
+    )
+      return;
     await requireAuth(req, reply);
   });
 }

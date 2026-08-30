@@ -18,8 +18,40 @@ import { registerRealtime } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
 import { validateRegistration } from "@app/agent-sdk";
-import { vertical as interviewVertical } from "@app/vertical-interview-intelligence";
-import { vertical as workVertical } from "@app/vertical-work-assistant";
+import type { VerticalRegistration } from "@app/agent-sdk";
+
+async function discoverVerticals(): Promise<VerticalRegistration[]> {
+  const candidates: string[] = [];
+  try {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const pkg = require("../package.json") as { dependencies?: Record<string, string> };
+    for (const name of Object.keys(pkg.dependencies ?? {})) {
+      if (name.startsWith("@app/vertical-")) candidates.push(name);
+    }
+  } catch {}
+  if (candidates.length === 0) {
+    try {
+      const { readdir } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const root = join(process.cwd(), "../../verticals");
+      const entries = await readdir(root, { withFileTypes: true });
+      for (const e of entries) if (e.isDirectory()) candidates.push(`@app/vertical-${e.name}`);
+    } catch {}
+  }
+  const verticals: VerticalRegistration[] = [];
+  for (const pkgName of candidates) {
+    try {
+      const mod = (await import(pkgName)) as { vertical?: VerticalRegistration };
+      if (mod.vertical) verticals.push(mod.vertical);
+      else log.warn("vertical package has no `vertical` export", { pkgName });
+    } catch (e) {
+      log.warn("failed to load vertical", { pkgName, error: String(e) });
+    }
+  }
+  verticals.sort((a, b) => a.manifest.id.localeCompare(b.manifest.id));
+  return verticals;
+}
 
 const log = logger({ svc: "api" });
 
@@ -54,8 +86,9 @@ async function buildApp() {
   visionRoutes(app, prisma);
   recallRoutes(app, prisma);
 
-  // Vertical registry — validates each manifest and mounts under /v1/verticals/:id
-  const verticals = [interviewVertical, workVertical];
+  // Vertical registry — dynamic, no hard-coded ids. Adding a new vertical alongside the 2-3 built only requires a new `verticals/<id>` package.
+  const verticals = await discoverVerticals();
+  if (verticals.length === 0) log.warn("no verticals discovered — check verticals/* packages and apps/api dependencies");
   for (const v of verticals) {
     const parsed = VerticalManifest.safeParse(v.manifest);
     if (!parsed.success) throw new Error(`${v.manifest.id} manifest invalid: ${parsed.error.message}`);
@@ -102,6 +135,10 @@ async function buildApp() {
     );
     log.info("vertical mounted", { id: v.manifest.id, version: v.manifest.version });
   }
+
+  app.get("/v1/verticals", async () => ({
+    verticals: verticals.map((v) => v.manifest),
+  }));
 
   registerRealtime(app, prisma);
 
