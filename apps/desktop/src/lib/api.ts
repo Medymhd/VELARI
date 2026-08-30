@@ -65,7 +65,11 @@ export const api = {
   connectProvider: (body: { workspaceId: string; provider: string; secret: string }) =>
     req("/provider-connections", { method: "POST", body: JSON.stringify(body) }),
   modelProfiles: (workspaceId: string) =>
-    req<{ id: string; name: string; taskClass: string }[]>(`/model-profiles?workspaceId=${encodeURIComponent(workspaceId)}`),
+    req<{ id: string; name: string; taskClass: string; primaryModel: unknown; fallbackModels: unknown[] }[]>(
+      `/model-profiles?workspaceId=${encodeURIComponent(workspaceId)}`,
+    ),
+  testModelProfile: (id: string) => req<{ ok: boolean; latencyMs?: number }>(`/model-profiles/${id}/test`, { method: "POST" }),
+  health: () => req<{ ok: boolean; version?: string }>("/health"),
   wsUrl: (sessionId: string) =>
     `${API_BASE.replace(/^http/, "ws")}/realtime?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token() ?? "")}`,
 };
