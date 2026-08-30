@@ -41,6 +41,8 @@ jobs:
         run: PGPASSWORD=app psql -h localhost -U app -d app -c "CREATE EXTENSION IF NOT EXISTS vector;"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @app/api db:push
+      - name: Generate Prisma client (shared across workspace via pnpm store)
+        run: pnpm --filter @app/api exec prisma generate
       - run: pnpm build
       - run: pnpm test
 
