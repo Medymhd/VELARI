@@ -38,6 +38,9 @@ importers:
       '@app/vertical-interview-intelligence':
         specifier: workspace:*
         version: link:../../verticals/interview-intelligence
+      '@app/vertical-research':
+        specifier: workspace:*
+        version: link:../../verticals/research
       '@app/vertical-work-assistant':
         specifier: workspace:*
         version: link:../../verticals/work-assistant
@@ -344,6 +347,22 @@ importers:
       '@app/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  verticals/research:
+    dependencies:
+      '@app/agent-sdk':
+        specifier: workspace:*
+        version: link:../../packages/agent-sdk
+      '@app/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
