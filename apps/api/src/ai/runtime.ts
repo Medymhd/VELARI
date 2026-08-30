@@ -190,7 +190,7 @@ export async function executeRouted(
         latencyMs: result.latencyMs ?? 0,
         traceId,
       });
-      return result;
+      return { ...result, providerId: c.providerId };
     },
   ).catch((e: unknown) => ({
     ok: false as const,

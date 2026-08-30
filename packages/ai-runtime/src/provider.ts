@@ -27,6 +27,7 @@ export interface InvokeOutcome {
   inputUnits?: number;
   outputUnits?: number;
   latencyMs?: number;
+  providerId?: string;
   error?: ProviderError;
 }
 

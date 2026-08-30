@@ -106,6 +106,10 @@ export interface SherpaEngineOptions {
   /** Inject the sherpa-onnx module (tests). */
   loadModule?: () => SherpaModule;
   sampleRate?: number;
+  /** ONNX quantization: "q8" (default, fastest CPU) | "fp32" (best accuracy). */
+  dtype?: string;
+  /** Number of CPU threads for the recognizer (default 4). */
+  numThreads?: number;
 }
 
 export class SherpaStreamingSttEngine implements SttEngine {
@@ -123,9 +127,12 @@ export class SherpaStreamingSttEngine implements SttEngine {
   private unavailableCb: (() => void) | null = null;
   private onResult: ((r: SttPartial | SttFinal) => void) | null = null;
   private lastPartial = "";
+  /** Last known non-empty text (partial or final) — flush fallback when
+   *  getResult() returns empty after a reset (endpoint fired during feed). */
+  private lastKnownText = "";
   private utteranceStartedAtMs = 0;
   private lastFeedAtMs = 0;
-  /** Decode cadence: sherpa decodes in ~100ms feature windows; feed ≥ that. */
+  /** Decode cadence: sherpa decodes in ~50ms feature windows for faster partials. */
   private pendingSamples: number[] = [];
 
   constructor(opts: SherpaEngineOptions = {}) {
@@ -134,7 +141,10 @@ export class SherpaStreamingSttEngine implements SttEngine {
     this.loadModule = opts.loadModule ?? loadSherpaModule;
     this.injected = opts.loadModule !== undefined;
     this.sampleRate = opts.sampleRate ?? 16_000;
+    this.numThreads = opts.numThreads ?? 4;
   }
+
+  private readonly numThreads: number;
 
   onUnavailable(cb: () => void): void {
     this.unavailableCb = cb;
@@ -171,7 +181,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
         modelConfig: {
           transducer: { encoder: resolved.encoder, decoder: resolved.decoder, joiner: resolved.joiner },
           tokens: resolved.tokens,
-          numThreads: 2,
+          numThreads: this.numThreads,
           sampleRate: this.sampleRate,
           featureDim: 80,
         },
@@ -197,8 +207,8 @@ export class SherpaStreamingSttEngine implements SttEngine {
     for (let i = 0; i + 1 < pcm.length; i += 2) {
       this.pendingSamples.push(pcm.readInt16LE(i) / 32768);
     }
-    // Decode in ~100 ms windows (1600 samples) to amortize recognizer calls.
-    const WINDOW = this.sampleRate / 10;
+    // Decode in ~50 ms windows (800 samples) for 2× faster partial arrival.
+    const WINDOW = this.sampleRate / 20;
     while (this.pendingSamples.length >= WINDOW) {
       const samples = new Float32Array(this.pendingSamples.splice(0, WINDOW));
       this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples });
@@ -216,26 +226,32 @@ export class SherpaStreamingSttEngine implements SttEngine {
       const samples = new Float32Array(this.pendingSamples.splice(0));
       this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples });
     }
-    // Flush the feature pipeline with trailing silence so tail words decode.
-    const tail = new Float32Array(this.sampleRate / 10);
+    // Flush with 1.5 s trailing silence — enough for the zipformer's
+    // endpointing rule to fire and for the decoder to converge on tail words.
+    const tail = new Float32Array(Math.floor(this.sampleRate * 1.5));
     this.stream.acceptWaveform({ sampleRate: this.sampleRate, samples: tail });
     while (this.recognizer.isReady(this.stream)) this.recognizer.decode(this.stream);
 
     const raw = this.recognizer.getResult(this.stream);
     const trimmed = (raw?.text ?? raw?.result_text ?? "").trim();
+    // Fall back to the last known partial when getResult() returns empty —
+    // this happens when the recognizer state was reset by an endpoint event
+    // during feed, or when the model decoded through all windows already.
+    const finalText = trimmed || this.lastKnownText;
     this.resetStream();
-    if (trimmed) {
+    if (finalText) {
       const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
       this.utteranceStartedAtMs = 0;
       onResult({
         isFinal: true,
-        text: trimmed,
+        text: finalText,
         confidence: 0.85,
         startedAtMs,
         endedAtMs: Math.max(this.lastFeedAtMs, startedAtMs + 200),
       });
     }
     this.lastPartial = "";
+    this.lastKnownText = "";
   }
 
   private decodeCurrent(): void {
@@ -245,21 +261,23 @@ export class SherpaStreamingSttEngine implements SttEngine {
     const raw = this.recognizer.getResult(this.stream) as { text?: string; result_text?: string } | undefined;
     const text = (raw?.text ?? raw?.result_text ?? "").trim();
     if (this.recognizer.isEndpoint(this.stream)) {
-      if (text && this.onResult) {
-        const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
-        this.onResult({
-          isFinal: true,
-          text,
-          confidence: 0.85,
-          startedAtMs,
-          endedAtMs: Math.max(this.lastFeedAtMs, startedAtMs + 200),
-        });
-      }
-      this.resetStream();
-      return;
+    if (text && this.onResult) {
+      const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
+      this.lastKnownText = text;
+      this.onResult({
+        isFinal: true,
+        text,
+        confidence: 0.85,
+        startedAtMs,
+        endedAtMs: Math.max(this.lastFeedAtMs, startedAtMs + 200),
+      });
+    }
+    this.resetStream();
+    return;
     }
     if (text && text !== this.lastPartial && this.onResult) {
       this.lastPartial = text;
+      this.lastKnownText = text;
       this.onResult({ isFinal: false, text, confidence: 0.7 });
     }
   }

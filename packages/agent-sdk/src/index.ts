@@ -139,17 +139,20 @@ export async function writeVerticalAudit(db: unknown, entry: {
   }
 }
 
-/** Domain allowlist check — default blank [] blocks until policy is set. */
+/** Approval gate: external_write/sensitive require approval unless autoApprove is set. */
+export function needsApproval(risk: string, autoApprove: boolean): boolean {
+  return (risk === "external_write" || risk === "sensitive") && !autoApprove;
+}
+
+/** Domain allowlist check — default blank [] blocks until policy is set. Handles wildcard subdomains. */
 export function isDomainAllowed(url: string, allowedDomains: string[]): boolean {
   if (allowedDomains.length === 0) return false;
   const host = parseHost(url);
   if (!host) return false;
-  return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
-}
-
-/** Approval gate: external_write requires approval unless autoApprove is set. */
-export function needsApproval(risk: string, autoApprove: boolean): boolean {
-  return risk === "external_write" && !autoApprove;
+  return allowedDomains.some((d) => {
+    const norm = d.toLowerCase().replace(/^\*\./, "");
+    return host === norm || host.endsWith(`.${norm}`);
+  });
 }
 
 
