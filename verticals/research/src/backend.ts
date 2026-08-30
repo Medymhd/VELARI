@@ -1,14 +1,21 @@
 /**
- * Research vertical backend — perplexity-type chat with history.
- * Uses in-memory store for MVP (replace with Prisma pgvector when needed).
- * History tomorrow: GET /chats lists all, GET /chats/:id/messages replays.
- * No hard-coded brand, no watermark, senior-grade.
+ * Research vertical backend — perplexity-style chat over the platform AI seam.
+ * Answers route through the BYOK router (free local rungs included); when no
+ * provider is eligible the route returns 503 so the UI can surface the BYOK
+ * notice instead of inventing content.
  */
-import type { VerticalRegistration } from "@app/agent-sdk";
+import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
 import { researchManifest } from "./manifest.js";
 
 type Chat = { id: string; title: string; createdAt: string; workspaceId: string };
-type Message = { id: string; chatId: string; role: "user" | "assistant"; content: string; createdAt: string };
+type Message = {
+  id: string;
+  chatId: string;
+  role: "user" | "assistant";
+  content: string;
+  providerId?: string;
+  createdAt: string;
+};
 
 const chats = new Map<string, Chat>();
 const messages = new Map<string, Message[]>();
@@ -17,69 +24,99 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function bodyOf(req: unknown): Record<string, unknown> {
+  return (req as { body?: Record<string, unknown> }).body ?? {};
+}
+
+function send(reply: unknown, payload: unknown): void {
+  (reply as { send(v: unknown): unknown }).send(payload);
+}
+
+function status(reply: unknown, code: number) {
+  return (reply as { status(n: number): { send(v: unknown): unknown } }).status(code);
+}
+
 export const vertical: VerticalRegistration = {
   manifest: researchManifest,
-  registerRoutes(register) {
-    // POST /chats — new chat (like Perplexity new thread)
-    register.post("/chats", (req, reply) => {
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const title = (typeof body.title === "string" && body.title.trim()) || (typeof body.question === "string" ? (body.question as string).slice(0, 60) : "New research");
+  registerRoutes(register, services) {
+    const ai = services?.ai;
+
+    register.post("/chats", (rawReq, reply) => {
+      const body = bodyOf(rawReq);
       const workspaceId = (body.workspaceId as string) ?? "default";
+      const firstQuestion = typeof body.question === "string" ? body.question : "";
+      const title = ((typeof body.title === "string" && body.title) || firstQuestion || "New research").slice(0, 60);
       const chat: Chat = { id: newId(), title, createdAt: new Date().toISOString(), workspaceId };
       chats.set(chat.id, chat);
       messages.set(chat.id, []);
-      (reply as { send(v: unknown): unknown }).send({ chat });
+      send(reply, { chat });
     });
 
-    // GET /chats — history (tomorrow read)
-    register.get("/chats", (req, reply) => {
-      const q = (req as { query?: Record<string, string> }).query ?? {};
-      const workspaceId = q.workspaceId;
-      const list = [...chats.values()].filter((c) => !workspaceId || c.workspaceId === workspaceId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      (reply as { send(v: unknown): unknown }).send({ chats: list });
+    register.get("/chats", (rawReq, reply) => {
+      const workspaceId = (rawReq as { query?: { workspaceId?: string } }).query?.workspaceId;
+      const list = [...chats.values()]
+        .filter((c) => !workspaceId || c.workspaceId === workspaceId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      send(reply, { chats: list });
     });
 
-    // GET /chats/:id
-    register.get("/chats/:id", (req, reply) => {
-      const id = (req as { params?: { id?: string } }).params?.id ?? "";
-      const chat = chats.get(id);
-      if (!chat) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "chat not found" });
-      (reply as { send(v: unknown): unknown }).send({ chat });
+    register.get("/chats/:id", (rawReq, reply) => {
+      const chat = chats.get((rawReq as { params?: { id?: string } }).params?.id ?? "");
+      if (!chat) return status(reply, 404).send({ error: "chat not found" });
+      send(reply, { chat });
     });
 
-    // POST /chats/:id/messages — ask question, follow-up
-    register.post("/chats/:id/messages", (req, reply) => {
-      const id = (req as { params?: { id?: string } }).params?.id ?? "";
-      const chat = chats.get(id);
-      if (!chat) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "chat not found" });
-      const body = (req as { body?: Record<string, unknown> }).body ?? {};
-      const question = (body.question as string) ?? (body.content as string) ?? "";
-      if (!question.trim()) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "question required" });
+    register.post("/chats/:id/messages", async (rawReq, reply) => {
+      const chatId = (rawReq as { params?: { id?: string } }).params?.id ?? "";
+      const chat = chats.get(chatId);
+      if (!chat) return status(reply, 404).send({ error: "chat not found" });
+      const body = bodyOf(rawReq);
+      const question = (body.question as string) ?? "";
+      if (!question.trim()) return status(reply, 400).send({ error: "question required" });
 
-      const userMsg: Message = { id: newId(), chatId: id, role: "user", content: question, createdAt: new Date().toISOString() };
-      const assistantMsg: Message = {
-        id: newId(),
-        chatId: id,
-        role: "assistant",
-        content: `[Research answer for "${question.slice(0, 80)}"] — This is a simulated cited answer. In production, this would call the BYOK router (Moonshine/Groq) with pgvector hybrid recall (0.7·cosine + rerank 35%) and return citations. Follow-up questions can be asked via the same endpoint.`,
-        createdAt: new Date().toISOString(),
-      };
-      const list = messages.get(id) ?? [];
-      list.push(userMsg, assistantMsg);
-      messages.set(id, list);
-      (reply as { send(v: unknown): unknown }).send({ userMsg, assistantMsg });
+      const userMsg: Message = { id: newId(), chatId, role: "user", content: question, createdAt: new Date().toISOString() };
+      const history = messages.get(chatId) ?? [];
+      history.push(userMsg);
+
+      if (!ai) {
+        history.pop();
+        return status(reply, 503).send({ error: "no_provider", hint: "connect a provider in Settings (BYOK) — the free local rung requires the API ai seam" });
+      }
+
+      try {
+        const answer = await ai.ask({
+          workspaceId: chat.workspaceId,
+          taskClass: "deep_analysis",
+          messages: [
+            { role: "system", content: "You are a precise research assistant. Answer directly, cite concrete facts from the conversation, and note uncertainty honestly." },
+            ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
+          ],
+        });
+        const assistantMsg: Message = {
+          id: newId(),
+          chatId,
+          role: "assistant",
+          content: answer.text,
+          providerId: answer.providerId,
+          createdAt: new Date().toISOString(),
+        };
+        history.push(assistantMsg);
+        messages.set(chatId, history);
+        send(reply, { userMsg, assistantMsg });
+      } catch (e) {
+        history.pop();
+        status(reply, 503).send({ error: "no_provider", detail: e instanceof Error ? e.message : String(e) });
+      }
     });
 
-    // GET /chats/:id/messages — replay for tomorrow
-    register.get("/chats/:id/messages", (req, reply) => {
-      const id = (req as { params?: { id?: string } }).params?.id ?? "";
-      if (!chats.has(id)) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(404).send({ error: "chat not found" });
-      (reply as { send(v: unknown): unknown }).send({ messages: messages.get(id) ?? [] });
+    register.get("/chats/:id/messages", (rawReq, reply) => {
+      const chatId = (rawReq as { params?: { id?: string } }).params?.id ?? "";
+      if (!chats.has(chatId)) return status(reply, 404).send({ error: "chat not found" });
+      send(reply, { messages: messages.get(chatId) ?? [] });
     });
 
-    // GET /health
     register.get("/health", (_req, reply) => {
-      (reply as { send(v: unknown): unknown }).send({ ok: true, vertical: researchManifest.id, chats: chats.size });
+      send(reply, { ok: true, vertical: researchManifest.id, chats: chats.size });
     });
   },
 };

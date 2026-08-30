@@ -58,6 +58,16 @@ export interface VerticalServices {
    *  inline for dev). Returns null when the ref cannot be opened. Never log
    *  the result. */
   openSecret?: (credentialRef: string) => string | null;
+  /** Platform AI seam — routes through the BYOK router (scoring, breakers,
+   *  usage ledger) so verticals never touch provider code directly. */
+  ai?: {
+    ask(input: {
+      workspaceId: string;
+      taskClass: string;
+      messages: unknown[];
+      responseSchema?: unknown;
+    }): Promise<{ text: string; structured?: unknown; providerId?: string }>;
+  };
 }
 
 /**

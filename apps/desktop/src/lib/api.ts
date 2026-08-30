@@ -75,6 +75,9 @@ export const api = {
     req(`/workspaces/${workspaceId}/policy`, { method: "PATCH", body: JSON.stringify(policy) }),
   deleteProvider: (id: string) => req(`/provider-connections/${id}`, { method: "DELETE" }),
   health: () => req<{ ok: boolean; version?: string }>("/health"),
+  verticalGet: <T>(vertical: string, path: string) => req<T>(`/verticals/${vertical}${path}`),
+  verticalPost: <T>(vertical: string, path: string, body: unknown) =>
+    req<T>(`/verticals/${vertical}${path}`, { method: "POST", body: JSON.stringify(body) }),
   wsUrl: (sessionId: string) =>
     `${API_BASE.replace(/^http/, "ws")}/realtime?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token() ?? "")}`,
 };

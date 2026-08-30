@@ -9,6 +9,8 @@ import Home from "./features/Home";
 import LiveSession from "./features/LiveSession";
 import Review from "./features/Review";
 import Settings from "./features/Settings";
+import Research from "./features/Research";
+import Work from "./features/Work";
 import { useEffect, useState } from "react";
 
 const CORE_NAV = [
@@ -147,7 +149,10 @@ export default function App() {
           {screen === "live" && <LiveSession />}
           {screen === "review" && <Review />}
           {screen === "settings" && <Settings />}
-          {activeVertical && screen !== "interview-intelligence" && screen !== "work" && screen !== "research" && (
+          {screen === "research" && <Research />}
+          {screen === "work" && <Work />}
+          {screen === "settings" && null}
+          {activeVertical && !["interview-intelligence", "work", "research"].includes(activeVertical.id) && (
             <div className="card col" style={{ marginTop: 16 }}>
               <span className="kicker">{activeVertical.displayName}</span>
               <span className="small muted">

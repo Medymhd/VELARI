@@ -17,8 +17,9 @@ import { recallRoutes } from "./routes/recall.js";
 import { registerRealtime } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
-import { validateRegistration } from "@app/agent-sdk";
-import type { VerticalRegistration } from "@app/agent-sdk";
+import { validateRegistration, type VerticalRegistration } from "@app/agent-sdk";
+import { CircuitBreakerRegistry, type ChatMessage } from "@app/ai-runtime";
+import { executeRouted, loadWorkspaceAiConfig } from "./ai/runtime.js";
 
 async function discoverVerticals(): Promise<VerticalRegistration[]> {
   const candidates: string[] = [];
@@ -54,6 +55,7 @@ async function discoverVerticals(): Promise<VerticalRegistration[]> {
 }
 
 const log = logger({ svc: "api" });
+const breakers = new CircuitBreakerRegistry();
 
 async function buildApp() {
   const app = Fastify({
@@ -138,6 +140,23 @@ async function buildApp() {
                 }
               }
               return payload || null;
+            },
+            ai: {
+              ask: async (input) => {
+                const cfg = await loadWorkspaceAiConfig(prisma, input.workspaceId);
+                const outcome = await executeRouted({ db: prisma, breakers }, cfg, input.workspaceId, null, {
+                  taskClass: input.taskClass as never,
+                  privacyMode: cfg.privacyMode,
+                  messages: input.messages as ChatMessage[],
+                  ...(input.responseSchema ? { responseSchema: input.responseSchema as Record<string, unknown> } : {}),
+                } as never);
+                if (!outcome.ok) throw new Error(outcome.error ?? "no eligible provider");
+                return {
+                  text: outcome.text ?? "",
+                  ...(outcome.structured ? { structured: outcome.structured } : {}),
+                  providerId: (outcome as { providerId?: string }).providerId,
+                };
+              },
             },
           },
         );
