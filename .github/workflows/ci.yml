@@ -35,8 +35,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install system deps (libvips for sharp, postgresql-client for psql)
+        run: sudo apt-get update && sudo apt-get install -y libvips-dev postgresql-client
       - name: Enable pgvector extension
-        run: docker exec ${{ job.services.postgres.id }} psql -U app -d app -c "CREATE EXTENSION IF NOT EXISTS vector;"
+        run: PGPASSWORD=app psql -h localhost -U app -d app -c "CREATE EXTENSION IF NOT EXISTS vector;"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @app/api db:push
       - run: pnpm build
