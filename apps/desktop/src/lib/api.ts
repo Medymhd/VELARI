@@ -14,7 +14,14 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const t = token();
   if (t) headers.authorization = `Bearer ${t}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch {
+    throw new Error(
+      `Cannot reach the API at ${API_BASE}. Make sure the backend is running (pnpm dev:api) and Postgres is up, then try again.`,
+    );
+  }
   if (res.status === 401) {
     window.dispatchEvent(new Event("app:unauthorized"));
     throw new Error("Session expired — sign in again");
