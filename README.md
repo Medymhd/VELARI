@@ -34,13 +34,11 @@ Set at minimum: `DATABASE_URL`, `JWT_SECRET`, `SECRET_MASTER_KEY`. Optional keys
 
 ### 2. Database
 
-Port note: `infra/docker/docker-compose.tests.yml` maps Postgres to **5433** so the stack never fights another local Postgres on 5432. `.env` ships with `DATABASE_URL=…localhost:5433/app` to match.
+Port note: the compose stack maps Postgres to **5433** (and Redis to 6380) so it never fights another local Postgres/Redis on 5432/6379. `.env` ships with `DATABASE_URL=…localhost:5433/app` to match.
 
 PowerShell:
 ```powershell
-docker compose -p velari-tests `
-  -f infra/docker/docker-compose.yml `
-  -f infra/docker/docker-compose.tests.yml up -d postgres
+docker compose -f infra/docker/docker-compose.yml up -d postgres
 
 Set-Location apps\api
 .\node_modules\.bin\prisma.cmd db push --skip-generate
@@ -49,9 +47,7 @@ Set-Location ..\..
 
 bash:
 ```sh
-docker compose -p velari-tests \
-  -f infra/docker/docker-compose.yml \
-  -f infra/docker/docker-compose.tests.yml up -d postgres
+docker compose -f infra/docker/docker-compose.yml up -d postgres
 export DATABASE_URL="postgresql://app:app@localhost:5433/app"
 (cd apps/api && ./node_modules/.bin/prisma db push --skip-generate)
 ```

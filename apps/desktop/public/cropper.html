@@ -15,6 +15,14 @@
     <div id="hint">Drag to select a region — Esc cancels</div>
     <script>
       const sel = document.getElementById("sel");
+      const hint = document.getElementById("hint");
+
+      if (!window.__TAURI__) {
+        // Never leave a blank (white) fullscreen overlay — say what's wrong.
+        document.getElementById("shade").style.background = "rgba(0,0,0,0.75)";
+        hint.textContent = "Cropper unavailable: Tauri API failed to load. Restart the app (or rebuild so cropper.html is bundled). Esc to close.";
+        document.addEventListener("keydown", (e) => { if (e.key === "Escape") window.close(); });
+      } else {
       const { invoke } = window.__TAURI__.core;
       let start = null;
 
@@ -53,9 +61,12 @@
         sel.style.height = r.height + "px";
       }
       function normRect(e) {
-        const x = Math.min(start.x, e.clientX);
-        const y = Math.min(start.y, e.clientY);
-        return { x, y, width: Math.abs(e.clientX - start.x), height: Math.abs(e.clientY - start.y) };
+        // Round to integers — the Rust command takes i32 and fractional
+        // clientX/clientY (display scaling) would fail to deserialize.
+        const x = Math.round(Math.min(start.x, e.clientX));
+        const y = Math.round(Math.min(start.y, e.clientY));
+        return { x, y, width: Math.round(Math.abs(e.clientX - start.x)), height: Math.round(Math.abs(e.clientY - start.y)) };
+      }
       }
     </script>
   </body>

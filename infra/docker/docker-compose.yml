@@ -1,3 +1,10 @@
+# Local platform stack. Named "velari" (not "tests") — this is the stack the
+# app actually runs against. Host ports are deliberately non-default
+# (5433/6380) so they never fight other local Postgres/Redis instances;
+# .env ships with DATABASE_URL=…localhost:5433/app to match.
+# Usage: docker compose -f infra/docker/docker-compose.yml up -d postgres
+name: velari
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -6,7 +13,7 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,7 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
