@@ -111,16 +111,20 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 input::placeholder, textarea::placeholder { color: #5b6070; }
 
 input[type="checkbox"] {
-  appearance: none; width: 36px; height: 20px; padding: 0; position: relative; flex: none;
+  appearance: none; width: 44px; height: 26px; padding: 0; position: relative; flex: none;
   border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border);
-  cursor: pointer; transition: background 0.18s ease;
+  cursor: pointer;
+  transition: background var(--duration-med) var(--ease-spring), border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
 }
 input[type="checkbox"]::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
-  border-radius: 50%; background: var(--muted); transition: transform 0.18s ease, background 0.18s ease;
+  content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: transform var(--duration-med) var(--ease-spring), width var(--duration-fast) var(--ease-spring);
 }
-input[type="checkbox"]:checked { background: var(--accent); border-color: transparent; }
-input[type="checkbox"]:checked::after { transform: translateX(16px); background: #fff; }
+input[type="checkbox"]:active:not(:disabled)::after { width: 24px; }
+input[type="checkbox"]:checked { background: var(--success); border-color: transparent; }
+input[type="checkbox"]:checked::after { transform: translateX(18px); }
 input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 
 .card {
@@ -191,7 +195,15 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
   background: var(--surface-3); color: var(--text); border-color: var(--border);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.sidebar .foot { margin-top: auto; padding: 10px 8px 0; border-top: 1px solid var(--border); }
+.sidebar .foot { margin-top: auto; padding: 10px 0 0; border-top: 1px solid var(--border); }
+.sidebar-group {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); padding: 12px 10px 4px; opacity: 0.75;
+}
+.nav-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none; margin-left: auto;
+  box-shadow: 0 0 6px color-mix(in srgb, currentColor 60%, transparent);
+}
 .content { flex: 1; min-width: 0; overflow-y: auto; }
 .content-inner { max-width: var(--content-width); margin: 0 auto; padding: 28px; }
 

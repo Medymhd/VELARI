@@ -14,12 +14,11 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const t = token();
   if (t) headers.authorization = `Bearer ${t}`;
 
-  // Convert BigInt in body safely
-  if (init.body && typeof init.body === "string") {
-    // already serialized
-  }
-
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  if (res.status === 401) {
+    window.dispatchEvent(new Event("app:unauthorized"));
+    throw new Error("Session expired — sign in again");
+  }
   const text = await res.text();
   const body = text ? (JSON.parse(text) as T) : ({} as T);
   if (!res.ok) {
@@ -68,7 +67,13 @@ export const api = {
     req<{ id: string; name: string; taskClass: string; primaryModel: unknown; fallbackModels: unknown[] }[]>(
       `/model-profiles?workspaceId=${encodeURIComponent(workspaceId)}`,
     ),
+  updateModelProfile: (id: string, body: Record<string, unknown>) =>
+    req(`/model-profiles/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   testModelProfile: (id: string) => req<{ ok: boolean; latencyMs?: number }>(`/model-profiles/${id}/test`, { method: "POST" }),
+  policy: (workspaceId: string) => req<Record<string, unknown>>(`/workspaces/${workspaceId}/policy`),
+  updatePolicy: (workspaceId: string, policy: Record<string, unknown>) =>
+    req(`/workspaces/${workspaceId}/policy`, { method: "PATCH", body: JSON.stringify(policy) }),
+  deleteProvider: (id: string) => req(`/provider-connections/${id}`, { method: "DELETE" }),
   health: () => req<{ ok: boolean; version?: string }>("/health"),
   wsUrl: (sessionId: string) =>
     `${API_BASE.replace(/^http/, "ws")}/realtime?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token() ?? "")}`,
