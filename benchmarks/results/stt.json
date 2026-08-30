@@ -1,21 +1,16 @@
 {
-  "startedAt": "2026-08-28T19:10:52.073Z",
+  "startedAt": "2026-08-30T06:21:00.681Z",
   "providers": {
     "note": "DEEPGRAM_API_KEY not set — deepgram scenarios skipped",
-    "groq_whisper_turbo": {
-      "totalMs": 797,
-      "textLen": 10,
-      "text": "Thank you."
-    },
     "sherpa_zipformer_local": {
       "partialCount": 1,
       "finalCount": 1,
-      "firstPartialMs": 2262,
-      "firstFinalMs": 5660,
-      "lastFinalMs": 5660
+      "firstPartialMs": 5249,
+      "firstFinalMs": 6628,
+      "lastFinalMs": 6628
     },
     "simulated": {
-      "totalMs": 19,
+      "totalMs": 13,
       "finals": 29
     }
   }
