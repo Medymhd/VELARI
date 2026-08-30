@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import { EmptyState, PageHeader, Skeleton, Sparkline, StatusPill } from "@app/ui";
+import { EmptyState, MotionCard, PageHeader, Skeleton, Sparkline, StatusPill } from "@app/ui";
 
 type SessionRow = { id: string; title: string | null; status: string };
 
@@ -66,22 +66,31 @@ export default function Home() {
         }
       />
 
-      <div className="stats">
-        <div className="card stat">
-          <span className="label">Total</span>
-          <span className="value">{sessions.length}</span>
-          <Sparkline data={sessions.map((_, i) => sessions.length - i)} />
-        </div>
-        <div className="card stat">
-          <span className="label">Live</span>
-          <span className="value">{live}</span>
-          <span className="small muted">{live > 0 ? "actively running" : "none active"}</span>
-        </div>
-        <div className="card stat">
-          <span className="label">Completed</span>
-          <span className="value">{completed}</span>
-          <span className="small muted">{sessions.length ? `${Math.round((completed / sessions.length) * 100)}% completion` : "—"}</span>
-        </div>
+      <div className="stats stagger">
+        <MotionCard delay={0.03}>
+          <div className="stat premium">
+            <span className="label">Total</span>
+            <span className="value grad">{sessions.length}</span>
+            <Sparkline data={sessions.map((_, i) => sessions.length - i)} />
+            <span className="stat-trend">↗ {sessions.length} sessions</span>
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.06}>
+          <div className="stat">
+            <span className="label">Live</span>
+            <span className="value">{live}</span>
+            <span className="small muted">{live > 0 ? "actively running • pulse" : "none active"}</span>
+            {live > 0 && <div className="waveform" style={{ marginTop: 6 }}><span></span><span></span><span></span><span></span><span></span></div>}
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.09}>
+          <div className="stat">
+            <span className="label">Completed</span>
+            <span className="value">{completed}</span>
+            <span className="small muted">{sessions.length ? `${Math.round((completed / sessions.length) * 100)}% completion` : "—"}</span>
+            <div className="timing-bar" style={{ marginTop: 6 }}><div style={{ width: `${sessions.length ? (completed / sessions.length) * 100 : 0}%` }} /></div>
+          </div>
+        </MotionCard>
       </div>
 
       <div className="card row">

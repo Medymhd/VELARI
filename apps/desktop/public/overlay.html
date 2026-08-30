@@ -56,16 +56,40 @@
       .muted { color: var(--muted); }
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
+      /* Extraordinary HUD — scan lines, waveform, timing, confidence */
+      .panel.hud { position: relative; overflow: hidden; }
+      .panel.hud::after {
+        content: ""; position: absolute; inset: 0;
+        background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(124,124,255,0.04) 2px 3px);
+        pointer-events: none; animation: scanDrift 8s linear infinite;
+      }
+      @keyframes scanDrift { from { transform: translateY(0); } to { transform: translateY(3px); } }
+      .waveform { display: flex; align-items: center; gap: 2px; height: 16px; }
+      .waveform span { width: 3px; height: 6px; background: var(--accent); border-radius: 2px; animation: wave 0.8s ease-in-out infinite; }
+      .waveform span:nth-child(2) { animation-delay: 0.1s; height: 10px; }
+      .waveform span:nth-child(3) { animation-delay: 0.2s; height: 14px; }
+      .waveform span:nth-child(4) { animation-delay: 0.15s; height: 9px; }
+      .waveform span:nth-child(5) { animation-delay: 0.05s; height: 12px; }
+      @keyframes wave { 0%,100% { height: 6px; opacity: 0.6; } 50% { height: 16px; opacity: 1; } }
+      .timing-bar { height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+      .timing-bar > div { height: 100%; background: linear-gradient(90deg, #7c7cff, #34d399); border-radius: 2px; transition: width 0.4s cubic-bezier(0.16,1,0.3,1); }
+      .confidence-meter { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 4px; }
+      .confidence-meter > div { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
+      .confidence-meter.high > div { background: #34d399; }
+      .confidence-meter.med > div { background: #fbbf24; }
+      .confidence-meter.low > div { background: #f87171; }
     </style>
   </head>
   <body>
-    <div class="panel">
+    <div class="panel hud">
       <header data-tauri-drag-region>
         <span class="dot"></span><b>Live coach</b>
+        <div class="waveform" id="wave" style="margin-left: 8px; display: none;"><span></span><span></span><span></span><span></span><span></span></div>
         <span class="spacer" data-tauri-drag-region></span>
         <button class="btn" id="tapBtn">Tap keys</button>
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
+      <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
       <section class="sec">
         <label>Detected question</label>
         <div class="q" id="qText">Listening…</div>
@@ -78,6 +102,7 @@
       <section class="sec">
         <label>Talking points</label>
         <div class="points" id="points">—</div>
+        <div class="confidence-meter" id="confMeter" style="display:none"><div id="confFill" style="width:0%"></div></div>
       </section>
       <section class="sec" style="flex: 1;">
         <label>Interviewer</label>
@@ -135,10 +160,27 @@
         if (k.chars) { tapState.notes += k.chars; renderNotes(); }
       });
       function renderNotes() { $("notes").textContent = tapState.notes; }
+      function setWave(active) { const w = $("wave"); if (w) w.style.display = active ? "flex" : "none"; }
+      function setConfidence(v) {
+        const m = $("confMeter"), f = $("confFill");
+        if (!m || !f) return;
+        if (v == null) { m.style.display = "none"; return; }
+        m.style.display = "block";
+        m.className = "confidence-meter " + (v >= 0.8 ? "high" : v >= 0.5 ? "med" : "low");
+        f.style.width = Math.round(v * 100) + "%";
+      }
+      function pulseTiming() {
+        const t = $("timingFill");
+        if (!t) return;
+        t.style.width = "0%";
+        requestAnimationFrame(() => { t.style.width = "100%"; });
+        setTimeout(() => { t.style.width = "0%"; }, 3000);
+      }
 
       event.listen("overlay://transcript", (e) => {
         const { speaker, text, isFinal } = e.payload;
         if (speaker !== "interviewer") return; // the panel tracks the interviewer
+        setWave(!isFinal);
         const el = $("transcript");
         const line = document.createElement("div");
         line.className = "line" + (isFinal ? "" : " partial");
@@ -152,6 +194,7 @@
         else el.appendChild(line);
         while (el.childElementCount > 6) el.removeChild(el.firstElementChild);
         el.scrollTop = el.scrollHeight;
+        if (isFinal) setTimeout(() => setWave(false), 800);
       });
 
       event.listen("overlay://insight", (e) => {
@@ -166,6 +209,9 @@
         }
         $("points").textContent = (c.talking_points ?? []).join(" · ") || "—";
         lastInsight = c;
+        setConfidence(typeof c.confidence === "number" ? c.confidence : null);
+        pulseTiming();
+        setWave(false);
       });
 
       let lastInsight = null;

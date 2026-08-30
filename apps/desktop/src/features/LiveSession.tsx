@@ -415,9 +415,10 @@ export default function LiveSession() {
   return (
     <div className="grid" style={{ gridTemplateColumns: "1.2fr 0.8fr", alignItems: "start" }}>
       <div className="grid">
-        <div className="card row" style={{ justifyContent: "space-between" }}>
+        <div className="card row hud-scanlines" style={{ justifyContent: "space-between" }}>
           <div className="row">
             <span className="dot" style={{ background: connected ? "var(--success)" : "var(--muted)" }} />
+            {connected && <div className="waveform"><span></span><span></span><span></span><span></span><span></span></div>}
             <StatusPill status={sessionStatus} />
             <span className="badge">{connected ? "realtime connected" : "offline"}</span>
             {relayActive && <span className="badge warn">direct relay</span>}
@@ -464,12 +465,13 @@ export default function LiveSession() {
               const conf = t.confidence ?? 0;
               const confClass = conf >= 0.8 ? "conf-high" : conf >= 0.5 ? "conf-med" : conf > 0 ? "conf-low" : "";
               return (
-                <div key={t.id} className={`seg-enter ${confClass}`} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10 }}>
-                  <div style={{ fontSize: 13 }}>
+                <div key={t.id} className={`seg-enter ${confClass} hud-scanlines`} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10, position: "relative" }}>
+                  <div style={{ fontSize: 13 }} className={t.isFinal ? "" : "char-appear"}>
                     {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
                     {t.text}
                   </div>
                   <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
+                  {t.confidence != null && <div className={`confidence-meter ${confClass.replace("conf-", "")}`}><div style={{ width: `${Math.round(conf * 100)}%` }} /></div>}
                 </div>
               );
             })}
