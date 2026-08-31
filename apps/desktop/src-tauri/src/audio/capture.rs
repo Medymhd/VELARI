@@ -1,5 +1,5 @@
-// Live audio capture — port of rival `microphone.rs` + `speaker/windows.rs`
-// + the DSP loop from rival `lib.rs`, adapted to emit Tauri events instead of
+// Live audio capture — port of reference `microphone.rs` + `speaker/windows.rs`
+// + the DSP loop from reference `lib.rs`, adapted to emit Tauri events instead of
 // napi threadsafe functions.
 //
 // Per channel:

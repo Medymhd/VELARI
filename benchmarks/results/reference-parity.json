@@ -3,7 +3,7 @@
   "runs": 5,
   "scenarios": {
     "coach": {
-      "rival-semantics(race)": {
+      "reference-semantics(race)": {
         "committed": "groq",
         "firstTokenMs": 317,
         "totalMs": 860,
@@ -27,7 +27,7 @@
       }
     },
     "sttLocalFirstPartial": {
-      "ours(=rival model class moonshine-tiny)": 2049
+      "ours(=reference model class moonshine-tiny)": 2049
     }
   }
 }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Live-coach prompt assembly (doc Â§7). Pure functions â€” no provider calls.
  */
 import type { ChatMessage } from "@app/contracts";
@@ -8,7 +8,7 @@ export interface CoachContextInput {
   verbatimTranscript: string;
   rollingSummary?: string | undefined;
   roleDescription?: string | undefined;
-  /** Mode persona id (rival ModesManager parity). Defaults to "general". */
+  /** Mode persona id (reference ModesManager parity). Defaults to "general". */
   mode?: string | undefined;
 }
 
@@ -77,7 +77,7 @@ export const QUESTION_BANK = [
 
 
 /**
- * Auto-Answer pass (rival WHAT_TO_ANSWER / GROQ_WHAT_TO_ANSWER parity): given
+ * Auto-Answer pass (reference WHAT_TO_ANSWER / GROQ_WHAT_TO_ANSWER parity): given
  * a detected question, draft the exact spoken words for the user. Plain-text
  * output — no JSON, no markdown, no preamble.
  */
@@ -92,7 +92,7 @@ export function buildAnswerMessages(input: {
     "Output ONLY the exact words the user should say out loud. No preamble, no quotes, no markdown, no labels.",
     "",
     "ANSWER CONTRACT:",
-    "- 2-4 sentences, 40-90 words total (rival SPOKEN_SHORT budget). Lead with the direct answer, then the one proof point.",
+    "- 2-4 sentences, 40-90 words total (reference SPOKEN_SHORT budget). Lead with the direct answer, then the one proof point.",
     "- Behavioral: one concrete STAR moment — situation, decision owned, measurable outcome. Pick the story yourself; do not offer options.",
     "- Technical: approach in one sentence, then the steps that prove depth, then the tradeoff. Complexity concrete.",
     "- Honesty: if the transcript gives no matching background, answer generically but honestly ('From a comparable project…') — never invent employers, names, dates, or metrics.",

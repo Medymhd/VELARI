@@ -1,5 +1,5 @@
 /**
- * Local streaming STT — sherpa-onnx Zipformer (rival `LocalWhisperSTT` parity,
+ * Local streaming STT — sherpa-onnx Zipformer (reference `LocalWhisperSTT` parity,
  * upgraded to TRUE streaming partials like Deepgram's live socket).
  *
  * Runs fully offline via sherpa-onnx-node's prebuilt native bindings. The
@@ -246,7 +246,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
     for (let i = 0; i + 1 < pcm.length; i += 2) {
       this.pendingSamples.push(pcm.readInt16LE(i) / 32768);
     }
-    // Decode in ~50 ms windows (800 samples) for 2× faster partial arrival.
+    // Decode in ~50 ms windows (800 samples) for 2× faster partial arreference.
     const WINDOW = this.sampleRate / 20;
     while (this.pendingSamples.length >= WINDOW) {
       const samples = new Float32Array(this.pendingSamples.splice(0, WINDOW));

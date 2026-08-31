@@ -74,7 +74,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
-    /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
+    /** Mode persona (reference ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
 
     // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
@@ -331,7 +331,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             };
           }
 
-          // Post-process before judging (rival answerPolish parity): strip
+          // Post-process before judging (reference answerPolish parity): strip
           // JSON-envelope leakage / AI tells, compress to speakable lines.
           const sanitized = sanitizeCoachFramework(contentJson as unknown as CoachFramework);
           if (!sanitized) {
@@ -380,7 +380,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             },
           });
 
-          // Auto-answer pass (rival SimpleAutoAnswer parity): strong question
+          // Auto-answer pass (reference SimpleAutoAnswer parity): strong question
           // with high confidence → draft the exact spoken words as its own
           // insight. Fire-and-forget; failure never affects the coach path.
           const q = String(contentJson.detected_question ?? "").trim();

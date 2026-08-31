@@ -1,5 +1,5 @@
-﻿/**
- * PgVector store — rival `rag/VectorStore` + `EmbeddingPipeline` persistence
+/**
+ * PgVector store — reference `rag/VectorStore` + `EmbeddingPipeline` persistence
  * semantics on Postgres (Option A: keep our tenant database, gain pgvector).
  * Embeddings ride raw SQL; everything else stays Prisma.
  *
@@ -109,7 +109,7 @@ export function overlapScore(query: string, text: string): number {
 }
 
 /**
- * Rerank merged hits by query-chunk overlap (rival `localReranker` parity).
+ * Rerank merged hits by query-chunk overlap (reference `localReranker` parity).
  * The seam accepts an external cross-encoder later; this lexical reranker
  * needs no model and beats vector-only ordering on keyword precision.
  */

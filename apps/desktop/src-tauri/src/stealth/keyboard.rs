@@ -1,6 +1,6 @@
 //! Windows stealth keyboard interception via a WH_KEYBOARD_LL low-level hook.
 //!
-//! Windows counterpart of the rival's macOS CGEventTap (`keyboard_tap.rs`) —
+//! Windows counterpart of the reference's macOS CGEventTap (`keyboard_tap.rs`) —
 //! same contract, Tauri events instead of napi tsfn. The overlay receives
 //! keystrokes at the OS input layer without stealing focus from the meeting
 //! app: plain typing keys are SWALLOWED (hook returns 1) while engaged, and

@@ -1,19 +1,19 @@
-﻿/**
- * P5 â€” Rival-parity benchmark. Replicates the rival's documented pipeline
+/**
+ * P5 â€” Reference-parity benchmark. Replicates the reference's documented pipeline
  * SEMANTICS (constants extracted from source, file:line in the annex) against
  * the same providers and corpus we use, then measures our equivalent:
  *
- *   Coach  â€” rival `textStreamFallback`: race provider streams, commit the
+ *   Coach  â€” reference `textStreamFallback`: race provider streams, commit the
  *            first to emit a token (their order: groq primary â†’ gemini â†’ â€¦),
  *            params temperature 0.2 / seed 7 (LLMHelper.ts:186).
  *            Ours: the router's measured best (groq qwen3.8-27b) single-shot.
- *   Vision â€” rival chain order (groq vision retired 2026-08 â†’ gemini next);
+ *   Vision â€” reference chain order (groq vision retired 2026-08 â†’ gemini next);
  *            ours: bai vision measured separately.
  *   STT    â€” their local rung IS moonshine-tiny (we run the same model class)
  *            + Deepgram nova-3 cloud (skipped without key). Numbers reused
  *            from stt/moonshine/sherpa results.
  *
- * The rival binary itself requires its license server â€” this measures
+ * The reference binary itself requires its license server â€” this measures
  * pipeline DESIGN semantics on identical provider calls, which is the
  * conservative comparison (their native runtime would only help them).
  */
@@ -25,13 +25,13 @@ const { buildCoachMessages, QUESTION_BANK } = req("../verticals/interview-intell
 
 const now = () => Number(process.hrtime.bigint() / 1_000_000n);
 const RUNS = Number(process.env.BENCH_RUNS ?? 5);
-const RACE_FIRST_TOKEN_MS = 8_000; // rival TEXT_TTFT budget (LLMHelper.ts)
+const RACE_FIRST_TOKEN_MS = 8_000; // reference TEXT_TTFT budget (LLMHelper.ts)
 
 const SCHEMA_HINT =
   'Respond ONLY with JSON {"detected_question":string,"suggested_outline":string[],"talking_points":string[],"confidence":number,"requires_user_review":boolean}';
 
-// â”€â”€ Rival semantics: race streams, commit the first to emit a token â”€â”€â”€â”€â”€â”€
-async function rivalRace(branches, messages) {
+// â”€â”€ Reference semantics: race streams, commit the first to emit a token â”€â”€â”€â”€â”€â”€
+async function referenceRace(branches, messages) {
   const started = now();
   const controllers = branches.map(() => new AbortController());
   let committed = -1;
@@ -54,7 +54,7 @@ async function rivalRace(branches, messages) {
           // seed + reasoning_effort are Groq-only — the Gemini compat
           // endpoint rejects unknown fields with 400.
           ...(branch.id === "groq"
-            ? { seed: 7, reasoning_effort: "none" } // rival INTERACTIVE budget 0
+            ? { seed: 7, reasoning_effort: "none" } // reference INTERACTIVE budget 0
             : {}),
         }),
       });
@@ -173,13 +173,13 @@ const geminiKey = process.env.GEMINI_API_KEY;
 const results = { startedAt: new Date().toISOString(), runs: RUNS, scenarios: {} };
 
 if (groqKey && geminiKey) {
-  const rivalBranches = [
+  const referenceBranches = [
     { id: "groq", baseUrl: "https://api.groq.com/openai/v1", key: groqKey, model: "qwen/qwen3.6-27b" },
     { id: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", key: geminiKey, model: "gemini-flash-latest" },
   ];
   const oursBranch = { id: "ours-groq", baseUrl: "https://api.groq.com/openai/v1", key: groqKey, model: "qwen/qwen3.8-27b" };
 
-  const rivalSamples = [];
+  const referenceSamples = [];
   const oursSamples = [];
   for (let i = 0; i < RUNS; i++) {
     const q = QUESTION_BANK[i % QUESTION_BANK.length];
@@ -187,7 +187,7 @@ if (groqKey && geminiKey) {
       ...m,
       content: m.role === "system" ? `${m.content}\n${SCHEMA_HINT}` : m.content,
     }));
-    rivalSamples.push(await rivalRace(rivalBranches, messages).catch((e) => ({ error: String(e).slice(0, 140) })));
+    referenceSamples.push(await referenceRace(referenceBranches, messages).catch((e) => ({ error: String(e).slice(0, 140) })));
     oursSamples.push(await ours(oursBranch, messages).catch((e) => ({ error: String(e).slice(0, 140) })));
   }
   const summarize = (samples) => {
@@ -201,13 +201,13 @@ if (groqKey && geminiKey) {
       textHeads: samples.filter((s) => s.textHead).map((s) => s.textHead),
     };
   };
-  results.scenarios.coach = { "rival-semantics(race)": summarize(rivalSamples), "ours(best-single)": summarize(oursSamples) };
+  results.scenarios.coach = { "reference-semantics(race)": summarize(referenceSamples), "ours(best-single)": summarize(oursSamples) };
 } else {
   results.scenarios.coach = { note: "GROQ_API_KEY + GEMINI_API_KEY required" };
 }
 
 mkdirSync(new URL("./results/", import.meta.url), { recursive: true });
-writeFileSync(new URL("./results/rival-parity.json", import.meta.url), JSON.stringify(results, null, 2));
+writeFileSync(new URL("./results/reference-parity.json", import.meta.url), JSON.stringify(results, null, 2));
 
 // Reuse prior local-STT measurements for the STT dimension.
 const moonshine = existsSync(new URL("./results/moonshine-speech.json", import.meta.url))
@@ -216,6 +216,6 @@ const moonshine = existsSync(new URL("./results/moonshine-speech.json", import.m
 const bestMoonshine = moonshine
   ? Math.min(...moonshine.utterances.filter((u) => u.firstPartialMs !== null).map((u) => u.firstPartialMs))
   : null;
-results.scenarios.sttLocalFirstPartial = { "ours(=rival model class moonshine-tiny)": bestMoonshine };
-writeFileSync(new URL("./results/rival-parity.json", import.meta.url), JSON.stringify(results, null, 2));
+results.scenarios.sttLocalFirstPartial = { "ours(=reference model class moonshine-tiny)": bestMoonshine };
+writeFileSync(new URL("./results/reference-parity.json", import.meta.url), JSON.stringify(results, null, 2));
 console.log(JSON.stringify(results.scenarios, null, 2));

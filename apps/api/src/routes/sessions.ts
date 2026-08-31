@@ -248,7 +248,7 @@ export function retentionDeadline(policy: string): number {
 }
 
 /**
- * Post-session summary (rival MeetingSummary parity): fired fire-and-forget on
+ * Post-session summary (reference MeetingSummary parity): fired fire-and-forget on
  * complete so the route responds instantly; the summary lands as a
  * session_summary insight the Review screen already renders. Never throws —
  * a failed summary must not fail the session.

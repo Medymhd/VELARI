@@ -48,7 +48,7 @@ impl OverlayMode {
     }
 }
 
-const DEFAULT_WIDTH: f64 = 732.0; // rival OVERLAY_DEFAULT_WIDTH parity
+const DEFAULT_WIDTH: f64 = 732.0; // reference OVERLAY_DEFAULT_WIDTH parity
 const DEFAULT_HEIGHT: f64 = 430.0;
 const MARGIN: f64 = 24.0;
 
@@ -149,7 +149,7 @@ pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Mouse passthrough (rival `syncOverlayInteractionPolicy` parity): when
+/// Mouse passthrough (reference `syncOverlayInteractionPolicy` parity): when
 /// enabled the overlay ignores all clicks (WS_EX_TRANSPARENT) so it floats
 /// over a meeting without stealing input; the header 40px band stays live via
 /// the frontend calling this again with `enabled:false` — the tray/Show chord
@@ -183,7 +183,7 @@ pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: boo
     Ok(())
 }
 
-/// Content-driven height (rival auto-resize parity): the overlay page reports
+/// Content-driven height (reference auto-resize parity): the overlay page reports
 /// its panel size and the window grows/shrinks to fit. Height clamped so the
 /// panel never runs off-screen.
 #[tauri::command]

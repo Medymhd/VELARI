@@ -43,7 +43,7 @@ pub fn apply_masquerade(
             w.set_title(&title).map_err(|e| e.to_string())?;
         }
         set_window_class_masquerade(w, profile)?;
-        // Icon disguise stub — assets at icons/fake/* (port of rival assets/fakeicon)
+        // Icon disguise stub — assets at icons/fake/* (port of reference assets/fakeicon)
         // Real: w.set_icon(tauri::image::Image::from_path(icon_path)?)?; kept as probe surface.
         let _ = icon_for_profile(profile);
     }

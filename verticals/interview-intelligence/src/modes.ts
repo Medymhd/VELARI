@@ -1,5 +1,5 @@
 /**
- * Mode personas (rival ModesManager + mode prompts parity, compact).
+ * Mode personas (reference ModesManager + mode prompts parity, compact).
  * Each persona reshapes what counts as "the question" and the answer shape.
  * Pure data — no provider calls.
  */

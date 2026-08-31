@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Platform contracts.
  *
  * Single source of truth for DTOs, realtime events, model-request
@@ -258,7 +258,7 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.mode"),
     eventId: z.string(),
-    /** Mode persona id (rival ModesManager parity) — validated server-side. */
+    /** Mode persona id (reference ModesManager parity) — validated server-side. */
     mode: z.string().min(1).max(40),
   }),
 ]);

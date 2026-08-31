@@ -1,5 +1,5 @@
 /**
- * Embedding pipeline — port of rival `rag/EmbeddingPipeline.ts` semantics
+ * Embedding pipeline — port of reference `rag/EmbeddingPipeline.ts` semantics
  * (chunk → embed → retry/fallback) with a free-first provider choice:
  * the lexical hashed embedder needs no keys and no models; an
  * OpenAI-compatible embeddings endpoint slots in when configured.
@@ -21,7 +21,7 @@ export interface Chunk {
   lastSeq: number;
 }
 
-/** Merge transcript lines into overlapping ~800-char chunks (rival parity). */
+/** Merge transcript lines into overlapping ~800-char chunks (reference parity). */
 export function chunkTranscript(
   segments: TranscriptInput[],
   opts: { chunkChars?: number; overlap?: number } = {},

@@ -89,7 +89,7 @@ export abstract class CloudSttProvider implements SttEngine {
 }
 
 /**
- * Deepgram Nova-3 streaming adapter (port of rival `DeepgramStreamingSTT.ts`).
+ * Deepgram Nova-3 streaming adapter (port of reference `DeepgramStreamingSTT.ts`).
  * Buffers PCM16 16k mono and on flush sends a single REST `listen` call.
  * For true streaming, replace `flush` with a `wss://api.deepgram.com/v1/listen` socket
  * forwarding `feed` chunks — same `SttEngine` surface.
@@ -155,7 +155,7 @@ export class DeepgramSttEngine extends CloudSttProvider {
  * transcription server (whisper.cpp server, faster-whisper-server, etc.) when
  * `localWhisperUrl` is configured; otherwise degrades to deterministic demo
  * lines with `local_stt` source so the pipeline stays demonstrable offline.
- * (Rival runs ONNX in-process; a local server keeps the desktop binary small
+ * (Reference runs ONNX in-process; a local server keeps the desktop binary small
  * and lets any Whisper build serve the same contract.)
  */
 export class LocalWhisperSttEngine implements SttEngine {

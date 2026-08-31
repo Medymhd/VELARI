@@ -71,7 +71,7 @@ export default function Review() {
     }
   }
 
-  /** PDF export (rival `pdfGenerator` parity) via the WebView2 print-to-PDF
+  /** PDF export (reference `pdfGenerator` parity) via the WebView2 print-to-PDF
    *  dialog: a print-only document is rendered into a hidden iframe. */
   function exportPdf() {
     if (!data) return;

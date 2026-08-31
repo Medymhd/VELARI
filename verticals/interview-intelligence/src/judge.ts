@@ -1,6 +1,6 @@
 /**
- * Auto-answer judge (rival `AutoAnswerJudge` parity) + mid-call rolling
- * summary prompt (rival `ChunkSummaryGenerator` parity). Pure functions —
+ * Auto-answer judge (reference `AutoAnswerJudge` parity) + mid-call rolling
+ * summary prompt (reference `ChunkSummaryGenerator` parity). Pure functions —
  * no provider calls.
  */
 import type { ChatMessage } from "@app/contracts";

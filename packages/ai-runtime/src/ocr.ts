@@ -1,5 +1,5 @@
 /**
- * OCR provider — port of rival `OcrProvider.ts` (tesseract.js).
+ * OCR provider — port of reference `OcrProvider.ts` (tesseract.js).
  * Fallback when vision is denied (`private_vision` mode); the worker is
  * cached and the factory is injectable so tests never touch the network.
  */

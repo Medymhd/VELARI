@@ -1,5 +1,5 @@
 /**
- * Streaming STT over a live WebSocket (port of rival `DeepgramStreamingSTT.ts`
+ * Streaming STT over a live WebSocket (port of reference `DeepgramStreamingSTT.ts`
  * semantics, adapted to the SttEngine contract and an injectable socket).
  *
  * `SingleSocketStt` owns the connect/reconnect state machine and walks an
@@ -233,7 +233,7 @@ export class SingleSocketStt implements SttEngine {
       if (!this.active) return;
       if (code === 1000) return; // clean shutdown
       // Discard stale audio — replaying seconds-old PCM on reconnect causes
-      // provider-side EPIPE storms (rival #lesson).
+      // provider-side EPIPE storms (reference #lesson).
       this.buffer = [];
       this.nextRungOrReconnect();
     });
@@ -308,7 +308,7 @@ function defaultWebSocketFactory(): WebSocketFactory {
 }
 
 /** Canonical Deepgram live endpoint (16 kHz linear16 mono, interim results).
- *  vad_events + utterance_end_ms = rival parity: speech_final/utterance_end
+ *  vad_events + utterance_end_ms = reference parity: speech_final/utterance_end
  *  events surface mid-speech pauses so consumers can finalize utterances. */
 export function deepgramListenUrl(): string {
   const params = new URLSearchParams({

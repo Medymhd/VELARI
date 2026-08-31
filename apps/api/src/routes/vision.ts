@@ -1,6 +1,6 @@
 /**
  * Vision endpoint — screenshot(s) + prompt through the provider-neutral
- * router with the same failover/usage path as text coaching (rival
+ * router with the same failover/usage path as text coaching (reference
  * `VisionProviderFallbackChain` parity, routed server-side).
  */
 import type { FastifyInstance } from "fastify";
@@ -28,7 +28,7 @@ export function visionRoutes(app: FastifyInstance, db: PrismaClient): void {
       return reply.status(400).send({ error: "prompt and at least one image are required" });
     }
 
-    // Optimize before routing (rival ImageOptimizer parity): EXIF-rotate,
+    // Optimize before routing (reference ImageOptimizer parity): EXIF-rotate,
     // fit inside 1024px, jpeg q70 — cuts vision payload ~10x and upload time.
     // Identical consecutive shots (FNV-1a) collapse to one.
     const images: { base64: string; mimeType: string }[] = [];

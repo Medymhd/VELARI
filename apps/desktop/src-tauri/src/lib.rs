@@ -266,7 +266,7 @@ pub fn run() {
                 }
             });
 
-            // Reassert loop — mirrors rival's _enforceDockState: every 2s verify
+            // Reassert loop — mirrors reference's _enforceDockState: every 2s verify
             // GetWindowDisplayAffinity / GWL_EXSTYLE and re-apply if drifted.
             let reassert_handle = handle.clone();
             std::thread::spawn(move || loop {

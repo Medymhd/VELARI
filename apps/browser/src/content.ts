@@ -1,12 +1,12 @@
 declare const chrome: any;
-// Port of rival `natively-browser/src/capture/*` + `sensitive-page-detector.ts` + `registry.default.json` — stealth on all browsers/apps.
-// Isolated world: page cannot see chrome.runtime; guard name randomized per injection to avoid `__natively_capture_listener__` fingerprint (handoff-brief:22).
+// Port of reference `reference-browser/src/capture/*` + `sensitive-page-detector.ts` + `registry.default.json` — stealth on all browsers/apps.
+// Isolated world: page cannot see chrome.runtime; guard name randomized per injection to avoid `__reference_capture_listener__` fingerprint (handoff-brief:22).
 
-// Randomized guard token per page load — avoids static `__natively_capture_listener__` detection.
+// Randomized guard token per page load — avoids static `__reference_capture_listener__` detection.
 const GUARD_KEY = `__app_guard_${Math.random().toString(36).slice(2)}__`;
 (window as any)[GUARD_KEY] = true;
 
-// Sensitive proctored domains — auto-pause capture, offscreen fallback via desktop overlay instead (rival sensitive-page-detector parity).
+// Sensitive proctored domains — auto-pause capture, offscreen fallback via desktop overlay instead (reference sensitive-page-detector parity).
 const SENSITIVE_HOSTS = ["hirevue.com", "codesignal.com", "coderbyte.com", "interviewing.io", "karat.com"];
 function isSensitive(): boolean {
   const host = location.hostname.toLowerCase();
@@ -64,3 +64,4 @@ if (!(window as any)[`__app_listener_${GUARD_KEY}`]) {
     return false;
   });
 }
+

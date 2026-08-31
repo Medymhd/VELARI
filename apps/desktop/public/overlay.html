@@ -167,7 +167,7 @@
       });
       function renderNotes() { $("notes").textContent = tapState.notes; }
 
-      // Auto-height (rival parity): report panel height so the window fits content.
+      // Auto-height (reference parity): report panel height so the window fits content.
       function reportHeight() {
         try {
           const label = window.__TAURI__.window.getCurrentWindow().label;

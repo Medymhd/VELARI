@@ -16,9 +16,9 @@ export interface VisionRequest {
 }
 
 /**
- * Vision fallback chain — port of rival `VisionProviderFallbackChain.ts` +
+ * Vision fallback chain — port of reference `VisionProviderFallbackChain.ts` +
  * `visionStreamFallback.ts`. Orders candidates by health TTFT (EMA alpha 0.2
- * in rival) and tries next on 429/503/504/timeout.
+ * in reference) and tries next on 429/503/504/timeout.
  *
  * Providers that expose `vision` capability are preferred; others are skipped.
  */
@@ -55,7 +55,7 @@ export async function visionFallback(
 }
 
 export function buildVisionMessages(req: VisionRequest): ChatMessage[] {
-  // Rival `DIRECT_VISION_SYSTEM_PROMPT` parity: the model can see the image,
+  // Reference `DIRECT_VISION_SYSTEM_PROMPT` parity: the model can see the image,
   // refuses prompt-injection from screenshot content, answers speakably.
   const system = [
     "You are the user's live screen-understanding engine. Analyze the attached screenshot DIRECTLY. You can see the image — do not pretend you cannot. Do not rely on OCR.",

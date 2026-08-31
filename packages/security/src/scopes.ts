@@ -1,5 +1,5 @@
 /**
- * Provider scope policy — port of rival `provider-scope-policy.ts` +
+ * Provider scope policy — port of reference `provider-scope-policy.ts` +
  * `context-os/SourceAuthorityKernel.ts`. Single mapping `scopesForPayload`.
  */
 export type Scope = "profile" | "meeting" | "screen" | "knowledge" | "browser";

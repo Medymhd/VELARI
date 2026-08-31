@@ -1,6 +1,6 @@
 /**
  * STT relay — control-plane session minting + WebSocket pipe to the STT
- * provider (port of the rival control-plane contract, adapted to our API).
+ * provider (port of the reference control-plane contract, adapted to our API).
  *
  * POST /v1/stt/session   JWT-protected; mints a short-lived HMAC session
  *                        token and returns the resolver-shape config the

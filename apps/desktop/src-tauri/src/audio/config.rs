@@ -1,4 +1,4 @@
-// Audio configuration constants — port of rival `audio_config.rs`.
+// Audio configuration constants — port of reference `audio_config.rs`.
 // Tuned for low-latency streaming STT.
 
 /// Canonical pipeline sample rate. All STT providers receive audio at this

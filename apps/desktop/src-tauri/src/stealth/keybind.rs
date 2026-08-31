@@ -1,13 +1,13 @@
 // Copyright (c) 2026. All rights reserved.
 // Proprietary — see stealth/LICENSE for terms.
 // Global chords — Windows implementation via `RegisterHotKey` (port of
-//! rival `KeybindManager.ts` / `winChord.ts` semantics).
+//! reference `KeybindManager.ts` / `winChord.ts` semantics).
 //!
 //! Threading contract: `WM_HOTKEY` is delivered to the thread that called
 //! `RegisterHotKey`, and that thread must pump messages. A single lazy worker
 //! owns every registration: commands arrive through a queue drained when the
 //! worker is woken by `WM_APP_CHORD`; a `SetTimer` on the worker fires every
-//! 10 s to re-register chords other apps may have stolen (rival's health
+//! 10 s to re-register chords other apps may have stolen (reference's health
 //! poll). `WM_QUIT` shuts the worker down.
 
 #[cfg(windows)]

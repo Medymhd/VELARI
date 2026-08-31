@@ -1,5 +1,5 @@
 /**
- * Answer post-processing (rival `answerPolish.ts` parity, compact):
+ * Answer post-processing (reference `answerPolish.ts` parity, compact):
  * strips JSON-envelope leakage, scaffolding misfires and AI tells, and
  * compresses outlines/talking points into speakable lines. Pure functions.
  */
@@ -53,7 +53,7 @@ export function speakable(text: string, maxSentences = 3): string {
 
 /**
  * Full framework sanitizer: drops leakage, compresses to speakable lines,
- * enforces rival LENGTH LAW (outline ≤4, points ≤3, each ≤2 sentences).
+ * enforces reference LENGTH LAW (outline ≤4, points ≤3, each ≤2 sentences).
  * Returns null when nothing speakable survives — caller should drop the
  * suggestion instead of showing garbage.
  */

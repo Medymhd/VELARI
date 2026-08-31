@@ -1,9 +1,9 @@
 /**
- * Moonshine streaming STT — the rival's local latency model class
+ * Moonshine streaming STT — the reference's local latency model class
  * (`moonshine-tiny` ONNX via transformers.js), MIT weights, fully offline.
  *
  * Moonshine is a non-streaming (segment) decoder, so partials come from
- * periodic re-decode of the accumulated buffer — the same pattern the rival's
+ * periodic re-decode of the accumulated buffer — the same pattern the reference's
  * `whisperWorker` uses. On CPU, decoding 2-4 s of audio lands in the
  * sub-second range, giving first partials far ahead of the zipformer's
  * ~3 s warmup.

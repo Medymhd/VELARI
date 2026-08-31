@@ -1,5 +1,5 @@
-﻿// Silence suppression for streaming STT â€” low latency, exact semantic port
-// of rival `silence_suppression.rs`.
+// Silence suppression for streaming STT â€” low latency, exact semantic port
+// of reference `silence_suppression.rs`.
 //
 // TWO-STAGE GATING:
 // 1. RMS volume check (fast, catches obvious silence)

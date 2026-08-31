@@ -1,5 +1,5 @@
 /**
- * Image optimizer — port of rival `ImageOptimizer.ts` + `ScreenshotHelper.getImagePreview`
+ * Image optimizer — port of reference `ImageOptimizer.ts` + `ScreenshotHelper.getImagePreview`
  * (sharp: EXIF-aware rotate, resize to provider limits, jpeg compress).
  */
 import sharp from "sharp";
@@ -20,7 +20,7 @@ export async function optimizeImage(base64: string, opts: OptimizeOptions = {}):
   return out.toString("base64");
 }
 
-/** FNV-1a 32-bit dedup hash — mirrors rival `ImageHashService.ts`. */
+/** FNV-1a 32-bit dedup hash — mirrors reference `ImageHashService.ts`. */
 export function imageHash(base64: string): string {
   let h = 2166136261;
   for (let i = 0; i < Math.min(base64.length, 4096); i++) {

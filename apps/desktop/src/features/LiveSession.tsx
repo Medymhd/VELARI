@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import { stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar, type MasqueradeProfile, type StealthState } from "../lib/tauri";
@@ -186,7 +186,7 @@ export default function LiveSession() {
     }
   }, [mode, connected]);
 
-  // Audio watchdog — rival "0 chunks in 12s" banner parity: a capture toggle
+  // Audio watchdog — reference "0 chunks in 12s" banner parity: a capture toggle
   // that is ON but receives no audio for 12s means a dead/busy device.
   const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
   const watchdogWarned = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });

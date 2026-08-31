@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use crate::audio::capture::base64_encode;
 
 /// Capture the primary monitor and return base64 PNG
-/// (rival `ScreenshotHelper.ts` parity).
+/// (reference `ScreenshotHelper.ts` parity).
 #[tauri::command]
 pub fn take_screenshot() -> Result<String, String> {
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
@@ -19,7 +19,7 @@ pub fn take_screenshot() -> Result<String, String> {
     Ok(base64_encode(&png))
 }
 
-/// Fullscreen transparent drag-select overlay (rival `CropperWindowHelper.ts`).
+/// Fullscreen transparent drag-select overlay (reference `CropperWindowHelper.ts`).
 /// The window spans the ENTIRE virtual desktop so one drag can cross monitors;
 /// `cropper_select` stitches the per-monitor captures back together.
 #[tauri::command]
@@ -69,7 +69,7 @@ pub fn open_cropper(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Capture the region the cropper selected, stitching every intersecting
-/// monitor's capture into one canvas (rival `stitchImages` parity).
+/// monitor's capture into one canvas (reference `stitchImages` parity).
 ///
 /// Coordinates arrive in virtual-logical px (browser space); Windows places
 /// the virtual desktop in primary-monitor DPI space, so the selection is
@@ -79,7 +79,7 @@ pub fn cropper_select(app: tauri::AppHandle, x: i32, y: i32, width: i32, height:
     if width < 1 || height < 1 {
         return Err("empty selection".into());
     }
-    const MAX_DIM: i32 = 10_000; // rival MAX_THUMBNAIL_RATIO guard
+    const MAX_DIM: i32 = 10_000; // reference MAX_THUMBNAIL_RATIO guard
     if width > MAX_DIM || height > MAX_DIM {
         return Err("selection too large".into());
     }

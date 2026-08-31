@@ -1,6 +1,6 @@
 /**
  * STT benchmark: synthetic corpus through our engine chain.
- * Measures partial arrival, final latency, and harness correctness.
+ * Measures partial arreference, final latency, and harness correctness.
  * Requires DEEPGRAM_API_KEY for real providers; runs the simulated chain
  * otherwise (still validates the timing harness).
  */

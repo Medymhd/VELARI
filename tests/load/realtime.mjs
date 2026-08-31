@@ -1,7 +1,7 @@
 /**
  * Realtime load harness (§5.1.6): N concurrent simulated interview sessions
  * against a RUNNING platform API. Measures per-frame send cost, partial/final
- * arrival, and error rate under concurrency.
+ * arreference, and error rate under concurrency.
  *
  * Usage: node tests/load/realtime.mjs [--concurrency 20] [--seconds 30]
  * Requires: API on $API_URL (default http://localhost:8787/v1), Postgres up.

@@ -1,7 +1,7 @@
 import { spanSink } from "./index.js";
 
 /**
- * OTel exporter stub — mirrors rival `spanSink` → OTLP.
+ * OTel exporter stub — mirrors reference `spanSink` → OTLP.
  * Wire to `@opentelemetry/sdk-node` by setting `spanSink.fn`.
  * Example:
  *   import { NodeSDK } from "@opentelemetry/sdk-node";

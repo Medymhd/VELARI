@@ -1,5 +1,5 @@
 /**
- * STT relay client — port of rival `relaySession.ts` semantics.
+ * STT relay client — port of reference `relaySession.ts` semantics.
  *
  * The resolver calls `POST {controlPlaneBaseUrl}/v1/stt/session` (Bearer JWT)
  * and returns a plain session config (or null on ANY failure — it never
