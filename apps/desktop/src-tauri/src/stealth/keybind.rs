@@ -43,7 +43,7 @@ mod imp {
     }
 
     enum ChordCmd {
-        Register { chord: String, mods: HOT_KEY_MODIFIERS, vk: u32, reply: mpsc::Sender<Result<(), String>> },
+        Register { chord: String, action: String, mods: HOT_KEY_MODIFIERS, vk: u32, reply: mpsc::Sender<Result<(), String>> },
         Unregister { chord: String, reply: mpsc::Sender<Result<(), String>> },
         Recheck,
     }
@@ -81,13 +81,13 @@ mod imp {
         let Ok(mut queue) = sh.queue.lock() else { return };
         while let Some(cmd) = queue.pop_front() {
             match cmd {
-                ChordCmd::Register { chord, mods, vk, reply } => {
+                ChordCmd::Register { chord, action, mods, vk, reply } => {
                     let id = worker.next_id;
                     worker.next_id += 1;
                     let result = RegisterHotKey(None, id, mods, vk)
                         .map_err(|e| format!("hotkey '{chord}' is taken or invalid: {e}"));
                     if result.is_ok() {
-                        worker.by_id.insert(id, (chord.clone(), "overlay-toggle".into()));
+                        worker.by_id.insert(id, (chord.clone(), action));
                     }
                     let _ = reply.send(result);
                 }
@@ -161,7 +161,7 @@ mod imp {
         let (tx, rx) = mpsc::channel();
         {
             let Ok(mut queue) = sh.queue.lock() else { return Err("chord queue poisoned".into()) };
-            queue.push_back(ChordCmd::Register { chord, mods, vk, reply: tx });
+            queue.push_back(ChordCmd::Register { chord, action, mods, vk, reply: tx });
         }
         wake();
         rx.recv_timeout(std::time::Duration::from_secs(2))

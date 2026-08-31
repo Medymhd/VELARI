@@ -7,10 +7,33 @@ mod vault;
 
 use stealth::StealthState;
 use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Listener, Manager};
 
 pub struct AppState {
     stealth: Mutex<StealthState>,
+}
+
+/// Show/hide/focus the main window — recovery hatch for stealth mode
+/// (WS_EX_TOOLWINDOW removes the window from taskbar AND Alt+Tab).
+/// Returns true when the window ends up visible.
+#[tauri::command]
+fn app_toggle_main(app: tauri::AppHandle) -> Result<bool, String> {
+    let Some(w) = app.get_webview_window("main") else {
+        return Err("main window not found".into());
+    };
+    let visible = w.is_visible().map_err(|e| e.to_string())?;
+    let focused = w.is_focused().map_err(|e| e.to_string())?;
+    if visible && focused {
+        w.hide().map_err(|e| e.to_string())?;
+        Ok(false)
+    } else {
+        w.show().map_err(|e| e.to_string())?;
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        Ok(true)
+    }
 }
 
 #[tauri::command]
@@ -143,6 +166,7 @@ pub fn run() {
         })
         .manage(audio::AudioCaptureState::default())
         .invoke_handler(tauri::generate_handler![
+            app_toggle_main,
             stealth_get_state,
             stealth_set_capture_exclusion,
             stealth_set_taskbar_hidden,
@@ -172,6 +196,63 @@ pub fn run() {
             stealth::keybind::unregister_global_chord
         ])
         .setup(|app| {
+            let handle = app.handle().clone();
+
+            // Tray — the always-present recovery anchor. Even with the main
+            // window taskbar-hidden (TOOLWINDOW) and chords stolen, the tray
+            // menu still reaches it. Label stays neutral for stealth.
+            let show = MenuItem::with_id(app, "tray-show", "Show", true, None::<&str>)?;
+            let hide = MenuItem::with_id(app, "tray-hide", "Hide", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let mut tray = TrayIconBuilder::with_id("app-tray")
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(|app, event| {
+                    let Some(w) = app.get_webview_window("main") else { return };
+                    match event.id.as_ref() {
+                        "tray-show" => {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                        "tray-hide" => {
+                            let _ = w.hide();
+                        }
+                        "tray-quit" => app.exit(0),
+                        _ => {}
+                    }
+                });
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+            tray.build(app)?;
+
+            // Global chords registered app-wide (independent of any screen):
+            //   Ctrl+Shift+O — stealth overlay toggle (handled by JS screens)
+            //   Ctrl+Shift+H — main-window show/hide (handled here in Rust so
+            //                  it works even when no screen is listening)
+            let _ = stealth::keybind::register_chord(
+                &handle,
+                "Ctrl+Shift+H".into(),
+                "app-toggle".into(),
+            );
+            {
+                let h = handle.clone();
+                app.listen(stealth::keybind::EVENT_NAME, move |ev| {
+                    #[derive(serde::Deserialize)]
+                    #[serde(rename_all = "camelCase")]
+                    struct Payload {
+                        action: String,
+                    }
+                    if let Ok(p) = serde_json::from_str::<Payload>(ev.payload()) {
+                        if p.action == "app-toggle" {
+                            let _ = app_toggle_main(h.clone());
+                        }
+                    }
+                });
+            }
+
             let handle = app.handle().clone();
             app.listen("tauri://window-created", {
                 let h = handle.clone();

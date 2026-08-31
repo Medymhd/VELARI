@@ -148,13 +148,47 @@ export function Sparkline(props: { data: number[]; width?: number; height?: numb
   );
 }
 
-/** Toggle switch — styled checkbox that reads as a premium toggle. */
-export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode }): ReactNode {
+/** Toggle switch — styled checkbox that reads as a premium toggle.
+ *  Uses the natural 44×26 switch CSS in styles.css; no inline size overrides
+ *  (off-spec sizes break the knob geometry). */
+export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode; disabled?: boolean }): ReactNode {
   return (
-    <label className="row" style={{ cursor: "pointer", gap: 8 }}>
-      <input type="checkbox" checked={props.checked} onChange={(e) => props.onChange(e.target.checked)} style={{ width: 36, height: 20 }} />
+    <label className="row" style={{ cursor: props.disabled ? "default" : "pointer", gap: 10 }}>
+      <input type="checkbox" checked={props.checked} disabled={props.disabled} onChange={(e) => props.onChange(e.target.checked)} />
       {props.label && <span className="small">{props.label}</span>}
     </label>
+  );
+}
+
+/** Toast stack — fixed top-right; auto-dismisses. Render once in the app shell. */
+export function ToastStack(props: { notices: { id: string; kind: "info" | "success" | "error"; message: string }[]; onDismiss: (id: string) => void }): ReactNode {
+  useEffect(() => {
+    if (props.notices.length === 0) return;
+    const timers = props.notices.map((n) => setTimeout(() => props.onDismiss(n.id), n.kind === "error" ? 6000 : 3200));
+    return () => timers.forEach(clearTimeout);
+  }, [props.notices, props.onDismiss]);
+  if (props.notices.length === 0) return null;
+  return (
+    <div style={{ position: "fixed", top: 14, right: 14, zIndex: "var(--z-toast, 60)", display: "flex", flexDirection: "column", gap: 8, maxWidth: 380 }}>
+      {props.notices.map((n) => (
+        <div
+          key={n.id}
+          className="fade-in"
+          role="status"
+          onClick={() => props.onDismiss(n.id)}
+          style={{
+            padding: "10px 14px", borderRadius: "var(--radius)", cursor: "pointer",
+            background: "var(--surface-elev, var(--surface))",
+            border: `1px solid ${n.kind === "error" ? "var(--danger)" : n.kind === "success" ? "var(--success)" : "var(--border-strong)"}`,
+            borderLeftWidth: 3,
+            boxShadow: "var(--shadow-2)",
+            fontSize: 13, lineHeight: 1.45,
+          }}
+        >
+          {n.message}
+        </div>
+      ))}
+    </div>
   );
 }
 

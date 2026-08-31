@@ -127,7 +127,24 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer"): Promise<void> {
       const sequenceNo = assembler.nextSequenceNo;
       const segmentId = randomUUID();
-      const segment = {
+  const segment = {
+    id: segmentId,
+    sessionId: session!.id,
+    sequenceNo,
+    startedAtMs,
+    endedAtMs,
+    text,
+    confidence,
+    isFinal: true,
+    source,
+    ...(speaker ? { speaker } : {}),
+    createdAt: new Date().toISOString(),
+  };
+
+  // Persist (speaker rides along — attribution must survive reload/Review)
+  try {
+    await db.transcriptSegment.create({
+      data: {
         id: segmentId,
         sessionId: session!.id,
         sequenceNo,
@@ -138,27 +155,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         isFinal: true,
         source,
         ...(speaker ? { speaker } : {}),
-        createdAt: new Date().toISOString(),
-      };
-
-      // Persist
-      try {
-        await db.transcriptSegment.create({
-          data: {
-            id: segmentId,
-            sessionId: session!.id,
-            sequenceNo,
-            startedAtMs,
-            endedAtMs,
-            text,
-            confidence,
-            isFinal: true,
-            source,
-          },
-        });
-      } catch (e) {
-        log.warn("failed to persist transcript segment", { error: String(e) });
-      }
+      },
+    });
+  } catch (e) {
+    log.warn("failed to persist transcript segment", { error: String(e) });
+  }
 
       try {
         ingestSegment(assembler, segment as never, `srv:${segmentId}`);
@@ -405,36 +406,41 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const engine = engineFor(frame.channel);
         const speaker = frame.channel === "system" ? "interviewer" : frame.channel === "mic" ? "user" : undefined;
         engine.feed(pcm, nowMs, (result) => {
-          if (!result.isFinal) {
-            emit({
-              type: "transcript.partial",
-              eventId: randomUUID(),
-              sequenceNo: serverSeq++,
-              occurredAt: new Date().toISOString(),
-              sessionId: session!.id,
-              segment: {
-                id: randomUUID(),
+          // Defer socket writes out of the engine's synchronous decode loop —
+          // sync sends from inside a native (napi) callback stack corrupt the
+          // recognizer's decode state.
+          queueMicrotask(() => {
+            if (!result.isFinal) {
+              emit({
+                type: "transcript.partial",
+                eventId: randomUUID(),
+                sequenceNo: serverSeq++,
+                occurredAt: new Date().toISOString(),
                 sessionId: session!.id,
-                sequenceNo: assembler.nextSequenceNo,
-                startedAtMs: nowMs,
-                endedAtMs: nowMs + 400,
-                text: result.text,
-                confidence: result.confidence,
-                isFinal: false,
-                source: engine.source,
-                ...(speaker ? { speaker } : {}),
-              },
-            });
-          } else {
-            void handleFinal(result.text, result.confidence, result.startedAtMs, result.endedAtMs, engine.source, speaker);
-          }
+                segment: {
+                  id: randomUUID(),
+                  sessionId: session!.id,
+                  sequenceNo: assembler.nextSequenceNo,
+                  startedAtMs: nowMs,
+                  endedAtMs: nowMs + 400,
+                  text: result.text,
+                  confidence: result.confidence,
+                  isFinal: false,
+                  source: engine.source,
+                  ...(speaker ? { speaker } : {}),
+                },
+              });
+            } else {
+              void handleFinal(result.text, result.confidence, result.startedAtMs, result.endedAtMs, engine.source, speaker);
+            }
+          });
         });
         return;
       }
 
       if (frame.type === "transcript.client_final") {
         const s = frame.segment;
-        await handleFinal(s.text, s.confidence ?? 0.9, s.startedAtMs, s.endedAtMs, s.source);
+        await handleFinal(s.text, s.confidence ?? 0.9, s.startedAtMs, s.endedAtMs, s.source, s.speaker);
         return;
       }
     });

@@ -227,7 +227,7 @@ export default function Settings() {
               Capture exclusion: {String(stealth.captureExclusion)} · Taskbar hidden: {String(stealth.taskbarHidden)} · Masquerade: {stealth.masquerade}
             </div>
             <div className="row">
-              <button onClick={async () => { const s = await stealthEnforceNow(); setStealth(s); }}>Re-enforce stealth</button>
+              <button onClick={async () => { try { setStealth(await stealthEnforceNow()); flash("Stealth re-enforced on every window"); } catch (e) { fail(e); } }}>Re-enforce stealth</button>
               <button className="ghost" onClick={() => void refresh()}>Refresh</button>
             </div>
             <span className="small muted mono">Enforced at: {stealth.enforcedAtMs ? new Date(stealth.enforcedAtMs).toLocaleTimeString() : "—"}</span>

@@ -11,6 +11,7 @@ export default function Home() {
   const [title, setTitle] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
 
   async function refresh() {
     if (!workspaceId) return;
@@ -32,10 +33,17 @@ export default function Home() {
 
   async function create() {
     if (!workspaceId) return;
-    const s = await api.createSession({ workspaceId, title: title || null, consentStatus: "confirmed" });
-    setTitle("");
-    setSession(s.id, "draft");
-    setScreen("live");
+    setCreating(true);
+    try {
+      const s = await api.createSession({ workspaceId, title: title || null, consentStatus: "confirmed" });
+      setTitle("");
+      setSession(s.id, "draft");
+      setScreen("live");
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : String(ex));
+    } finally {
+      setCreating(false);
+    }
   }
 
   if (!workspaceId) {
@@ -61,7 +69,7 @@ export default function Home() {
         actions={
           <>
             <button className="ghost" onClick={() => void refresh()}>Refresh</button>
-            <button className="primary" onClick={() => void create()}>New session</button>
+            <button className="primary" disabled={creating} onClick={() => void create()}>{creating ? "Creating…" : "New session"}</button>
           </>
         }
       />
@@ -101,7 +109,7 @@ export default function Home() {
           onKeyDown={(e) => e.key === "Enter" && void create()}
           style={{ flex: 1 }}
         />
-        <button className="primary" onClick={() => void create()}>Start</button>
+        <button className="primary" disabled={creating} onClick={() => void create()}>{creating ? "Creating…" : "Start"}</button>
       </div>
 
       {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}

@@ -132,6 +132,13 @@ export class SherpaStreamingSttEngine implements SttEngine {
   private lastKnownText = "";
   private utteranceStartedAtMs = 0;
   private lastFeedAtMs = 0;
+  /** Watchdog: some environments (server WS handlers) yield a recognizer that
+   *  constructs fine but decodes empty — without this guard the fallback
+   *  chain would hang on it forever since a silent decoder never fires
+   *  onUnavailable. After 8s of fed audio with zero output, release the chain. */
+  private fedSamples = 0;
+  private firstFeedMs = 0;
+  private emittedAny = false;
   /** Decode cadence: sherpa decodes in ~50ms feature windows for faster partials. */
   private pendingSamples: number[] = [];
 
@@ -156,25 +163,46 @@ export class SherpaStreamingSttEngine implements SttEngine {
     this.pendingSamples = [];
   }
 
+  /** SHERPA_MODEL_DIR is often relative ("models/sherpa") while the API runs
+   *  with cwd=apps/api — walk up parent dirs until the model is found. */
+  private resolveModelDir(): string {
+    if (findModelFiles(this.modelDir)) return this.modelDir;
+    if (!path.isAbsolute(this.modelDir)) {
+      let cur = process.cwd();
+      for (let i = 0; i < 6; i++) {
+        const candidate = path.join(cur, this.modelDir);
+        if (findModelFiles(candidate)) {
+          console.log(`[sherpa] model resolved via walk-up: ${candidate}`);
+          return candidate;
+        }
+        const parent = path.dirname(cur);
+        if (parent === cur) break;
+        cur = parent;
+      }
+    }
+    return this.modelDir;
+  }
+
   private init(): boolean {
     if (this.recognizer) return true;
     if (this.unavailableFired) return false;
     try {
       // Injected modules (tests) get placeholder paths; the real loader
       // requires the on-disk model.
-      const files = findModelFiles(this.modelDir);
+      const dir = this.resolveModelDir();
+      const files = findModelFiles(dir);
       if (!files && !this.injected) {
         throw new Error(
-          `sherpa model not found under ${this.modelDir} — call ensureSherpaModel() or set SHERPA_MODEL_DIR`,
+          `sherpa model not found (searched "${this.modelDir}" from ${process.cwd()} and parents) — call ensureSherpaModel() or set SHERPA_MODEL_DIR`,
         );
       }
       const resolved =
         files ??
         {
-          tokens: path.join(this.modelDir, "tokens.txt"),
-          encoder: path.join(this.modelDir, "encoder.onnx"),
-          decoder: path.join(this.modelDir, "decoder.onnx"),
-          joiner: path.join(this.modelDir, "joiner.onnx"),
+          tokens: path.join(dir, "tokens.txt"),
+          encoder: path.join(dir, "encoder.onnx"),
+          decoder: path.join(dir, "decoder.onnx"),
+          joiner: path.join(dir, "joiner.onnx"),
         };
       const { OnlineRecognizer } = this.loadModule();
       this.recognizer = new OnlineRecognizer({
@@ -199,6 +227,17 @@ export class SherpaStreamingSttEngine implements SttEngine {
   feed(pcm: Buffer, atMs: number, onResult: (r: SttPartial | SttFinal) => void): void {
     this.onResult = onResult;
     if (!this.init() || !this.recognizer || !this.stream) return;
+
+    if (this.firstFeedMs === 0) this.firstFeedMs = atMs;
+    this.fedSamples += pcm.length >> 1;
+    // Watchdog: 8s of audio (128k samples @16k) with no output = dead decoder.
+    // Sample-count based — wall-clock spans lie when feeds arrive bursted.
+    if (!this.emittedAny && !this.unavailableFired && this.fedSamples >= this.sampleRate * 8) {
+      console.warn("[sherpa] watchdog: no output after 8s of fed audio — releasing to fallback chain");
+      this.unavailableFired = true;
+      this.unavailableCb?.();
+      return;
+    }
 
     if (atMs < this.lastFeedAtMs || this.utteranceStartedAtMs === 0) this.utteranceStartedAtMs = atMs;
     this.lastFeedAtMs = atMs;
@@ -242,6 +281,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
     if (finalText) {
       const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
       this.utteranceStartedAtMs = 0;
+      this.emittedAny = true;
       onResult({
         isFinal: true,
         text: finalText,
@@ -264,6 +304,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
     if (text && this.onResult) {
       const startedAtMs = this.utteranceStartedAtMs || this.lastFeedAtMs;
       this.lastKnownText = text;
+      this.emittedAny = true;
       this.onResult({
         isFinal: true,
         text,
@@ -278,6 +319,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
     if (text && text !== this.lastPartial && this.onResult) {
       this.lastPartial = text;
       this.lastKnownText = text;
+      this.emittedAny = true;
       this.onResult({ isFinal: false, text, confidence: 0.7 });
     }
   }

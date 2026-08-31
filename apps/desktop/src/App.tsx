@@ -3,7 +3,7 @@ import { APP_NAME } from "brand";
 import { useStore } from "./state/store";
 import { stealthGetState } from "./lib/tauri";
 import { api } from "./lib/api";
-import { Keyframes, cn } from "@app/ui";
+import { Keyframes, ToastStack, cn } from "@app/ui";
 import Onboarding from "./features/Onboarding";
 import Home from "./features/Home";
 import LiveSession from "./features/LiveSession";
@@ -68,7 +68,7 @@ function NavItem(props: { label: string; icon: () => ReactNode; active: boolean;
 }
 
 export default function App() {
-  const { screen, setScreen, setStealth, clearAuth, token } = useStore();
+  const { screen, setScreen, setStealth, clearAuth, token, notices, dismiss } = useStore();
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
 
@@ -111,6 +111,7 @@ export default function App() {
 
   return (
     <div className="shell">
+      <ToastStack notices={notices} onDismiss={dismiss} />
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark" />

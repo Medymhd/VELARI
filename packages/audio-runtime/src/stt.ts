@@ -318,11 +318,12 @@ export function createSttEngine(opts: {
     engines.push(new DeepgramStreamingSttEngine(opts.deepgramKey, { factory: opts.wsFactory }));
   }
   if (opts.mode !== "rest" || !opts.deepgramKey) {
-    // Sherpa first: fully offline (model on disk), no network dependency.
-    // Moonshine second: higher quality once its model is cached, but its first
-    // run downloads from the HF hub — must never block the chain (init timeout).
-    engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
+    // Moonshine first: higher quality, WASM runtime (no native-thread
+    // pathologies), init timeout degrades cleanly. Sherpa second as the
+    // fully-offline rung — its watchdog releases the chain if its decoder
+    // silently stalls.
     engines.push(new MoonshineStreamingSttEngine());
+    engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
   }
   if (opts.deepgramKey) engines.push(new DeepgramSttEngine(opts.deepgramKey));
   if (opts.localWhisperAvailable || opts.localWhisperUrl) {

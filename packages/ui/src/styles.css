@@ -111,7 +111,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 input::placeholder, textarea::placeholder { color: #5b6070; }
 
 input[type="checkbox"] {
-  appearance: none; width: 44px; height: 26px; padding: 0; position: relative; flex: none;
+  appearance: none; box-sizing: border-box; width: 44px; height: 26px; padding: 0; position: relative; flex: none;
   border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--duration-med) var(--ease-spring), border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
@@ -120,11 +120,14 @@ input[type="checkbox"]::after {
   content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
   border-radius: 50%; background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06);
-  transition: transform var(--duration-med) var(--ease-spring), width var(--duration-fast) var(--ease-spring);
+  transition: transform var(--duration-med) var(--ease-spring), width var(--duration-fast) var(--ease-spring), left var(--duration-fast) var(--ease-spring);
 }
-input[type="checkbox"]:active:not(:disabled)::after { width: 24px; }
+/* Pressed: knob grows but must stay inside the track (42px inner).
+   Unchecked: 2px margins → left 2px. Checked-active: 42 - 24 - 2 - 2 = 14px shift. */
+input[type="checkbox"]:active:not(:disabled)::after { width: 24px; left: 0; }
 input[type="checkbox"]:checked { background: var(--success); border-color: transparent; }
 input[type="checkbox"]:checked::after { transform: translateX(18px); }
+input[type="checkbox"]:active:checked:not(:disabled)::after { transform: translateX(16px); }
 input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 
 .card {

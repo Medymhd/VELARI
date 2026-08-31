@@ -14,12 +14,20 @@ interface TranscriptItem {
   isFinal: boolean;
   confidence?: number | null;
   speaker?: "user" | "interviewer";
+  /** STT engine that produced this segment — surfaced as a status chip. */
+  source?: string;
 }
 
 interface InsightItem {
   id: string;
   contentJson: Record<string, unknown>;
   createdAt: string;
+}
+
+export interface Notice {
+  id: string;
+  kind: "info" | "success" | "error";
+  message: string;
 }
 
 interface State {
@@ -35,6 +43,7 @@ interface State {
   stealth: StealthState;
   connected: boolean;
   error: string | null;
+  notices: Notice[];
 
   setScreen(s: Screen): void;
   setAuth(token: string, userId: string, workspaceId: string): void;
@@ -46,6 +55,8 @@ interface State {
   setStealth(s: StealthState): void;
   setConnected(v: boolean): void;
   setError(e: string | null): void;
+  notify(kind: Notice["kind"], message: string): void;
+  dismiss(id: string): void;
   resetLive(): void;
 }
 
@@ -62,6 +73,7 @@ export const useStore = create<State>((set) => ({
   stealth: { captureExclusion: false, taskbarHidden: false, masquerade: "none", masqueradeTitle: null, enforcedAtMs: 0 },
   connected: false,
   error: null,
+  notices: [],
 
   setScreen: (screen) => set({ screen }),
   setAuth: (token, userId, workspaceId) => {
@@ -83,5 +95,10 @@ export const useStore = create<State>((set) => ({
   setStealth: (stealth) => set({ stealth }),
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),
+  notify: (kind, message) =>
+    set((s) => ({
+      notices: [...s.notices, { id: Math.random().toString(36).slice(2), kind, message }].slice(-4),
+    })),
+  dismiss: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
   resetLive: () => set({ transcript: [], insights: [], sessionStatus: "draft", connected: false }),
 }));

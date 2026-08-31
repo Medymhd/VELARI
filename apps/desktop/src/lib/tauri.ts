@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type MasqueradeProfile = "none" | "notepad" | "terminal" | "explorer" | "settings" | "custom";
+export type MasqueradeProfile =
+  | "none" | "notepad" | "terminal" | "explorer" | "settings" | "custom"
+  | "chrome" | "zoom" | "teams" | "meet";
 export interface StealthState {
   captureExclusion: boolean;
   taskbarHidden: boolean;
@@ -32,6 +34,11 @@ export async function stealthSetMasquerade(profile: MasqueradeProfile, customTit
 
 export async function stealthEnforceNow(): Promise<StealthState> {
   return invoke<StealthState>("stealth_enforce_now");
+}
+
+/** Show/hide/focus the main window — the recovery hatch for stealth mode. */
+export async function appToggleMain(): Promise<boolean> {
+  return invoke<boolean>("app_toggle_main");
 }
 
 export async function vaultWrite(key: string, value: string): Promise<void> {

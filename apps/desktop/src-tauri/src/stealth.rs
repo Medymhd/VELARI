@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StealthState {
     pub capture_exclusion: bool,
     pub taskbar_hidden: bool,

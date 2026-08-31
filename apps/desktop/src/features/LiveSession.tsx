@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import { stealthGetState, stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar } from "../lib/tauri";
+import { stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar, type MasqueradeProfile, type StealthState } from "../lib/tauri";
 import { isTauri } from "../lib/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -18,7 +18,7 @@ import {
   type NativeAudioDevice,
 } from "../lib/nativeAudio";
 import { RelayDirectStream, resolveRelaySession } from "../lib/relayStt";
-import { StatusPill, Section } from "@app/ui";
+import { StatusPill, Toggle } from "@app/ui";
 
 const nativeAvailable = isTauri();
 
@@ -29,48 +29,114 @@ function base64ToPcm(b64: string): Int16Array {
   return new Int16Array(bytes.buffer);
 }
 
+/** Chunked binary→base64 — `String.fromCharCode(...bytes)` on large native
+ *  batches overflows the stack, so spread in 32 KB slices. */
+function pcmToBase64(pcm: Int16Array): string {
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function useRealtime(sessionId: string | null) {
-  const { pushTranscript, pushInsight, setConnected, setError } = useStore();
+  const { pushTranscript, pushInsight, setConnected, setError, notify } = useStore();
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
-    let closed = false;
-    const url = api.wsUrl(sessionId);
-    let ws: WebSocket;
-    try {
-      ws = new WebSocket(url);
-    } catch {
-      // Fallback demo tick when API is unreachable
-      const t = setInterval(() => {
-        pushTranscript({ id: Math.random().toString(36).slice(2), sequenceNo: Date.now(), text: "Demo mode: connect the platform API to get live transcription.", isFinal: true });
-      }, 3500);
-      return () => clearInterval(t);
+    const sid = sessionId;
+    let disposed = false;
+    let retryMs = 1000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
+    let lastWarnCode = "";
+    let lastWarnAt = 0;
+
+    function clearTimers() {
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     }
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => { if (!closed) setConnected(false); };
-    ws.onerror = () => setError("realtime connection failed");
-    ws.onmessage = (ev) => {
+
+    function handleMessage(ev: MessageEvent) {
       try {
-        const msg = JSON.parse(ev.data as string) as { type: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string }; insight?: { id: string; contentJson: Record<string, unknown>; createdAt: string } };
+        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; contentJson: Record<string, unknown>; createdAt: string } };
         if (msg.type === "transcript.final" || msg.type === "transcript.partial") {
           const s = msg.segment!;
-          pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined });
+          pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined, source: s.source });
         } else if (msg.type === "coach.suggestion" && msg.insight) {
           pushInsight({ id: msg.insight.id, contentJson: msg.insight.contentJson, createdAt: msg.insight.createdAt });
+        } else if (msg.type === "pipeline.warning" && msg.code && msg.code !== "pong" && msg.code !== "session_not_live") {
+          // Surface backend trouble instead of swallowing it (throttled per code).
+          const now = Date.now();
+          if (msg.code !== lastWarnCode || now - lastWarnAt > 10_000) {
+            lastWarnCode = msg.code;
+            lastWarnAt = now;
+            notify("error", `Realtime: ${msg.code} — ${msg.message ?? "see API logs"}`);
+          }
         }
       } catch { /* ignore */ }
+    }
+
+    function scheduleRetry() {
+      if (disposed) return;
+      setConnected(false);
+      retryTimer = setTimeout(() => {
+        retryMs = Math.min(retryMs * 2, 15_000);
+        connect();
+      }, retryMs);
+    }
+
+    function connect() {
+      if (disposed) return;
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(api.wsUrl(sid));
+      } catch {
+        scheduleRetry();
+        return;
+      }
+      wsRef.current = ws;
+      ws.onopen = () => {
+        retryMs = 1000;
+        setConnected(true);
+        // Heartbeat: server answers with a pong warning frame; keeps NATs,
+        // proxies and idle-timeout heuristics from reaping the socket.
+        pingTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping", eventId: Math.random().toString(36).slice(2) }));
+          }
+        }, 15_000);
+      };
+      ws.onclose = () => {
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+        if (!disposed) scheduleRetry();
+      };
+      ws.onerror = () => setError("realtime connection failed");
+      ws.onmessage = handleMessage;
+    }
+
+    connect();
+    return () => {
+      disposed = true;
+      clearTimers();
+      wsRef.current?.close();
     };
-    return () => { closed = true; ws.close(); };
-  }, [sessionId, pushInsight, pushTranscript, setConnected, setError]);
+  }, [sessionId, pushInsight, pushTranscript, setConnected, setError, notify]);
 
   return wsRef;
 }
 
 export default function LiveSession() {
-  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, setSession, stealth, setStealth, consentConfirmed, setConsent } = useStore();
+  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, setSession, stealth, setStealth, consentConfirmed, setConsent, notify } = useStore();
   const [busy, setBusy] = useState(false);
+  const [stealthBusy, setStealthBusy] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
   const [visionAnswer, setVisionAnswer] = useState<string | null>(null);
   const wsRef = useRealtime(sessionId);
@@ -78,13 +144,14 @@ export default function LiveSession() {
   // Audio capture -> WS audio.chunk (AudioWorklet primary, ScriptProcessor fallback)
   const audioRef = useRef<{ ctx: AudioContext; node: AudioWorkletNode | null; proc: ScriptProcessorNode | null; stream: MediaStream } | null>(null);
 
-  // Native (Rust) capture â€” DSP runs in the Tauri backend; batches arrive as events.
+  // Native (Rust) capture — per-channel live-apply: toggling a checkbox
+  // starts/stops the Rust DSP immediately, no session restart needed.
   const [nativeMic, setNativeMic] = useState(false);
   const [nativeSystem, setNativeSystem] = useState(false);
   const [micDevices, setMicDevices] = useState<NativeAudioDevice[]>([]);
   const [micDeviceId, setMicDeviceId] = useState("default");
-  const unlistenRef = useRef<UnlistenFn[]>([]);
-  const nativeActiveRef = useRef(false);
+  const nativeUnlisten = useRef<{ mic?: UnlistenFn; system?: UnlistenFn }>({});
+  const nativeStarting = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });
 
   // Direct relay fallback (Â§5.1.5): native audio â†’ STT relay when the
   // realtime WS is down; finals replay to the session on reconnect.
@@ -167,7 +234,9 @@ export default function LiveSession() {
     return () => un?.();
   }, [nativeAvailable, sessionId]);
 
-  // Global chord (Ctrl+Shift+O) toggles the stealth overlay; registered once.
+  // Global chord (Ctrl+Shift+O) toggles the stealth overlay; also registered
+  // app-wide in Rust at startup. Ctrl+Shift+H (app show/hide) is handled in
+  // Rust directly so it works on every screen.
   const overlayOnRef = useRef(false);
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -175,28 +244,28 @@ export default function LiveSession() {
       console.warn("global chord unavailable", e),
     );
     let un: UnlistenFn | null = null;
-    void listen("chord://activated", () => {
+    void listen("chord://activated", (e) => {
+      const action = (e.payload as { action?: string }).action ?? "overlay-toggle";
+      if (action !== "overlay-toggle") return;
       const next = !overlayOnRef.current;
       overlayOnRef.current = next;
-      setOverlayOn(next);
-      void invoke(next ? "overlay_show" : "overlay_hide").catch(() => {
-        overlayOnRef.current = false;
-        setOverlayOn(false);
-      });
+      void toggleOverlay(next);
     }).then((u) => (un = u));
     return () => un?.();
   }, [nativeAvailable]);
 
-  async function toggleOverlay() {
-    const next = !overlayOnRef.current;
-    overlayOnRef.current = next;
-    setOverlayOn(next);
+  async function toggleOverlay(on: boolean) {
+    overlayOnRef.current = on;
+    setOverlayOn(on);
     try {
-      await invoke(next ? "overlay_show" : "overlay_hide");
+      if (on) await invoke("overlay_show", { params: { mode: "stealth", verticalId: "interview-intelligence" } });
+      else await invoke("overlay_hide", { verticalId: "interview-intelligence" });
+      notify("info", on ? "Stealth overlay live — Ctrl+Shift+O toggles it" : "Stealth overlay hidden");
     } catch (e) {
       console.warn("overlay failed", e);
       overlayOnRef.current = false;
       setOverlayOn(false);
+      notify("error", `Overlay failed: ${errText(e)}`);
     }
   }
 
@@ -239,7 +308,7 @@ export default function LiveSession() {
   }, [sessionStatus, connected, nativeMic, nativeSystem, workspaceId]);
 
   function sendPcm(pcm: Int16Array, channel?: "mic" | "system") {
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+    const b64 = pcmToBase64(pcm);
     const frame = JSON.stringify({
       type: "audio.chunk",
       eventId: Math.random().toString(36).slice(2),
@@ -262,34 +331,70 @@ export default function LiveSession() {
     }
   }
 
-  async function startNativeCapture() {
-    if (!nativeAvailable) return;
+  async function startNativeChannel(channel: "mic" | "system") {
+    if (!nativeAvailable || nativeUnlisten.current[channel] || nativeStarting.current[channel]) return;
+    nativeStarting.current[channel] = true;
     try {
-      const unlisten: UnlistenFn[] = [];
-      if (nativeMic) {
+      if (channel === "mic") {
         const info = await startMicCapture(micDeviceId === "default" ? undefined : micDeviceId);
         console.info("native mic capture started", info);
-        unlisten.push(await listenMicBatches(forwardNativeBatch));
-      }
-      if (nativeSystem) {
+        nativeUnlisten.current.mic = await listenMicBatches(forwardNativeBatch);
+      } else {
         const info = await startSystemCapture();
         console.info("native system capture started", info);
-        unlisten.push(await listenSystemBatches(forwardNativeBatch));
+        nativeUnlisten.current.system = await listenSystemBatches(forwardNativeBatch);
       }
-      unlistenRef.current = unlisten;
-      nativeActiveRef.current = unlisten.length > 0;
-    } catch (ex) {
-      console.warn("native capture failed", ex);
-      await stopNativeCapture();
+    } finally {
+      nativeStarting.current[channel] = false;
     }
   }
 
-  async function stopNativeCapture() {
-    for (const un of unlistenRef.current.splice(0)) un();
-    if (!nativeAvailable || !nativeActiveRef.current) return;
-    nativeActiveRef.current = false;
-    await stopMicCapture().catch(() => {});
-    await stopSystemCapture().catch(() => {});
+  async function stopNativeChannel(channel: "mic" | "system") {
+    nativeUnlisten.current[channel]?.();
+    if (channel === "mic") nativeUnlisten.current.mic = undefined;
+    else nativeUnlisten.current.system = undefined;
+    if (!nativeAvailable) return;
+    try {
+      if (channel === "mic") await stopMicCapture();
+      else await stopSystemCapture();
+    } catch { /* already stopped */ }
+  }
+
+  async function stopAllNativeCapture() {
+    await stopNativeChannel("mic");
+    await stopNativeChannel("system");
+  }
+
+  async function toggleNativeMic(on: boolean) {
+    setNativeMic(on);
+    try {
+      if (on) {
+        await startNativeChannel("mic");
+        notify("success", "Native microphone capture live");
+      } else {
+        await stopNativeChannel("mic");
+        notify("info", "Native microphone capture stopped");
+      }
+    } catch (e) {
+      setNativeMic(!on);
+      notify("error", `Mic capture failed: ${errText(e)}`);
+    }
+  }
+
+  async function toggleNativeSystem(on: boolean) {
+    setNativeSystem(on);
+    try {
+      if (on) {
+        await startNativeChannel("system");
+        notify("success", "System loopback capture live");
+      } else {
+        await stopNativeChannel("system");
+        notify("info", "System loopback capture stopped");
+      }
+    } catch (e) {
+      setNativeSystem(!on);
+      notify("error", `System capture failed: ${errText(e)}`);
+    }
   }
 
   async function startCapture() {
@@ -329,7 +434,7 @@ export default function LiveSession() {
       };
       audioRef.current = { ctx, node: null, proc, stream };
     } catch (ex) {
-      console.warn("mic capture failed", ex);
+      notify("error", `Microphone capture failed: ${errText(ex)} — check the app's mic permission`);
     }
   }
 
@@ -347,7 +452,7 @@ export default function LiveSession() {
     audioRef.current = null;
   }
 
-  useEffect(() => () => { stopCapture(); void stopNativeCapture(); stopRelayDirect(); }, []);
+  useEffect(() => () => { stopCapture(); void stopAllNativeCapture(); stopRelayDirect(); }, []);
 
   async function act(action: "start" | "pause" | "complete") {
     if (!sessionId) return;
@@ -356,39 +461,76 @@ export default function LiveSession() {
       await api.sessionAction(sessionId, action);
       const next = action === "start" ? "live" : action === "pause" ? "paused" : "completed";
       setSession(sessionId, next);
+      notify("success", `Session ${action === "start" ? "started" : action === "pause" ? "paused" : "completed"}`);
       if (action === "start") {
         void startCapture();
-        if (nativeAvailable && (nativeMic || nativeSystem)) void startNativeCapture();
+        // Reconcile: any checked native channel starts live here too.
+        if (nativeAvailable) {
+          if (nativeMic) void startNativeChannel("mic").catch((e) => notify("error", `Mic capture failed: ${errText(e)}`));
+          if (nativeSystem) void startNativeChannel("system").catch((e) => notify("error", `System capture failed: ${errText(e)}`));
+        }
       }
       if (action === "complete" || action === "pause") {
         stopCapture();
-        void stopNativeCapture();
+        void stopAllNativeCapture();
         stopRelayDirect();
       }
+    } catch (e) {
+      notify("error", `Session ${action} failed: ${errText(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function toggleCapture() {
-    const next = !stealth.captureExclusion;
-    const s = await stealthSetCapture(next);
-    setStealth(s);
+  async function toggleCapture(on: boolean) {
+    setStealthBusy("capture");
+    try {
+      const s = await stealthSetCapture(on);
+      setStealth(s);
+      notify("success", on ? "Hidden from screen capture" : "Screen-capture exclusion removed");
+    } catch (e) {
+      notify("error", `Capture exclusion failed: ${errText(e)}`);
+    } finally {
+      setStealthBusy(null);
+    }
   }
 
-  async function toggleTaskbar() {
-    const next = !stealth.taskbarHidden;
-    const s = await stealthSetTaskbar(next);
-    setStealth(s);
+  async function toggleTaskbar(on: boolean) {
+    setStealthBusy("taskbar");
+    try {
+      const s = await stealthSetTaskbar(on);
+      setStealth(s);
+      notify("success", on ? "Hidden from taskbar (restore via tray or Ctrl+Shift+H)" : "Taskbar hiding removed");
+    } catch (e) {
+      notify("error", `Taskbar hiding failed: ${errText(e)}`);
+    } finally {
+      setStealthBusy(null);
+    }
+  }
+
+  async function setMasqueradeProfile(profile: MasqueradeProfile) {
+    setStealthBusy("masquerade");
+    try {
+      const s = await stealthSetMasquerade(profile);
+      setStealth(s);
+      notify("info", profile === "none" ? "Masquerade off" : `Masquerading as ${profile}`);
+    } catch (e) {
+      notify("error", `Masquerade failed: ${errText(e)}`);
+    } finally {
+      setStealthBusy(null);
+    }
   }
 
   async function enableStealthForAllBrowsersAndApps() {
+    setStealthBusy("universal");
     try {
-      // The Rust side reads the real foreground window title — no UA guessing.
-      const s = await invoke<any>("stealth_enable_for_all_browsers_and_apps");
+      const s = await invoke<StealthState>("stealth_enable_for_all_browsers_and_apps");
       setStealth(s);
+      notify("success", "Stealth enforced for every window — capture-excluded + taskbar hidden");
     } catch (e) {
-      console.warn("universal stealth failed", e);
+      notify("error", `Universal stealth failed: ${errText(e)}`);
+    } finally {
+      setStealthBusy(null);
     }
   }
 
@@ -404,11 +546,22 @@ export default function LiveSession() {
       });
       setVisionAnswer(res.text || "(empty response)");
     } catch (e) {
-      console.warn("vision failed", e);
+      notify("error", `Vision failed: ${errText(e)}`);
     } finally {
       setBusy(false);
     }
   }
+
+  // STT engine visibility: the transcript frames carry the producing engine's
+  // source — surface it so "demo" vs real transcription is never a mystery.
+  const lastSource = transcript.slice().reverse().find((t) => t.source)?.source;
+  const sttWarnedRef = useRef(false);
+  useEffect(() => {
+    if (lastSource === "simulated" && !sttWarnedRef.current) {
+      sttWarnedRef.current = true;
+      notify("error", "Transcription is in DEMO mode — no STT engine configured. Set SHERPA_MODEL_DIR or DEEPGRAM_API_KEY in .env.");
+    }
+  }, [lastSource, notify]);
 
   if (!sessionId) return <div className="card muted">Select or create a session from Home.</div>;
 
@@ -423,12 +576,17 @@ export default function LiveSession() {
             <span className="badge">{connected ? "realtime connected" : "offline"}</span>
             {relayActive && <span className="badge warn">direct relay</span>}
             {overlayOn && <span className="badge accent">overlay live</span>}
+            {lastSource && (
+              <span className={`badge ${lastSource === "simulated" ? "warn" : ""}`} title={`Engine: ${lastSource}`}>
+                STT: {lastSource === "simulated" ? "DEMO" : lastSource === "local_stt" ? "local" : lastSource === "cloud_stt" ? "cloud" : lastSource}
+              </span>
+            )}
             {!consentConfirmed && <span className="badge warn">consent required</span>}
           </div>
           <div className="row">
-            <button disabled={busy || !consentConfirmed} onClick={() => void act("start")}>Start</button>
+            <button disabled={busy || !consentConfirmed} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : "Start"}</button>
             <button disabled={busy} onClick={() => void act("pause")}>Pause</button>
-            <button disabled={busy} className="primary" onClick={() => void act("complete")}>Complete</button>
+            <button disabled={busy} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completing…" : "Complete"}</button>
           </div>
         </div>
 
@@ -496,11 +654,8 @@ export default function LiveSession() {
 
         <div className="card grid">
           <span className="kicker">Native audio - Rust DSP</span>
-          <p className="small muted" style={{ margin: 0 }}>16 kHz resample, silence suppression, batched emission. Applies on session start.</p>
-          <label className="row small" style={{ justifyContent: "space-between" }}>
-            <span>Native microphone</span>
-            <input type="checkbox" checked={nativeMic} onChange={(e) => setNativeMic(e.target.checked)} style={{ width: 18, height: 18 }} />
-          </label>
+          <p className="small muted" style={{ margin: 0 }}>16 kHz resample, silence suppression, batched emission. Toggles apply immediately — live.</p>
+          <Toggle checked={nativeMic} onChange={(v) => void toggleNativeMic(v)} label="Native microphone" />
           <div className="row">
             <select value={micDeviceId} onChange={(e) => setMicDeviceId(e.target.value)} style={{ flex: 1 }}>
               <option value="default">Default microphone</option>
@@ -508,12 +663,10 @@ export default function LiveSession() {
                 <option key={d.id} value={d.id}>{d.name}</option>
               ))}
             </select>
-            <button className="ghost" onClick={() => void listInputDevices().then(setMicDevices).catch(() => {})}>Refresh</button>
+            <button className="ghost" onClick={async () => { try { setMicDevices(await listInputDevices()); } catch (e) { notify("error", `Device list failed: ${errText(e)}`); } }}>Refresh</button>
           </div>
-          <label className="row small" style={{ justifyContent: "space-between" }}>
-            <span>Native system audio (loopback)</span>
-            <input type="checkbox" checked={nativeSystem} onChange={(e) => setNativeSystem(e.target.checked)} style={{ width: 18, height: 18 }} />
-          </label>
+          <Toggle checked={nativeSystem} onChange={(v) => void toggleNativeSystem(v)} label="Native system audio (loopback)" />
+          <span className="small muted">Loopback captures everything the OS plays (Zoom/Meet/Teams/browser). Mic captures your voice and room audio.</span>
         </div>
 
         <div className="card grid">
@@ -526,13 +679,13 @@ export default function LiveSession() {
                   const b64 = await invoke<string>("take_screenshot");
                   setShot(`data:image/png;base64,${b64}`);
                 } catch (e) {
-                  console.warn("screenshot failed", e);
+                  notify("error", `Screenshot failed: ${errText(e)}`);
                 }
               }}
             >
               Take screenshot
             </button>
-            <button className="ghost" onClick={async () => { try { await invoke("open_cropper"); } catch {} }}>
+            <button className="ghost" onClick={async () => { try { await invoke("open_cropper"); notify("info", "Drag to select a region — Esc cancels"); } catch (e) { notify("error", `Cropper failed: ${errText(e)}`); } }}>
               Cropper
             </button>
           </div>
@@ -555,22 +708,13 @@ export default function LiveSession() {
         <div className="card grid">
           <span className="kicker">Stealth controls - red-team mode</span>
           <p className="small muted" style={{ margin: 0 }}>For the make-then-break exercise. The red team is expected to detect these.</p>
-          <label className="row small" style={{ justifyContent: "space-between" }}>
-            <span>Hide from screen capture</span>
-            <input type="checkbox" checked={stealth.captureExclusion} onChange={() => void toggleCapture()} style={{ width: 18, height: 18 }} />
-          </label>
-          <label className="row small" style={{ justifyContent: "space-between" }}>
-            <span>Hide from taskbar</span>
-            <input type="checkbox" checked={stealth.taskbarHidden} onChange={() => void toggleTaskbar()} style={{ width: 18, height: 18 }} />
-          </label>
+          <Toggle checked={!!stealth.captureExclusion} disabled={stealthBusy === "capture"} onChange={(v) => void toggleCapture(v)} label={stealthBusy === "capture" ? "Applying…" : "Hide from screen capture"} />
+          <Toggle checked={!!stealth.taskbarHidden} disabled={stealthBusy === "taskbar"} onChange={(v) => void toggleTaskbar(v)} label={stealthBusy === "taskbar" ? "Applying…" : "Hide from taskbar"} />
           <div className="row">
             <select
-              value={stealth.masquerade}
-              onChange={async (e) => {
-                const s = await stealthSetMasquerade(e.target.value as never);
-                setStealth(s);
-                await stealthGetState().then(setStealth).catch(() => {});
-              }}
+              value={stealth.masquerade ?? "none"}
+              disabled={stealthBusy === "masquerade"}
+              onChange={(e) => void setMasqueradeProfile(e.target.value as MasqueradeProfile)}
             >
               <option value="none">No masquerade</option>
               <option value="notepad">Notepad</option>
@@ -583,15 +727,13 @@ export default function LiveSession() {
               <option value="meet">Meet</option>
             </select>
           </div>
-          <button className="primary" onClick={() => void enableStealthForAllBrowsersAndApps()}>
-            Enable stealth for all browsers & apps (Chrome/Zoom/Meet/Teams)
+          <button className="primary" disabled={stealthBusy === "universal"} onClick={() => void enableStealthForAllBrowsersAndApps()}>
+            {stealthBusy === "universal" ? "Enforcing…" : "Enable stealth for all browsers & apps (Chrome/Zoom/Meet/Teams)"}
           </button>
           <span className="small muted">One-click: WDA 0x11 + TOOLWINDOW for every window — works on any share client.</span>
-          <label className="row small" style={{ justifyContent: "space-between" }}>
-            <span>Stealth overlay — live answers</span>
-            <input type="checkbox" checked={overlayOn} onChange={() => void toggleOverlay()} style={{ width: 18, height: 18 }} />
-          </label>
+          <Toggle checked={overlayOn} onChange={(v) => void toggleOverlay(v)} label="Stealth overlay — live answers (Ctrl+Shift+O)" />
           <div className="small muted">Applied: capture={String(stealth.captureExclusion)} taskbar={String(stealth.taskbarHidden)} masquerade={stealth.masquerade}</div>
+          <div className="small muted">Recovery: Ctrl+Shift+H shows/hides the app · the tray menu always reaches a hidden window.</div>
         </div>
       </div>
     </div>

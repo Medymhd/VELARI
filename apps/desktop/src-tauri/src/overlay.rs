@@ -53,6 +53,7 @@ const DEFAULT_HEIGHT: f64 = 430.0;
 const MARGIN: f64 = 24.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OverlayParams {
     #[serde(default = "default_mode")]
     pub mode: String,

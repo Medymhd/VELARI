@@ -110,6 +110,7 @@ model TranscriptSegment {
   id          String   @id @default(uuid())
   sessionId   String   @map("session_id")
   speakerId   String?  @map("speaker_id")
+  speaker     String?
   sequenceNo  Int      @map("sequence_no")
   startedAtMs Int      @map("started_at_ms")
   endedAtMs   Int      @map("ended_at_ms")
