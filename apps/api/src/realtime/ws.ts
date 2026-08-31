@@ -199,7 +199,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           session!.workspaceId,
           session!.id,
           {
-            taskClass: "live_coach",
+            taskClass: "chunk_summary",
             privacyMode: workspaceCfg.privacyMode,
             messages: buildChunkSummaryMessages(chunk, rollingSummary),
             responseSchema: {
@@ -451,20 +451,36 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // when the client stops sending (partial-only sessions otherwise end
       // with zero persisted segments).
       for (const [channel, engine] of sttEngines) {
+        // Close AFTER flush completes — async engines (Moonshine) decode the
+        // trailing utterance during flush; closing first kills their pipeline
+        // and the final is lost.
+        let closed = false;
+        const finish = () => {
+          if (closed) return;
+          closed = true;
+          engine.close?.();
+        };
         try {
           engine.flush((r) => {
-            if (r.isFinal && r.text.trim()) {
-              const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
-              void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker);
-              log.info("flush final on disconnect", { sessionId: session!.id, channel, chars: r.text.length });
-            } else {
-              log.info("flush on disconnect produced no text", { sessionId: session!.id, channel });
+            try {
+              if (r.isFinal && r.text.trim()) {
+                const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker);
+                log.info("flush final on disconnect", { sessionId: session!.id, channel, chars: r.text.length });
+              } else {
+                log.info("flush on disconnect produced no text", { sessionId: session!.id, channel });
+              }
+            } finally {
+              finish();
             }
           });
+          // Synchronous flushes (sherpa) fire the callback inline; async ones
+          // (Moonshine) land later. Give in-flight decodes a grace window.
+          setTimeout(finish, 15_000);
         } catch (e) {
           log.warn("flush on disconnect failed", { sessionId: session!.id, channel, error: String(e) });
+          finish();
         }
-        engine.close?.();
       }
       log.info("realtime disconnected", { traceId, sessionId: session!.id });
     });

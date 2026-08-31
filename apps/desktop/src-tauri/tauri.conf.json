@@ -34,7 +34,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBRjdGRjA4NTZCRUM0OTYKUldTV3hMNVdDUC8zT2pJQzk3WU02NVc4TzN5dGt6RkJ4UDloVXFxbzQwa0drcHF3RXVkOVhPWDYK",
       "endpoints": [
-        "https://updates.example.com/desktop/{{target}}/{{arch}}/{{current_version}}"
+        "https://github.com/Medymhd/VELARI/releases/latest/download/latest.json"
       ]
     }
   }

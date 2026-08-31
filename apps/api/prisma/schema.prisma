@@ -112,8 +112,9 @@ model TranscriptSegment {
   speakerId   String?  @map("speaker_id")
   speaker     String?
   sequenceNo  Int      @map("sequence_no")
-  startedAtMs Int      @map("started_at_ms")
-  endedAtMs   Int      @map("ended_at_ms")
+  // Wall-clock epoch ms — Int4 overflows (ms ≈ 1.8e12), hence BigInt.
+  startedAtMs BigInt   @map("started_at_ms")
+  endedAtMs   BigInt   @map("ended_at_ms")
   text        String
   confidence  Float?
   isFinal     Boolean  @map("is_final")

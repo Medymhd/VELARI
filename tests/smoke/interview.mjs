@@ -89,9 +89,10 @@ const wsResult = await new Promise((resolve) => {
       frame.occurredAt = new Date().toISOString();
       frame.payloadB64 = pcm.toString("base64");
       ws.send(JSON.stringify(frame));
+      i += 1;
       // Listen through the whole send window + decode lag so endpoint finals
     // arrive on the socket; flush-on-close covers the tail after we stop.
-    if (i > totalFrames + 250 + 1250) { clearTimeout(timer); resolve("done-listening"); }
+    if (i > totalFrames + 250 + 1250) { clearTimeout(iv); resolve("done-listening"); }
     }, 20);
   });
   ws.addEventListener("message", (ev) => {
