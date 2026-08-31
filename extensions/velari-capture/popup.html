@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font: 13px system-ui, sans-serif; width: 280px; margin: 12px; color: #16181d; }
+      label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; color: #6b7280; }
+      input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid #d1d5db; border-radius: 7px; font: inherit; }
+      button { margin-top: 12px; width: 100%; padding: 8px; border: 0; border-radius: 7px; background: #6c7bff; color: #fff; font-weight: 600; cursor: pointer; }
+      .hint { color: #6b7280; font-size: 11px; margin-top: 10px; line-height: 1.45; }
+      .ok { color: #059669; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <label>API URL</label>
+    <input id="apiUrl" placeholder="http://localhost:8787/v1" />
+    <label>Token</label>
+    <input id="token" placeholder="Paste from the app (Settings)" />
+    <button id="save">Save</button>
+    <div class="hint">Select text on any page and press <b>Ctrl+Shift+Y</b> — it lands in your live session as web context. Get the token from the app's Settings screen.</div>
+    <div class="hint ok" id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

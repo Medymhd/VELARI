@@ -153,6 +153,28 @@ export default function LiveSession() {
   const [shot, setShot] = useState<string | null>(null);
   const [visionAnswer, setVisionAnswer] = useState<string | null>(null);
   const wsRef = useRealtime(sessionId);
+  // Late-bound hook so effects declared before sendClientFinal can reach it.
+  const sendClientFinalRef = useRef<((text: string, confidence: number, source: "cloud_stt" | "imported") => void) | null>(null);
+
+  // Browser-companion capture (rival Ctrl+Y parity): poll for web contexts
+  // captured via the extension and drop them into the transcript as notes.
+  const lastContextAt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionId || !connected) return;
+    const poll = setInterval(async () => {
+      try {
+        const rows = await api.fetchWebContext(lastContextAt.current ?? undefined);
+        for (const row of rows) {
+          lastContextAt.current = row.createdAt;
+          const label = row.contentJson.title || row.contentJson.url || "captured page";
+          const text = `[web] ${label}: ${(row.contentJson.text ?? "").slice(0, 300)}`;
+          pushTranscript({ id: row.id, sequenceNo: Date.now(), text, isFinal: true, speaker: "user" });
+          sendClientFinalRef.current?.(text, 0.9, "imported");
+        }
+      } catch { /* polling is best-effort */ }
+    }, 10_000);
+    return () => clearInterval(poll);
+  }, [sessionId, connected]);
 
   // Audio capture -> WS audio.chunk (AudioWorklet primary, ScriptProcessor fallback)
   const audioRef = useRef<{ ctx: AudioContext; node: AudioWorkletNode | null; proc: ScriptProcessorNode | null; stream: MediaStream } | null>(null);
@@ -239,6 +261,7 @@ export default function LiveSession() {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(frame));
     else pendingClientFinals.current.push(frame);
   }
+  sendClientFinalRef.current = sendClientFinal;
 
   // Replay finals captured while the realtime WS was down.
   useEffect(() => {
@@ -576,6 +599,7 @@ export default function LiveSession() {
     if (!shot || !sessionId) return;
     setBusy(true);
     setVisionAnswer(null);
+    setCodeRun(null);
     try {
       const res = await api.visionSolve({
         sessionId,
@@ -587,6 +611,27 @@ export default function LiveSession() {
       notify("error", `Vision failed: ${errText(e)}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Verified code execution (rival codeVerification parity): extract the
+   *  first fenced block from the vision answer and run it via /code/verify. */
+  const [codeRun, setCodeRun] = useState<string | "busy" | null>(null);
+  async function runVisionCode() {
+    if (!visionAnswer) return;
+    setCodeRun("busy");
+    try {
+      const fence = visionAnswer.match(/```(\w+)?\n([\s\S]*?)```/);
+      if (!fence) { setCodeRun("No fenced code block found in the answer."); return; }
+      const language = (fence[1] ?? "python").toLowerCase();
+      const res = await api.codeVerify({ language, code: fence[2]! });
+      setCodeRun(
+        res.ok
+          ? `OK\n${res.stdout ?? "(no output)"}`
+          : `FAILED${res.error ? ` (${res.error})` : ""}\n${res.compileError ?? res.stderr ?? ""}`,
+      );
+    } catch (e) {
+      setCodeRun(`failed: ${errText(e)}`);
     }
   }
 
@@ -752,6 +797,14 @@ export default function LiveSession() {
             <div className="card small" style={{ background: "var(--surface-2)", whiteSpace: "pre-wrap" }}>
               {visionAnswer}
             </div>
+          )}
+          {visionAnswer?.includes("```") && (
+            <button className="ghost" disabled={codeRun === "busy"} onClick={() => void runVisionCode()}>
+              {codeRun === "busy" ? "Running…" : "Run code"}
+            </button>
+          )}
+          {codeRun && codeRun !== "busy" && (
+            <pre className="small mono" style={{ whiteSpace: "pre-wrap", background: "var(--surface-2)", padding: 10, borderRadius: 8, maxHeight: 220, overflow: "auto" }}>{codeRun}</pre>
           )}
           <span className="small muted">Routed through the platform vision fallback chain.</span>
         </div>

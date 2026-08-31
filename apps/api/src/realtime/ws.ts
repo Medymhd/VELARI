@@ -74,8 +74,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
-    /** Mode persona (reference ModesManager parity) — client-switchable mid-session. */
+    /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
+    /** Profile Intelligence persona — coach answers cite real background. */
+    let personaContext: string | undefined;
 
     // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
     // attribution. Browser (channel-less) chunks share the default engine.
@@ -107,7 +109,20 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (localWhisperUrl) sttOpts.localWhisperUrl = localWhisperUrl;
       const sherpaModelDir = process.env.SHERPA_MODEL_DIR;
       if (sherpaModelDir) sttOpts.sherpaModelDir = sherpaModelDir;
-      log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey });
+      // Profile Intelligence: persona feeds "Candidate role/context" so coach
+      // answers cite the user's actual background.
+      const persona = await db.profilePersona.findUnique({ where: { workspaceId: session!.workspaceId } });
+      if (persona) {
+        const p = persona.personaJson as { role?: string; seniority?: string; skills?: string[]; experienceHighlights?: string[] };
+        personaContext = [
+          p.role ? `Role: ${p.role}${p.seniority ? ` (${p.seniority})` : ""}` : "",
+          p.skills?.length ? `Skills: ${p.skills.join(", ")}` : "",
+          ...(p.experienceHighlights ?? []).slice(0, 3),
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+      log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
     } catch (e) {
       log.warn("failed to load workspace AI config, using local fallback", { error: String(e) });
     }
@@ -283,6 +298,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           verbatimTranscript: verbatim.slice(-4000) || "No transcript yet.",
           rollingSummary,
           mode: sessionMode,
+          roleDescription: personaContext,
         });
         if (styleProfile) {
           messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };

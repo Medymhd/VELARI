@@ -49,7 +49,7 @@ function featureBadges(features?: string[]): string[] {
 }
 
 export default function Settings() {
-  const { workspaceId, stealth, setStealth } = useStore();
+  const { workspaceId, stealth, setStealth, token } = useStore();
   const [provider, setProvider] = useState<string>("groq");
   const [secret, setSecret] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -68,6 +68,9 @@ export default function Settings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
+  const [resumeText, setResumeText] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
 
   const isCustom = provider === "openai-compat";
   const effectiveBaseUrl = isCustom ? baseUrl.trim() : (PROVIDER_BASE_URLS[provider] ?? "");
@@ -146,7 +149,31 @@ export default function Settings() {
     } catch { /* default policy */ }
     const s = await stealthGetState().catch(() => null);
     if (s) setStealth(s);
+    try {
+      const p = await api.getProfile(workspaceId);
+      setProfile((p?.personaJson as Record<string, unknown>) ?? null);
+    } catch { /* no profile yet */ }
     setLoading(false);
+  }
+
+  async function analyze() {
+    if (!workspaceId) return;
+    setProfileBusy(true);
+    try {
+      const saved = await api.analyzeProfile(workspaceId, resumeText.trim());
+      setProfile((saved.personaJson as Record<string, unknown>) ?? null);
+      setResumeText("");
+      flash("Profile analyzed — the coach now cites your real background");
+    } catch (e) { fail(e); } finally { setProfileBusy(false); }
+  }
+
+  async function removeProfile() {
+    if (!workspaceId) return;
+    try {
+      await api.deleteProfile(workspaceId);
+      setProfile(null);
+      flash("Profile deleted");
+    } catch (e) { fail(e); }
   }
 
   useEffect(() => { void refresh(); }, [workspaceId]);
@@ -455,6 +482,43 @@ function RoutingPicker(props: {
                 </div>
               );
             })}
+          </Section>
+
+          <Section kicker="Profile Intelligence" title="Your background, coach-verified">
+            <span className="small muted">
+              Paste your resume — the coach cites your real projects and skills instead of inventing them. Stored per workspace, deletable anytime.
+            </span>
+            {profile && (
+              <div className="small" style={{ background: "var(--surface-2)", borderRadius: 8, padding: 10 }}>
+                <b>{String(profile.role ?? "Candidate")}</b>
+                {profile.seniority ? ` · ${String(profile.seniority)}` : ""}
+                {(profile.skills as string[] | undefined)?.length ? <div className="small muted" style={{ marginTop: 4 }}>{(profile.skills as string[]).join(" · ")}</div> : null}
+                {(profile.experienceHighlights as string[] | undefined)?.slice(0, 3).map((h, i) => <div key={i} className="small" style={{ marginTop: 2 }}>— {h}</div>)}
+              </div>
+            )}
+            <textarea
+              rows={4}
+              placeholder="Paste resume text (min 40 chars)…"
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+            />
+            <div className="row">
+              <button className="primary" disabled={profileBusy || resumeText.trim().length < 40} onClick={() => void analyze()}>
+                {profileBusy ? "Analyzing…" : profile ? "Re-analyze" : "Analyze resume"}
+              </button>
+              {profile && <button className="ghost" onClick={() => void removeProfile()}>Delete</button>}
+            </div>
+          </Section>
+
+          <Section kicker="Browser capture" title="Companion extension token">
+            <span className="small muted">
+              Load <span className="mono">extensions/velari-capture</span> via chrome://extensions (Developer mode → Load unpacked), then paste this token:
+            </span>
+            <div className="row">
+              <input readOnly value={typeof token === "string" ? token : ""} style={{ flex: 1 }} className="mono" />
+              <button className="ghost" onClick={() => { try { void navigator.clipboard.writeText(typeof token === "string" ? token : ""); flash("Token copied"); } catch { fail("Clipboard unavailable"); } }}>Copy</button>
+            </div>
+            <span className="small muted">Select text on any page → Ctrl+Shift+Y → it lands in your live session as web context.</span>
           </Section>
 
           <Section kicker="Privacy & policy" title="Workspace rules">

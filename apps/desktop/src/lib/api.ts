@@ -90,6 +90,22 @@ export const api = {
       `/provider-connections/${id}/test`,
       { method: "POST" },
     ),
+  analyzeProfile: (workspaceId: string, resumeText: string) =>
+    req<{ personaJson: Record<string, unknown> }>("/profile/analyze", {
+      method: "POST",
+      body: JSON.stringify({ workspaceId, resumeText }),
+    }),
+  getProfile: (workspaceId: string) =>
+    req<{ personaJson?: Record<string, unknown> } | null>(`/profile?workspaceId=${encodeURIComponent(workspaceId)}`),
+  codeVerify: (body: { language: string; code: string; stdin?: string }) =>
+    req<{ ok: boolean; stdout?: string; stderr?: string; compileError?: string; error?: string }>(
+      "/code/verify",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  fetchWebContext: (since?: string) =>
+    req<{ id: string; contentJson: { text?: string; url?: string; title?: string }; createdAt: string }[]>(
+      `/context/capture${since ? `?since=${encodeURIComponent(since)}` : ""}`,
+    ),
   saveModelProfile: (
     workspaceId: string,
     p: {
@@ -111,6 +127,8 @@ export const api = {
   updatePolicy: (workspaceId: string, policy: Record<string, unknown>) =>
     req(`/workspaces/${workspaceId}/policy`, { method: "PATCH", body: JSON.stringify(policy) }),
   deleteProvider: (id: string) => req(`/provider-connections/${id}`, { method: "DELETE" }),
+  deleteProfile: (workspaceId: string) =>
+    req(`/profile?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" }),
   health: () => req<{ ok: boolean; version?: string }>("/health"),
   verticalGet: <T>(vertical: string, path: string) => req<T>(`/verticals/${vertical}${path}`),
   verticalPost: <T>(vertical: string, path: string, body: unknown) =>

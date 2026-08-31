@@ -14,6 +14,7 @@ import { browserRoutes } from "./routes/browser.js";
 import { sttRelayRoutes } from "./routes/sttRelay.js";
 import { visionRoutes } from "./routes/vision.js";
 import { recallRoutes } from "./routes/recall.js";
+import { profileRoutes } from "./routes/profile.js";
 import { registerRealtime } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
@@ -97,8 +98,9 @@ async function buildApp() {
   sessionRoutes(app, prisma);
   browserRoutes(app, prisma);
   sttRelayRoutes(app);
-  visionRoutes(app, prisma);
-  recallRoutes(app, prisma);
+visionRoutes(app, prisma);
+recallRoutes(app, prisma);
+profileRoutes(app, prisma);
 
   // Vertical registry — dynamic, no hard-coded ids. Adding a new vertical alongside the 2-3 built only requires a new `verticals/<id>` package.
   const verticals = await discoverVerticals();

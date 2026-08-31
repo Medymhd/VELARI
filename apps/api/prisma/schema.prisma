@@ -286,3 +286,16 @@ model SessionChunk {
   @@index([sessionId, chunkIndex])
   @@map("session_chunks")
 }
+
+/// Profile Intelligence: a LLM-extracted persona from the user's resume —
+/// feeds coach prompts with real background so answers cite actual
+/// experience instead of inventing it.
+model ProfilePersona {
+  id          String   @id @default(uuid())
+  workspaceId String   @unique @map("workspace_id")
+  personaJson Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("profile_personas")
+}
