@@ -127,6 +127,7 @@ export function sessionRoutes(app: FastifyInstance, db: PrismaClient): void {
           resourceType: "interview_session",
           resourceId: id,
         });
+        if (action === "complete") void generatePostSessionSummary(db, id, session.workspaceId);
         return reply.send(toJson(updated));
       } catch (e) {
         const code = (e as { code?: string }).code;
@@ -244,6 +245,81 @@ export function sessionRoutes(app: FastifyInstance, db: PrismaClient): void {
 /** Used by the worker's retention sweeper. */
 export function retentionDeadline(policy: string): number {
   return retentionDeadlineMs(policy);
+}
+
+/**
+ * Post-session summary (rival MeetingSummary parity): fired fire-and-forget on
+ * complete so the route responds instantly; the summary lands as a
+ * session_summary insight the Review screen already renders. Never throws —
+ * a failed summary must not fail the session.
+ */
+async function generatePostSessionSummary(db: PrismaClient, sessionId: string, workspaceId: string): Promise<void> {
+  try {
+    const { executeRouted, loadWorkspaceAiConfig } = await import("../ai/runtime.js");
+    const { buildSummaryMessages, offlineSummary } = await import("@app/vertical-interview-intelligence");
+    const { CircuitBreakerRegistry } = await import("@app/ai-runtime");
+
+    const segments = await db.transcriptSegment.findMany({
+      where: { sessionId, isFinal: true },
+      orderBy: { sequenceNo: "asc" },
+    });
+    if (segments.length < 2) return; // nothing meaningful to summarize
+
+    const transcript = segments
+      .map((s) => `${s.speaker ? `[${s.speaker}] ` : ""}${s.text}`)
+      .join("\n");
+    const insights = await db.sessionInsight.findMany({ where: { sessionId } });
+    const insightText = insights
+      .map((i) => JSON.stringify(i.contentJson))
+      .join("\n")
+      .slice(0, 4000);
+
+    const cfg = await loadWorkspaceAiConfig(db, workspaceId);
+    const outcome = await executeRouted(
+      { db, breakers: new CircuitBreakerRegistry() },
+      cfg,
+      workspaceId,
+      sessionId,
+      {
+        taskClass: "deep_analysis",
+        privacyMode: cfg.privacyMode,
+        messages: buildSummaryMessages(transcript, insightText),
+        responseSchema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            highlights: { type: "array", items: { type: "string" } },
+            followups: { type: "array", items: { type: "string" } },
+            questionBank: { type: "array", items: { type: "string" } },
+          },
+          required: ["summary", "highlights", "followups", "questionBank"],
+        },
+      } as never,
+    );
+
+    let content: Record<string, unknown> | null = null;
+    if (outcome.ok && outcome.structured) content = outcome.structured as Record<string, unknown>;
+    else if (outcome.ok && outcome.text) {
+      try {
+        content = JSON.parse(outcome.text) as Record<string, unknown>;
+      } catch {
+        content = null;
+      }
+    }
+    if (!content?.summary) content = offlineSummary(transcript);
+
+    await db.sessionInsight.create({
+      data: {
+        id: crypto.randomUUID(),
+        sessionId,
+        type: "session_summary",
+        sourceSegmentIds: [],
+        contentJson: content as object,
+      },
+    });
+  } catch {
+    // Post-session summary is best-effort by contract.
+  }
 }
 
 

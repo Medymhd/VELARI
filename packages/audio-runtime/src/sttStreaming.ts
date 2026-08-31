@@ -307,7 +307,9 @@ function defaultWebSocketFactory(): WebSocketFactory {
   return (url, options) => new WS.WebSocket(url, options);
 }
 
-/** Canonical Deepgram live endpoint (16 kHz linear16 mono, interim results). */
+/** Canonical Deepgram live endpoint (16 kHz linear16 mono, interim results).
+ *  vad_events + utterance_end_ms = rival parity: speech_final/utterance_end
+ *  events surface mid-speech pauses so consumers can finalize utterances. */
 export function deepgramListenUrl(): string {
   const params = new URLSearchParams({
     model: "nova-3",
@@ -317,6 +319,8 @@ export function deepgramListenUrl(): string {
     interim_results: "true",
     smart_format: "true",
     endpointing: "300",
+    utterance_end_ms: "1000",
+    vad_events: "true",
   });
   return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 }

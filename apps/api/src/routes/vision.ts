@@ -5,7 +5,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
-import { CircuitBreakerRegistry, buildVisionMessages, ocrWithFallback } from "@app/ai-runtime";
+import { CircuitBreakerRegistry, buildVisionMessages, imageHash, optimizeImage, ocrWithFallback } from "@app/ai-runtime";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
 import { logger } from "@app/observability";
 
@@ -23,9 +23,26 @@ export function visionRoutes(app: FastifyInstance, db: PrismaClient): void {
     const userId = req.user!.userId;
     const body = (req.body ?? {}) as VisionBody;
     const prompt = (body.prompt ?? "").trim();
-    const images = (body.images ?? []).filter((i): i is { base64: string; mimeType?: string } => Boolean(i.base64));
-    if (!prompt || images.length === 0) {
+    const rawImages = (body.images ?? []).filter((i): i is { base64: string; mimeType?: string } => Boolean(i.base64));
+    if (!prompt || rawImages.length === 0) {
       return reply.status(400).send({ error: "prompt and at least one image are required" });
+    }
+
+    // Optimize before routing (rival ImageOptimizer parity): EXIF-rotate,
+    // fit inside 1024px, jpeg q70 — cuts vision payload ~10x and upload time.
+    // Identical consecutive shots (FNV-1a) collapse to one.
+    const images: { base64: string; mimeType: string }[] = [];
+    const seen = new Set<string>();
+    for (const img of rawImages) {
+      const hash = imageHash(img.base64);
+      if (seen.has(hash)) continue;
+      seen.add(hash);
+      try {
+        images.push({ base64: await optimizeImage(img.base64), mimeType: "image/jpeg" });
+      } catch {
+        images.push({ base64: img.base64, mimeType: img.mimeType ?? "image/png" });
+      }
+      if (images.length >= 3) break;
     }
 
     let workspaceId: string;
