@@ -9,8 +9,12 @@ import { logger } from "@app/observability";
 import {
   buildCoachMessages,
   buildChunkSummaryMessages,
+  buildAnswerMessages,
   createJudgeState,
   judgeSuggestion,
+  sanitizeCoachFramework,
+  stripLeakage,
+  isInterviewMode,
   type CoachFramework,
 } from "@app/vertical-interview-intelligence";
 import { captureStyleProfile, withStyle, type StyleProfile } from "@app/ai-runtime";
@@ -70,6 +74,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
+    /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
+    let sessionMode = "general";
 
     // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
     // attribution. Browser (channel-less) chunks share the default engine.
@@ -276,6 +282,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const messages = buildCoachMessages({
           verbatimTranscript: verbatim.slice(-4000) || "No transcript yet.",
           rollingSummary,
+          mode: sessionMode,
         });
         if (styleProfile) {
           messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
@@ -324,6 +331,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             };
           }
 
+          // Post-process before judging (rival answerPolish parity): strip
+          // JSON-envelope leakage / AI tells, compress to speakable lines.
+          const sanitized = sanitizeCoachFramework(contentJson as unknown as CoachFramework);
+          if (!sanitized) {
+            log.info("coach suggestion dropped: nothing speakable after sanitize");
+            return;
+          }
+          contentJson = sanitized as unknown as Record<string, unknown>;
+
           // Auto-answer judge: filter weak/repetitive output before UI + persistence.
           const verdict = judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
           if (!verdict.accept) {
@@ -363,6 +379,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               createdAt: new Date().toISOString(),
             },
           });
+
+          // Auto-answer pass (rival SimpleAutoAnswer parity): strong question
+          // with high confidence → draft the exact spoken words as its own
+          // insight. Fire-and-forget; failure never affects the coach path.
+          const q = String(contentJson.detected_question ?? "").trim();
+          const conf = Number(contentJson.confidence ?? 0);
+          if (q && conf >= 0.6 && q.includes("?")) {
+            void draftAutoAnswer(q, verbatim.slice(-2000));
+          }
         } catch (e) {
           log.warn("coaching pipeline failed", { error: String(e) });
           emit({
@@ -375,6 +400,74 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           });
         }
       }, 900);
+    }
+
+    /** Question dedup for auto-answer — one draft per question text. */
+    let lastAnsweredQuestion = "";
+
+    async function draftAutoAnswer(question: string, transcriptTail: string): Promise<void> {
+      if (!workspaceCfg) return;
+      const key = question.toLowerCase().replace(/[^a-z0-9 ]/g, "").slice(0, 120);
+      if (key === lastAnsweredQuestion) return;
+      lastAnsweredQuestion = key;
+      try {
+        const outcome = await executeRouted(
+          { db, breakers },
+          workspaceCfg,
+          session!.workspaceId,
+          session!.id,
+          {
+            taskClass: "live_coach",
+            privacyMode: workspaceCfg.privacyMode,
+            maxLatencyMs: 12_000,
+            messages: buildAnswerMessages({
+              detectedQuestion: question,
+              transcriptTail,
+              rollingSummary,
+              mode: sessionMode,
+            }),
+          } as never,
+        );
+        const answer = outcome.ok ? stripLeakage(outcome.text ?? "").trim() : "";
+        if (answer.split(/\s+/).length < 4) {
+          log.info("auto-answer dropped: too short or failed");
+          return;
+        }
+        const insightId = randomUUID();
+        const contentJson = { question, answer, mode: sessionMode };
+        try {
+          await db.sessionInsight.create({
+            data: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "auto_answer",
+              sourceSegmentIds: lastFinalIds.slice(-3),
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+            },
+          });
+        } catch (e) {
+          log.warn("failed to persist auto-answer", { error: String(e) });
+        }
+        emit({
+          type: "coach.suggestion",
+          eventId: randomUUID(),
+          sequenceNo: serverSeq++,
+          occurredAt: new Date().toISOString(),
+          sessionId: session!.id,
+          insight: {
+            id: insightId,
+            sessionId: session!.id,
+            type: "auto_answer",
+            sourceSegmentIds: lastFinalIds.slice(-3),
+            contentJson: contentJson as any,
+            modelTraceId: traceId,
+            createdAt: new Date().toISOString(),
+          },
+        });
+      } catch (e) {
+        log.warn("auto-answer failed", { error: String(e) });
+      }
     }
 
     socket.on("message", async (raw: Buffer | string) => {
@@ -397,6 +490,14 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
       if (frame.type === "ping") {
         emit({ type: "pipeline.warning", eventId: randomUUID(), sequenceNo: serverSeq++, occurredAt: new Date().toISOString(), code: "pong", message: frame.eventId });
+        return;
+      }
+
+      if (frame.type === "session.mode") {
+        if (isInterviewMode(frame.mode)) {
+          sessionMode = frame.mode;
+          log.info("session mode set", { mode: sessionMode, sessionId: session!.id });
+        }
         return;
       }
 

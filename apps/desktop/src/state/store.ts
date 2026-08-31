@@ -20,6 +20,7 @@ interface TranscriptItem {
 
 interface InsightItem {
   id: string;
+  type?: string;
   contentJson: Record<string, unknown>;
   createdAt: string;
 }

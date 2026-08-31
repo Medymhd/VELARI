@@ -255,6 +255,12 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
     segment: TranscriptSegmentDto.omit({ id: true, sessionId: true }),
   }),
   z.object({ type: z.literal("ping"), eventId: z.string() }),
+  z.object({
+    type: z.literal("session.mode"),
+    eventId: z.string(),
+    /** Mode persona id (rival ModesManager parity) — validated server-side. */
+    mode: z.string().min(1).max(40),
+  }),
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;
 

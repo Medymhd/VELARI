@@ -72,6 +72,8 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
     let mode = OverlayMode::from_str(&params.mode);
 
     if let Some(existing) = app.get_webview_window(&label) {
+        // Re-showing resets passthrough so the panel is interactive by default.
+        let _ = overlay_set_passthrough(app.clone(), params.vertical_id.clone(), false);
         let _ = existing.show();
         return Ok(());
     }
@@ -144,6 +146,40 @@ pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
         let _ = existing.hide();
     }
     let _ = app.emit("overlay://hidden", ());
+    Ok(())
+}
+
+/// Mouse passthrough (rival `syncOverlayInteractionPolicy` parity): when
+/// enabled the overlay ignores all clicks (WS_EX_TRANSPARENT) so it floats
+/// over a meeting without stealing input; the header 40px band stays live via
+/// the frontend calling this again with `enabled:false` — the tray/Show chord
+/// also disengages it. Ctrl+Shift+B toggles.
+#[tauri::command]
+pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
+        };
+        let raw = windows::Win32::Foundation::HWND(hwnd.0);
+        unsafe {
+            let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
+            let next = if enabled {
+                current | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize
+            } else {
+                current & !(WS_EX_TRANSPARENT.0 as isize)
+            };
+            if next != current {
+                SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
+            }
+        }
+    }
+    let _ = app.emit("overlay://passthrough", enabled);
     Ok(())
 }
 

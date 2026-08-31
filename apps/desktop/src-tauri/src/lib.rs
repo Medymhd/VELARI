@@ -180,6 +180,7 @@ pub fn run() {
             screen::cropper_select,
             overlay::overlay_show,
             overlay::overlay_hide,
+            overlay::overlay_set_passthrough,
             tts::tts_piper_available,
             tts::tts_speak,
             audio::list_input_devices,

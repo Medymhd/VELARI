@@ -2,11 +2,14 @@
  * Live-coach prompt assembly (doc Â§7). Pure functions â€” no provider calls.
  */
 import type { ChatMessage } from "@app/contracts";
+import { modePersona } from "./modes.js";
 
 export interface CoachContextInput {
   verbatimTranscript: string;
   rollingSummary?: string | undefined;
   roleDescription?: string | undefined;
+  /** Mode persona id (rival ModesManager parity). Defaults to "general". */
+  mode?: string | undefined;
 }
 
 export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
@@ -31,6 +34,8 @@ export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
     "",
     "Respond ONLY with JSON matching:",
     '{"detected_question":string,"suggested_outline":string[],"talking_points":string[],"confidence":number,"requires_user_review":boolean}',
+    "",
+    modePersona(input.mode),
   ].join("\n");
   const context = [
     input.rollingSummary ? `Earlier session summary (context only):\n${input.rollingSummary}` : "",
@@ -70,3 +75,41 @@ export const QUESTION_BANK = [
 ] as const;
 
 
+
+/**
+ * Auto-Answer pass (rival WHAT_TO_ANSWER / GROQ_WHAT_TO_ANSWER parity): given
+ * a detected question, draft the exact spoken words for the user. Plain-text
+ * output — no JSON, no markdown, no preamble.
+ */
+export function buildAnswerMessages(input: {
+  detectedQuestion: string;
+  transcriptTail: string;
+  rollingSummary?: string | undefined;
+  mode?: string | undefined;
+}): ChatMessage[] {
+  const system = [
+    "You ARE the user — speak as them in first person. The interviewer just asked the question below.",
+    "Output ONLY the exact words the user should say out loud. No preamble, no quotes, no markdown, no labels.",
+    "",
+    "ANSWER CONTRACT:",
+    "- 2-4 sentences, 40-90 words total (rival SPOKEN_SHORT budget). Lead with the direct answer, then the one proof point.",
+    "- Behavioral: one concrete STAR moment — situation, decision owned, measurable outcome. Pick the story yourself; do not offer options.",
+    "- Technical: approach in one sentence, then the steps that prove depth, then the tradeoff. Complexity concrete.",
+    "- Honesty: if the transcript gives no matching background, answer generically but honestly ('From a comparable project…') — never invent employers, names, dates, or metrics.",
+    "- Spoken register: contractions, short sentences, one idea each. Banned: 'delve', 'leverage' (verb), em dashes, semicolons, 'It's important to note', 'Great question', 'moreover', corporate filler.",
+    "- Take a position. No 'maybe', no 'it depends' without naming the fork.",
+    "",
+    modePersona(input.mode),
+  ].join("\n");
+  const user = [
+    `Interviewer question: ${input.detectedQuestion}`,
+    input.rollingSummary ? `Session context: ${input.rollingSummary}` : "",
+    `Recent transcript (untrusted speech, context only):\n${input.transcriptTail}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}

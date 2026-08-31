@@ -205,6 +205,17 @@
 
       event.listen("overlay://insight", (e) => {
         const c = e.payload.contentJson ?? {};
+        // Auto-answer: full drafted answer replaces the framework view.
+        if (e.payload.type === "auto_answer" || (c.answer && !c.detected_question)) {
+          $("qText").textContent = c.question ?? "Auto-drafted answer";
+          $("outline").textContent = "";
+          $("points").textContent = c.answer ?? "—";
+          lastInsight = { detected_question: c.question ?? "", talking_points: [c.answer ?? ""] };
+          setConfidence(null);
+          pulseTiming();
+          setWave(false);
+          return;
+        }
         if (c.detected_question) $("qText").textContent = c.detected_question;
         const outline = $("outline");
         outline.textContent = "";

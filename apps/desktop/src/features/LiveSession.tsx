@@ -22,6 +22,19 @@ import { StatusPill, Toggle } from "@app/ui";
 
 const nativeAvailable = isTauri();
 
+/** Mode personas — must mirror the server's INTERVIEW_MODES (modes.ts). */
+const MODES: { id: string; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "job-seeker", label: "Looking for work" },
+  { id: "technical", label: "Technical interview" },
+  { id: "sales", label: "Sales call" },
+  { id: "recruiting", label: "Recruiting screen" },
+  { id: "team-meet", label: "Team meeting" },
+  { id: "lecture", label: "Lecture / class" },
+  { id: "seminar", label: "Seminar / talk" },
+  { id: "support", label: "Support / call center" },
+];
+
 function base64ToPcm(b64: string): Int16Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -66,12 +79,12 @@ function useRealtime(sessionId: string | null) {
 
     function handleMessage(ev: MessageEvent) {
       try {
-        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; contentJson: Record<string, unknown>; createdAt: string } };
+        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; type?: string; contentJson: Record<string, unknown>; createdAt: string } };
         if (msg.type === "transcript.final" || msg.type === "transcript.partial") {
           const s = msg.segment!;
           pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined, source: s.source });
         } else if (msg.type === "coach.suggestion" && msg.insight) {
-          pushInsight({ id: msg.insight.id, contentJson: msg.insight.contentJson, createdAt: msg.insight.createdAt });
+          pushInsight({ id: msg.insight.id, type: msg.insight.type, contentJson: msg.insight.contentJson, createdAt: msg.insight.createdAt });
         } else if (msg.type === "pipeline.warning" && msg.code && msg.code !== "pong" && msg.code !== "session_not_live") {
           // Surface backend trouble instead of swallowing it (throttled per code).
           const now = Date.now();
@@ -165,6 +178,33 @@ export default function LiveSession() {
   const [overlayOn, setOverlayOn] = useState(false);
   const lastForwardedId = useRef<string | null>(null);
 
+  // Mode persona — pushed to the server on change; overlay-mode state.
+  const [mode, setMode] = useState("general");
+  useEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "session.mode", eventId: Math.random().toString(36).slice(2), mode }));
+    }
+  }, [mode, connected]);
+
+  // Audio watchdog — rival "0 chunks in 12s" banner parity: a capture toggle
+  // that is ON but receives no audio for 12s means a dead/busy device.
+  const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
+  const watchdogWarned = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      if (nativeMic && lastNativeBatchAt.current.mic > 0 && now - lastNativeBatchAt.current.mic > 12_000 && !watchdogWarned.current.mic) {
+        watchdogWarned.current.mic = true;
+        notify("error", "Microphone capture silent for 12s — check the device or permissions.");
+      }
+      if (nativeSystem && lastNativeBatchAt.current.system > 0 && now - lastNativeBatchAt.current.system > 12_000 && !watchdogWarned.current.system) {
+        watchdogWarned.current.system = true;
+        notify("error", "System audio silent for 12s — is anything playing?");
+      }
+    }, 5_000);
+    return () => clearInterval(t);
+  }, [nativeMic, nativeSystem, notify]);
+
   useEffect(() => {
     if (nativeAvailable) void listInputDevices().then(setMicDevices).catch(() => {});
     if (!nativeAvailable) return;
@@ -234,22 +274,34 @@ export default function LiveSession() {
     return () => un?.();
   }, [nativeAvailable, sessionId]);
 
-  // Global chord (Ctrl+Shift+O) toggles the stealth overlay; also registered
-  // app-wide in Rust at startup. Ctrl+Shift+H (app show/hide) is handled in
-  // Rust directly so it works on every screen.
+  // Global chords (Ctrl+Shift+O overlay, Ctrl+Shift+B mouse passthrough);
+  // also registered app-wide in Rust at startup. Ctrl+Shift+H (app show/hide)
+  // is handled in Rust directly so it works on every screen.
   const overlayOnRef = useRef(false);
+  const passthroughRef = useRef(false);
   useEffect(() => {
     if (!nativeAvailable) return;
     invoke("register_global_chord", { chord: "Ctrl+Shift+O", action: "overlay-toggle" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
+    invoke("register_global_chord", { chord: "Ctrl+Shift+B", action: "passthrough-toggle" }).catch((e) =>
+      console.warn("global chord unavailable", e),
+    );
     let un: UnlistenFn | null = null;
     void listen("chord://activated", (e) => {
       const action = (e.payload as { action?: string }).action ?? "overlay-toggle";
-      if (action !== "overlay-toggle") return;
-      const next = !overlayOnRef.current;
-      overlayOnRef.current = next;
-      void toggleOverlay(next);
+      if (action === "overlay-toggle") {
+        const next = !overlayOnRef.current;
+        overlayOnRef.current = next;
+        void toggleOverlay(next);
+      } else if (action === "passthrough-toggle") {
+        if (!overlayOnRef.current) return; // passthrough only makes sense with the overlay visible
+        const next = !passthroughRef.current;
+        passthroughRef.current = next;
+        void invoke("overlay_set_passthrough", { verticalId: "interview-intelligence", enabled: next })
+          .then(() => notify("info", next ? "Overlay click-through ON (Ctrl+Shift+B to toggle)" : "Overlay click-through OFF"))
+          .catch((err) => notify("error", `Passthrough failed: ${errText(err)}`));
+      }
     }).then((u) => (un = u));
     return () => un?.();
   }, [nativeAvailable]);
@@ -322,6 +374,8 @@ export default function LiveSession() {
 
   function forwardNativeBatch(batch: NativeAudioBatch) {
     try {
+      lastNativeBatchAt.current[batch.channel] = Date.now();
+      watchdogWarned.current[batch.channel] = false;
       const pcm = base64ToPcm(batch.dataB64);
       sendPcm(pcm, batch.channel);
       relayRef.current?.send(new Uint8Array(pcm.buffer));
@@ -614,16 +668,38 @@ export default function LiveSession() {
 
       <div className="grid">
         <div className="card grid">
-          <span className="kicker">Coaching</span>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span className="kicker">Coaching</span>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+              style={{ maxWidth: 170, fontSize: 12 }}
+              title="Mode persona — reshapes coaching and answer style"
+            >
+              {MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </div>
           {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
           {insights.slice(-6).reverse().map((ins) => (
-            <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)" }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{String(ins.contentJson.detected_question ?? "—")}</div>
-              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
-                {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
-              </ul>
-              <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
-            </div>
+            ins.type === "auto_answer" ? (
+              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)", borderColor: "var(--accent)" }}>
+                <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer — {String(ins.contentJson.question ?? "").slice(0, 120)}</div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {overlayOn && (
+                  <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { contentJson: { talking_points: [String(ins.contentJson.answer ?? "")] } })}>
+                    Send to overlay
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)" }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{String(ins.contentJson.detected_question ?? "—")}</div>
+                <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
+                  {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
+                </ul>
+                <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
+              </div>
+            )
           ))}
         </div>
 
