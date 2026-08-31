@@ -118,6 +118,17 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       console.log(`[moonshine:dbg] feed #${this.dbgFeedCount + 1}: bufferMs=${Math.round((this.buffer.length / this.sampleRate) * 1000)}`);
     }
     const audioMs = (this.buffer.length / this.sampleRate) * 1000;
+
+    // Silence endpointing: Moonshine is a non-streaming decoder — without an
+    // explicit endpoint it never produces finals during a live session (only
+    // flush-on-disconnect), which starves the coach and overlay. 1.5s of
+    // quiet after speech finalizes the utterance.
+    const hasSpeech = this.lastLoudAtMs > this.audioStartMs;
+    if (hasSpeech && atMs - this.lastLoudAtMs >= MOONSHINE_ENDPOINT_MS && !this.decodeInFlight) {
+      void this.decode(true);
+      return;
+    }
+
     // Skip tiny buffers — Moonshine needs ~0.4 s of audio for a stable read.
     if (audioMs >= 400 && audioMs - this.decodedThroughMs >= this.partialEveryMs && !this.decodeInFlight) {
       void this.decode(false);
@@ -255,8 +266,11 @@ export class MoonshineStreamingSttEngine implements SttEngine {
   }
 }
 
-/** Below this whole-buffer RMS (float −1..1; ≈130 int16) audio is silence. */
-const MOONSHINE_SILENCE_RMS = 0.004;
+/** Below this whole-buffer RMS (float −1..1; ≈130 int16) audio is silence.
+ *  Kept low (≈65 int16) so quiet laptop mics pass — true silence sits ≈0-10. */
+const MOONSHINE_SILENCE_RMS = 0.002;
+/** Quiet tail (ms) after speech that finalizes the utterance. */
+const MOONSHINE_ENDPOINT_MS = 1500;
 /** Per-sample amplitude below which tail samples count as trailing silence. */
 const TRIM_AMPLITUDE = 0.002;
 

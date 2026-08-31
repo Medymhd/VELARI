@@ -114,6 +114,12 @@
       </section>
     </div>
     <script>
+      if (!window.__TAURI__) {
+        // Never leave the overlay silently dead — say what's wrong.
+        const q = document.getElementById("qText");
+        if (q) q.textContent = "Overlay unavailable: Tauri API failed to load — restart the app.";
+        q.parentElement.style.border = "1px solid #f87171";
+      } else {
       const { invoke, event } = window.__TAURI__;
       const $ = (id) => document.getElementById(id);
       const tapState = { active: false, notes: "" };
@@ -253,6 +259,7 @@
           const audio = new Audio(URL.createObjectURL(blob));
           audio.play();
         } catch { webSpeak(speakText); }
+      }
       }
     </script>
   </body>
