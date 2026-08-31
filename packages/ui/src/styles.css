@@ -173,6 +173,15 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 
 /* ── App shell: sidebar + content ─────────────────────────────────── */
 .shell { display: flex; height: 100vh; }
+.sidebar-resizer {
+  width: 6px; margin: 0 -3px; flex: none; cursor: col-resize; z-index: 10;
+  border-radius: 3px; transition: background var(--duration-fast) ease;
+}
+.sidebar-resizer:hover, .sidebar-resizer:active { background: var(--accent); opacity: 0.45; }
+.sidebar.rail { width: 56px !important; padding: 18px 8px; align-items: center; }
+.sidebar.rail .brand { flex-direction: column; padding: 4px 0 18px; gap: 8px; }
+.sidebar.rail .brand .col, .sidebar.rail .sidebar-group, .sidebar.rail .foot .small { display: none; }
+.sidebar.rail .nav-item { width: 40px; justify-content: center; padding: 10px 0; }
 .sidebar {
   width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; gap: 4px;
   padding: 18px 14px; border-right: 1px solid var(--border);

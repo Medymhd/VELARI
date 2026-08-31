@@ -260,7 +260,6 @@ export default function LiveSession() {
     try {
       if (on) await invoke("overlay_show", { params: { mode: "stealth", verticalId: "interview-intelligence" } });
       else await invoke("overlay_hide", { verticalId: "interview-intelligence" });
-      notify("info", on ? "Stealth overlay live — Ctrl+Shift+O toggles it" : "Stealth overlay hidden");
     } catch (e) {
       console.warn("overlay failed", e);
       overlayOnRef.current = false;
@@ -368,13 +367,8 @@ export default function LiveSession() {
   async function toggleNativeMic(on: boolean) {
     setNativeMic(on);
     try {
-      if (on) {
-        await startNativeChannel("mic");
-        notify("success", "Native microphone capture live");
-      } else {
-        await stopNativeChannel("mic");
-        notify("info", "Native microphone capture stopped");
-      }
+      if (on) await startNativeChannel("mic");
+      else await stopNativeChannel("mic");
     } catch (e) {
       setNativeMic(!on);
       notify("error", `Mic capture failed: ${errText(e)}`);
@@ -384,13 +378,8 @@ export default function LiveSession() {
   async function toggleNativeSystem(on: boolean) {
     setNativeSystem(on);
     try {
-      if (on) {
-        await startNativeChannel("system");
-        notify("success", "System loopback capture live");
-      } else {
-        await stopNativeChannel("system");
-        notify("info", "System loopback capture stopped");
-      }
+      if (on) await startNativeChannel("system");
+      else await stopNativeChannel("system");
     } catch (e) {
       setNativeSystem(!on);
       notify("error", `System capture failed: ${errText(e)}`);
@@ -461,7 +450,6 @@ export default function LiveSession() {
       await api.sessionAction(sessionId, action);
       const next = action === "start" ? "live" : action === "pause" ? "paused" : "completed";
       setSession(sessionId, next);
-      notify("success", `Session ${action === "start" ? "started" : action === "pause" ? "paused" : "completed"}`);
       if (action === "start") {
         void startCapture();
         // Reconcile: any checked native channel starts live here too.
@@ -487,7 +475,6 @@ export default function LiveSession() {
     try {
       const s = await stealthSetCapture(on);
       setStealth(s);
-      notify("success", on ? "Hidden from screen capture" : "Screen-capture exclusion removed");
     } catch (e) {
       notify("error", `Capture exclusion failed: ${errText(e)}`);
     } finally {
@@ -500,7 +487,6 @@ export default function LiveSession() {
     try {
       const s = await stealthSetTaskbar(on);
       setStealth(s);
-      notify("success", on ? "Hidden from taskbar (restore via tray or Ctrl+Shift+H)" : "Taskbar hiding removed");
     } catch (e) {
       notify("error", `Taskbar hiding failed: ${errText(e)}`);
     } finally {
@@ -513,7 +499,6 @@ export default function LiveSession() {
     try {
       const s = await stealthSetMasquerade(profile);
       setStealth(s);
-      notify("info", profile === "none" ? "Masquerade off" : `Masquerading as ${profile}`);
     } catch (e) {
       notify("error", `Masquerade failed: ${errText(e)}`);
     } finally {
@@ -526,7 +511,6 @@ export default function LiveSession() {
     try {
       const s = await invoke<StealthState>("stealth_enable_for_all_browsers_and_apps");
       setStealth(s);
-      notify("success", "Stealth enforced for every window — capture-excluded + taskbar hidden");
     } catch (e) {
       notify("error", `Universal stealth failed: ${errText(e)}`);
     } finally {
@@ -555,21 +539,14 @@ export default function LiveSession() {
   // STT engine visibility: the transcript frames carry the producing engine's
   // source — surface it so "demo" vs real transcription is never a mystery.
   const lastSource = transcript.slice().reverse().find((t) => t.source)?.source;
-  const sttWarnedRef = useRef(false);
-  useEffect(() => {
-    if (lastSource === "simulated" && !sttWarnedRef.current) {
-      sttWarnedRef.current = true;
-      notify("error", "Transcription is in DEMO mode — no STT engine configured. Set SHERPA_MODEL_DIR or DEEPGRAM_API_KEY in .env.");
-    }
-  }, [lastSource, notify]);
 
   if (!sessionId) return <div className="card muted">Select or create a session from Home.</div>;
 
   return (
     <div className="grid" style={{ gridTemplateColumns: "1.2fr 0.8fr", alignItems: "start" }}>
       <div className="grid">
-        <div className="card row hud-scanlines" style={{ justifyContent: "space-between" }}>
-          <div className="row">
+        <div className="card row hud-scanlines" style={{ justifyContent: "space-between", flexWrap: "wrap", rowGap: 8 }}>
+          <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
             <span className="dot" style={{ background: connected ? "var(--success)" : "var(--muted)" }} />
             {connected && <div className="waveform"><span></span><span></span><span></span><span></span><span></span></div>}
             <StatusPill status={sessionStatus} />
@@ -577,7 +554,7 @@ export default function LiveSession() {
             {relayActive && <span className="badge warn">direct relay</span>}
             {overlayOn && <span className="badge accent">overlay live</span>}
             {lastSource && (
-              <span className={`badge ${lastSource === "simulated" ? "warn" : ""}`} title={`Engine: ${lastSource}`}>
+              <span className={`badge ${lastSource === "simulated" ? "danger" : ""}`} title={`Engine: ${lastSource}`}>
                 STT: {lastSource === "simulated" ? "DEMO" : lastSource === "local_stt" ? "local" : lastSource === "cloud_stt" ? "cloud" : lastSource}
               </span>
             )}
@@ -590,10 +567,7 @@ export default function LiveSession() {
           </div>
         </div>
 
-        <label className="row small">
-          <input type="checkbox" checked={consentConfirmed} onChange={(e) => setConsent(e.target.checked)} style={{ width: 16, height: 16 }} />
-          I have consent to record and process this session.
-        </label>
+        <Toggle checked={consentConfirmed} onChange={setConsent} label="I have consent to record and process this session." />
 
         {(() => {
           const userCount = transcript.filter((t) => t.speaker === "user").length;
@@ -685,7 +659,7 @@ export default function LiveSession() {
             >
               Take screenshot
             </button>
-            <button className="ghost" onClick={async () => { try { await invoke("open_cropper"); notify("info", "Drag to select a region — Esc cancels"); } catch (e) { notify("error", `Cropper failed: ${errText(e)}`); } }}>
+            <button className="ghost" onClick={async () => { try { await invoke("open_cropper"); } catch (e) { notify("error", `Cropper failed: ${errText(e)}`); } }}>
               Cropper
             </button>
           </div>
@@ -706,8 +680,7 @@ export default function LiveSession() {
         </div>
 
         <div className="card grid">
-          <span className="kicker">Stealth controls - red-team mode</span>
-          <p className="small muted" style={{ margin: 0 }}>For the make-then-break exercise. The red team is expected to detect these.</p>
+          <span className="kicker">Stealth controls</span>
           <Toggle checked={!!stealth.captureExclusion} disabled={stealthBusy === "capture"} onChange={(v) => void toggleCapture(v)} label={stealthBusy === "capture" ? "Applying…" : "Hide from screen capture"} />
           <Toggle checked={!!stealth.taskbarHidden} disabled={stealthBusy === "taskbar"} onChange={(v) => void toggleTaskbar(v)} label={stealthBusy === "taskbar" ? "Applying…" : "Hide from taskbar"} />
           <div className="row">

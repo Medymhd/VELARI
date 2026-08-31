@@ -162,15 +162,16 @@ export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void
 
 /** Toast stack — fixed top-right; auto-dismisses. Render once in the app shell. */
 export function ToastStack(props: { notices: { id: string; kind: "info" | "success" | "error"; message: string }[]; onDismiss: (id: string) => void }): ReactNode {
+  const notices = Array.isArray(props.notices) ? props.notices : [];
   useEffect(() => {
-    if (props.notices.length === 0) return;
-    const timers = props.notices.map((n) => setTimeout(() => props.onDismiss(n.id), n.kind === "error" ? 6000 : 3200));
+    if (notices.length === 0) return;
+    const timers = notices.map((n) => setTimeout(() => props.onDismiss(n.id), n.kind === "error" ? 6000 : 3200));
     return () => timers.forEach(clearTimeout);
-  }, [props.notices, props.onDismiss]);
-  if (props.notices.length === 0) return null;
+  }, [notices, props.onDismiss]);
+  if (notices.length === 0) return null;
   return (
     <div style={{ position: "fixed", top: 14, right: 14, zIndex: "var(--z-toast, 60)", display: "flex", flexDirection: "column", gap: 8, maxWidth: 380 }}>
-      {props.notices.map((n) => (
+      {notices.map((n) => (
         <div
           key={n.id}
           className="fade-in"

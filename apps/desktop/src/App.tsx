@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { APP_NAME } from "brand";
+import { Component } from "react";
+import { APP_NAME, STORAGE_PREFIX } from "brand";
 import { useStore } from "./state/store";
 import { stealthGetState } from "./lib/tauri";
 import { api } from "./lib/api";
@@ -11,7 +12,7 @@ import Review from "./features/Review";
 import Settings from "./features/Settings";
 import Research from "./features/Research";
 import Work from "./features/Work";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const CORE_NAV = [
   { id: "home", label: "Home", icon: navIcon("M3 10.5 12 3l9 7.5 M5 9.5V21h14V9.5") },
@@ -45,6 +46,27 @@ interface VerticalInfo {
   overlay?: { mode: string };
 }
 
+/** Per-screen crash isolation — a broken screen shows its error inline
+ *  instead of unmounting the whole shell. */
+class ScreenErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="card col" style={{ borderColor: "var(--danger)", gap: 6 }}>
+          <b>Screen failed to render</b>
+          <span className="small muted mono">{this.state.error.message}</span>
+          <button className="ghost" style={{ alignSelf: "flex-start" }} onClick={() => this.setState({ error: null })}>Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function useVerticals() {
   const [verticals, setVerticals] = useState<VerticalInfo[]>([]);
   useEffect(() => {
@@ -59,7 +81,7 @@ function useVerticals() {
 
 function NavItem(props: { label: string; icon: () => ReactNode; active: boolean; onSelect: () => void; dot?: string }) {
   return (
-    <button className={cn("nav-item", props.active && "active")} onClick={props.onSelect}>
+    <button className={cn("nav-item", props.active && "active")} onClick={props.onSelect} title={props.label}>
       {props.icon()}
       <span>{props.label}</span>
       {props.dot && <span className="nav-dot" title={props.dot} style={{ background: OVERLAY_DOT[props.dot] }} />}
@@ -71,6 +93,37 @@ export default function App() {
   const { screen, setScreen, setStealth, clearAuth, token, notices, dismiss } = useStore();
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
+
+  // Sidebar: persisted width + collapsed icon rail.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number(localStorage.getItem(`${STORAGE_PREFIX}_sidebarW`));
+    return stored >= 180 && stored <= 380 ? stored : 240;
+  });
+  const [rail, setRail] = useState(() => localStorage.getItem(`${STORAGE_PREFIX}_rail`) === "1");
+  const resizing = useRef(false);
+  const widthRef = useRef(sidebarWidth);
+
+  function onResizeStart(e: React.PointerEvent<HTMLDivElement>) {
+    resizing.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizing.current) return;
+    const w = Math.min(380, Math.max(180, e.clientX));
+    widthRef.current = w;
+    setSidebarWidth(w);
+  }
+  function onResizeEnd() {
+    if (!resizing.current) return;
+    resizing.current = false;
+    localStorage.setItem(`${STORAGE_PREFIX}_sidebarW`, String(widthRef.current));
+  }
+  function toggleRail() {
+    setRail((r) => {
+      localStorage.setItem(`${STORAGE_PREFIX}_rail`, r ? "0" : "1");
+      return !r;
+    });
+  }
 
   useEffect(() => {
     const onUnauthorized = () => clearAuth();
@@ -112,13 +165,21 @@ export default function App() {
   return (
     <div className="shell">
       <ToastStack notices={notices} onDismiss={dismiss} />
-      <aside className="sidebar">
+      <aside className={cn("sidebar", rail && "rail")} style={rail ? undefined : { width: sidebarWidth }}>
         <div className="brand">
           <div className="brand-mark" />
           <div className="col" style={{ gap: 0 }}>
             <b>{APP_NAME}</b>
             <span className="small muted">{activeLabel}</span>
           </div>
+          <button
+            className="ghost"
+            style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 14 }}
+            title={rail ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={toggleRail}
+          >
+            {rail ? "»" : "«"}
+          </button>
         </div>
         {CORE_NAV.map((item) => (
           <NavItem key={item.id} label={item.label} icon={item.icon} active={screen === item.id} onSelect={() => setScreen(item.id)} />
@@ -136,32 +197,43 @@ export default function App() {
         ))}
         <div className="foot">
           <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
-          <div className="small muted" style={{ padding: "8px 10px 0" }}>
-            v0.1.0 · local-first · BYOK
-          </div>
+          {!rail && (
+            <div className="small muted" style={{ padding: "8px 10px 0" }}>
+              v0.1.0 · local-first · BYOK
+            </div>
+          )}
         </div>
       </aside>
+
+      <div
+        className="sidebar-resizer"
+        title="Drag to resize"
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+      />
 
       <main className="content">
         <div className="content-inner">
           <Keyframes />
-          {screen === "onboarding" && <Onboarding />}
-          {screen === "home" && <Home />}
-          {screen === "live" && <LiveSession />}
-          {screen === "review" && <Review />}
-          {screen === "settings" && <Settings />}
-          {screen === "research" && <Research />}
-          {screen === "work" && <Work />}
-          {screen === "settings" && null}
-          {activeVertical && !["interview-intelligence", "work", "research"].includes(activeVertical.id) && (
-            <div className="card col" style={{ marginTop: 16 }}>
-              <span className="kicker">{activeVertical.displayName}</span>
-              <span className="small muted">
-                Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> —
-                its dedicated UI lands with the vertical package.
-              </span>
-            </div>
-          )}
+          <ScreenErrorBoundary>
+            {screen === "onboarding" && <Onboarding />}
+            {screen === "home" && <Home />}
+            {screen === "live" && <LiveSession />}
+            {screen === "review" && <Review />}
+            {screen === "settings" && <Settings />}
+            {screen === "research" && <Research />}
+            {screen === "work" && <Work />}
+            {activeVertical && !["interview-intelligence", "work", "research"].includes(activeVertical.id) && (
+              <div className="card col" style={{ marginTop: 16 }}>
+                <span className="kicker">{activeVertical.displayName}</span>
+                <span className="small muted">
+                  Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> —
+                  its dedicated UI lands with the vertical package.
+                </span>
+              </div>
+            )}
+          </ScreenErrorBoundary>
         </div>
       </main>
     </div>
