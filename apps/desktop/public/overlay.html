@@ -166,6 +166,22 @@
         if (k.chars) { tapState.notes += k.chars; renderNotes(); }
       });
       function renderNotes() { $("notes").textContent = tapState.notes; }
+
+      // Auto-height (rival parity): report panel height so the window fits content.
+      function reportHeight() {
+        try {
+          const label = window.__TAURI__.window.getCurrentWindow().label;
+          const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+          const h = document.querySelector(".panel")?.getBoundingClientRect().height ?? 430;
+          void window.__TAURI__.core.invoke("overlay_resize", { verticalId, height: Math.ceil(h) });
+        } catch { /* label unavailable */ }
+      }
+      const resizeObs = new ResizeObserver(() => reportHeight());
+      window.addEventListener("DOMContentLoaded", () => {
+        const panel = document.querySelector(".panel");
+        if (panel) resizeObs.observe(panel);
+        reportHeight();
+      });
       function setWave(active) { const w = $("wave"); if (w) w.style.display = active ? "flex" : "none"; }
       function setConfidence(v) {
         const m = $("confMeter"), f = $("confFill");

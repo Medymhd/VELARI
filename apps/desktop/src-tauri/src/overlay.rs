@@ -48,7 +48,7 @@ impl OverlayMode {
     }
 }
 
-const DEFAULT_WIDTH: f64 = 440.0;
+const DEFAULT_WIDTH: f64 = 732.0; // rival OVERLAY_DEFAULT_WIDTH parity
 const DEFAULT_HEIGHT: f64 = 430.0;
 const MARGIN: f64 = 24.0;
 
@@ -180,6 +180,26 @@ pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: boo
         }
     }
     let _ = app.emit("overlay://passthrough", enabled);
+    Ok(())
+}
+
+/// Content-driven height (rival auto-resize parity): the overlay page reports
+/// its panel size and the window grows/shrinks to fit. Height clamped so the
+/// panel never runs off-screen.
+#[tauri::command]
+pub fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    let h = height.clamp(220.0, 700.0);
+    let size = window
+        .inner_size()
+        .map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    window
+        .set_size(tauri::LogicalSize::new(size.width as f64 / scale, h))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

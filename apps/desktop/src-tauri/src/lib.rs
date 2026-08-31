@@ -181,6 +181,7 @@ pub fn run() {
             overlay::overlay_show,
             overlay::overlay_hide,
             overlay::overlay_set_passthrough,
+            overlay::overlay_resize,
             tts::tts_piper_available,
             tts::tts_speak,
             audio::list_input_devices,

@@ -4,7 +4,7 @@ import { useStore } from "../state/store";
 import { EmptyState, PageHeader, StatusPill } from "@app/ui";
 
 type Bundle = {
-  transcript?: { id: string; text: string; sequenceNo: number; confidence?: number }[];
+  transcript?: { id: string; text: string; sequenceNo: number; confidence?: number; speaker?: string | null }[];
   insights?: { id: string; type: string; contentJson: Record<string, unknown> }[];
   session?: { id: string; title?: string | null; status?: string };
 };
@@ -71,6 +71,55 @@ export default function Review() {
     }
   }
 
+  /** PDF export (rival `pdfGenerator` parity) via the WebView2 print-to-PDF
+   *  dialog: a print-only document is rendered into a hidden iframe. */
+  function exportPdf() {
+    if (!data) return;
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const summaryInsight = (data.insights ?? []).find((i) => i.type === "session_summary")?.contentJson as
+      | { summary?: string; highlights?: string[]; followups?: string[]; questionBank?: string[] }
+      | undefined;
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><title>Session report</title>
+<style>
+body { font-family: "Segoe UI", system-ui, sans-serif; margin: 36px; color: #16181d; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 22px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+.muted { color: #6b7280; font-size: 12px; }
+.seg { border-left: 2px solid #6c7bff; padding-left: 10px; margin: 10px 0; font-size: 13px; }
+.who { color: #6c7bff; font-weight: 600; margin-right: 6px; font-size: 11px; text-transform: uppercase; }
+.meta { color: #9ca3af; font-size: 11px; }
+.insight { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13px; }
+.tag { display: inline-block; background: #eef0ff; color: #4a52d9; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+li { margin: 3px 0; }
+@media print { body { margin: 12mm; } }
+</style></head><body>
+<h1>${esc(data.session?.title ?? "Interview session report")}</h1>
+<div class="muted">${esc(String(data.session?.status ?? ""))} · ${new Date().toLocaleString()}</div>
+${summaryInsight ? `<h2>Summary</h2><div class="insight">${esc(summaryInsight.summary ?? "")}
+${(summaryInsight.highlights ?? []).length ? `<b>Highlights</b><ul>${summaryInsight.highlights!.map((h) => `<li>${esc(h)}</li>`).join("")}</ul>` : ""}
+${(summaryInsight.followups ?? []).length ? `<b>Follow-ups</b><ul>${summaryInsight.followups!.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+${(summaryInsight.questionBank ?? []).length ? `<b>Question bank</b><ul>${summaryInsight.questionBank!.map((q) => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+<h2>Transcript</h2>
+${(data.transcript ?? []).map((t) => `<div class="seg">${t.speaker ? `<span class="who">${esc(t.speaker)}</span>` : ""}${esc(t.text)}<div class="meta">#${t.sequenceNo}${t.confidence ? ` · ${Math.round(t.confidence * 100)}%` : ""}</div></div>`).join("")}
+<h2>Insights</h2>
+${(data.insights ?? []).map((i) => `<div class="insight"><span class="tag">${esc(i.type ?? "insight")}</span><pre style="white-space:pre-wrap;font-family:inherit;margin:0">${esc(JSON.stringify(i.contentJson, null, 1))}</pre></div>`).join("")}
+</body></html>`;
+    const frame = document.createElement("iframe");
+    frame.style.position = "fixed";
+    frame.style.right = "0";
+    frame.style.bottom = "0";
+    frame.style.width = "0";
+    frame.style.height = "0";
+    frame.style.border = "0";
+    document.body.appendChild(frame);
+    frame.srcdoc = doc;
+    frame.onload = () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+      setTimeout(() => frame.remove(), 5_000);
+    };
+  }
+
   const filteredTranscript = useMemo(() => {
     const list = data?.transcript ?? [];
     if (!q) return list;
@@ -100,9 +149,14 @@ export default function Review() {
         title={data?.session?.title ? `Review — ${data.session.title}` : "Review"}
         description="Full transcript and coaching insights. Search ranks lexically; vector recall lands with pgvector."
         actions={
-          <button className="primary" onClick={() => void load()} disabled={loading}>
-            {loading ? "Loading…" : "Load export"}
-          </button>
+          <>
+            <button className="ghost" onClick={() => exportPdf()} disabled={!data}>
+              Export PDF
+            </button>
+            <button className="primary" onClick={() => void load()} disabled={loading}>
+              {loading ? "Loading…" : "Load export"}
+            </button>
+          </>
         }
       />
 
