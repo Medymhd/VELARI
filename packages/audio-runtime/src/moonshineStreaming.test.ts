@@ -4,6 +4,14 @@ import { MoonshineStreamingSttEngine, type MoonshinePipeline } from "./moonshine
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Test audio must carry real energy — the engine's silence gate would drop
+ *  zero-filled buffers before any decode. */
+function nonSilent(samples: number): Buffer {
+  const buf = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) buf.writeInt16LE(((i % 64) - 32) * 200, i * 2);
+  return buf;
+}
+
 /** Scripted pipeline: returns `getText(bufferSeconds)` per decode call. */
 function fakeFactory(log: { decodeCalls: number }) {
   let n = 0;
@@ -31,7 +39,7 @@ test("emits a partial on the re-decode cadence and a final on flush", async () =
   // 5 feeds of 100ms each → 500ms buffer crosses both the 400ms minimum and
   // the 100ms re-decode cadence.
   for (let i = 0; i < 5; i++) {
-    engine.feed(Buffer.alloc(1600 * 2), i * 100, handler);
+    engine.feed(nonSilent(1600), i * 100, handler);
     await sleep(5);
   }
   await sleep(20);
@@ -49,13 +57,13 @@ test("emits a partial on the re-decode cadence and a final on flush", async () =
 test("backspace-free buffer resets after final — next utterance starts clean", async () => {
   const log = { decodeCalls: 0 };
   const engine = new MoonshineStreamingSttEngine({ factory: fakeFactory(log), partialEveryMs: 50 });
-  engine.feed(Buffer.alloc(3200 * 2), 0, () => {});
+  engine.feed(nonSilent(3200), 0, () => {});
   await sleep(20);
   const finals: { text: string }[] = [];
   engine.flush((r) => finals.push(r));
   await sleep(20);
   assert.equal(finals.length, 1);
-  engine.feed(Buffer.alloc(1600 * 2), 1000, () => {});
+  engine.feed(nonSilent(1600), 1000, () => {});
   await sleep(20);
   engine.flush((r) => finals.push(r));
   await sleep(20);
@@ -72,7 +80,7 @@ test("init failure fires onUnavailable and the engine goes inert", async () => {
     unavailable += 1;
   });
   const results: unknown[] = [];
-  engine.feed(Buffer.alloc(3200 * 2), 0, (r) => results.push(r));
+  engine.feed(nonSilent(3200), 0, (r) => results.push(r));
   engine.flush((r) => results.push(r));
   await sleep(30);
   assert.equal(unavailable, 1, "unavailable fired once for chain degradation");

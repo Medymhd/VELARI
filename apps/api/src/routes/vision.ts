@@ -50,7 +50,7 @@ export function visionRoutes(app: FastifyInstance, db: PrismaClient): void {
     try {
       const cfg = await loadWorkspaceAiConfig(db, workspaceId);
       const outcome = await executeRouted({ db, breakers }, cfg, workspaceId, sessionId, {
-        taskClass: "live_coach",
+        taskClass: "vision",
         privacyMode: cfg.privacyMode,
         maxLatencyMs: 20_000,
         messages: buildVisionMessages({

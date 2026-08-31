@@ -156,8 +156,21 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     try {
       if (!(await this.init()) || !this.pipeline) return;
       if (this.closed) return;
+      // Silence gate — Moonshine hallucinates confident repetitive text on
+      // quiet input (non-streaming decoder re-reading a silent buffer). Skip
+      // the decode and drop the silence so real speech starts a clean buffer.
+      let energy = 0;
+      for (let i = 0; i < audio.length; i++) energy += audio[i]! * audio[i]!;
+      const rms = Math.sqrt(energy / Math.max(1, audio.length));
+      if (rms < MOONSHINE_SILENCE_RMS) {
+        this.buffer = new Float32Array(0);
+        this.decodedThroughMs = 0;
+        this.lastPartial = "";
+        this.audioStartMs = 0;
+        return;
+      }
       const out = await this.pipeline(audio, { sampling_rate: this.sampleRate });
-      const text = (out?.text ?? "").trim();
+      const text = collapseRepetition((out?.text ?? "").trim());
       const startedAtMs = this.audioStartMs;
       const endedAtMs = Math.max(this.lastFeedAtMs, startedAtMs + 200);
       if (final) {
@@ -184,4 +197,24 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       }
     }
   }
+}
+
+/** Below this whole-buffer RMS (float −1..1; ≈130 int16) audio is silence. */
+const MOONSHINE_SILENCE_RMS = 0.004;
+
+/** Moonshine hallucination guard: collapse exact text doubling and runs of
+ *  duplicated sentences that its silent-buffer decoding produces. */
+function collapseRepetition(text: string): string {
+  const t = text.trim();
+  if (t.length >= 8 && t.length % 2 === 0) {
+    const h = t.length / 2;
+    if (t.slice(0, h) === t.slice(h)) return t.slice(0, h).trim();
+  }
+  const sentences = t.split(/(?<=[.!?])\s+/);
+  const kept: string[] = [];
+  for (const s of sentences) {
+    if (kept.length > 0 && kept[kept.length - 1] === s) continue;
+    kept.push(s);
+  }
+  return kept.join(" ");
 }

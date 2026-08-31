@@ -560,10 +560,11 @@ export default function LiveSession() {
             )}
             {!consentConfirmed && <span className="badge warn">consent required</span>}
           </div>
-          <div className="row">
-            <button disabled={busy || !consentConfirmed} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : "Start"}</button>
-            <button disabled={busy} onClick={() => void act("pause")}>Pause</button>
-            <button disabled={busy} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completing…" : "Complete"}</button>
+          <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
+            <button disabled={busy || !consentConfirmed || !(sessionStatus === "draft" || sessionStatus === "paused")} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : "Start"}</button>
+            <button disabled={busy || sessionStatus !== "live"} onClick={() => void act("pause")}>Pause</button>
+            <button disabled={busy || !(sessionStatus === "live" || sessionStatus === "paused")} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completing…" : "Complete"}</button>
+            {sessionStatus === "completed" && <span className="small muted" style={{ alignSelf: "center" }}>Session completed — start a new one from Home.</span>}
           </div>
         </div>
 

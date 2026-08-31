@@ -31,6 +31,17 @@ function navIcon(d: string) {
 
 const OVERLAY_DOT: Record<string, string> = { stealth: "var(--accent)", assist: "var(--warn)", none: "var(--muted)" };
 
+/** Distinct icon per vertical — the collapsed rail is icon-only, so every
+ *  destination must be visually unique. */
+function verticalIcon(id: string) {
+  const paths: Record<string, string> = {
+    "interview-intelligence": "M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 11a7 7 0 0 0 14 0 M12 18v3",
+    work: "M4 8h16v11H4z M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2 M4 13h16",
+    research: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3 M8 11h6 M11 8v6",
+  };
+  return navIcon(paths[id] ?? "M4 5h16v14H4z M8 9h8 M8 13h5");
+}
+
 function gearIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -83,7 +94,7 @@ function NavItem(props: { label: string; icon: () => ReactNode; active: boolean;
   return (
     <button className={cn("nav-item", props.active && "active")} onClick={props.onSelect} title={props.label}>
       {props.icon()}
-      <span>{props.label}</span>
+      <span className="nav-label">{props.label}</span>
       {props.dot && <span className="nav-dot" title={props.dot} style={{ background: OVERLAY_DOT[props.dot] }} />}
     </button>
   );
@@ -189,7 +200,7 @@ export default function App() {
           <NavItem
             key={v.id}
             label={v.displayName}
-            icon={navIcon("M4 5h16v14H4z M8 9h8 M8 13h5")}
+            icon={verticalIcon(v.id)}
             active={screen === v.id || (v.id === "interview-intelligence" && ["home", "live", "review"].includes(screen))}
             dot={v.overlay?.mode ?? "none"}
             onSelect={() => setScreen(v.id === "interview-intelligence" ? "home" : v.id)}

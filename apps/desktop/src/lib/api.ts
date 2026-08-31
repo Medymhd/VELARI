@@ -65,11 +65,41 @@ export const api = {
       body: JSON.stringify({ workspaceId, channel: "direct" }),
     }),
   providerConnections: (workspaceId: string) =>
-    req<{ id: string; provider: string; hasSecret: boolean }[]>(
-      `/provider-connections?workspaceId=${encodeURIComponent(workspaceId)}`,
+    req<
+      {
+        id: string;
+        provider: string;
+        hasSecret: boolean;
+        metadataJson?: { baseUrl?: string; modelId?: string; fallbackModelIds?: string[] };
+      }[]
+    >(`/provider-connections?workspaceId=${encodeURIComponent(workspaceId)}`),
+  connectProvider: (body: {
+    workspaceId: string;
+    provider: string;
+    secret: string;
+    baseUrl?: string;
+    modelId?: string;
+  }) => req("/provider-connections", { method: "POST", body: JSON.stringify(body) }),
+  providerModels: (body: { connectionId?: string; baseUrl?: string; secret?: string }) =>
+    req<{ models: { id: string; name?: string; contextWindow?: number; features?: string[] }[] }>(
+      "/provider-connections/models",
+      { method: "POST", body: JSON.stringify(body) },
     ),
-  connectProvider: (body: { workspaceId: string; provider: string; secret: string }) =>
-    req("/provider-connections", { method: "POST", body: JSON.stringify(body) }),
+  testProviderConnection: (id: string) =>
+    req<{ ok: boolean; latencyMs: number; model?: string; error?: string }>(
+      `/provider-connections/${id}/test`,
+      { method: "POST" },
+    ),
+  saveModelProfile: (
+    workspaceId: string,
+    p: {
+      id: string;
+      name: string;
+      taskClass: string;
+      primaryModel: Record<string, unknown>;
+      fallbackModels: Record<string, unknown>[];
+    },
+  ) => req(`/model-profiles/${p.id}`, { method: "PUT", body: JSON.stringify({ workspaceId, ...p }) }),
   modelProfiles: (workspaceId: string) =>
     req<{ id: string; name: string; taskClass: string; primaryModel: unknown; fallbackModels: unknown[] }[]>(
       `/model-profiles?workspaceId=${encodeURIComponent(workspaceId)}`,

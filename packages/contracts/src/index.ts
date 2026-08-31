@@ -63,7 +63,7 @@ export const ModelCapability = z.enum([
 ]);
 export type ModelCapability = z.infer<typeof ModelCapability>;
 
-export const TaskClass = z.enum(["realtime_stt", "live_coach", "deep_analysis", "tts"]);
+export const TaskClass = z.enum(["realtime_stt", "live_coach", "deep_analysis", "tts", "vision", "chunk_summary", "research_chat"]);
 export type TaskClass = z.infer<typeof TaskClass>;
 
 export const PrivacyMode = z.enum(["local_only", "byok_only", "managed_allowed"]);
@@ -319,3 +319,60 @@ export const StealthState = z.object({
 });
 export type StealthState = z.infer<typeof StealthState>;
 
+
+/* ========== Model catalog (Cline-style ModelInfo, fail-open feature flags) ========== */
+
+/** Per-model feature flags (Cline "capabilities" — named features here since
+ *  ModelCapability already denotes provider operation caps). */
+export const ModelFeature = z.enum([
+  "images",
+  "video",
+  "tools",
+  "streaming",
+  "prompt-cache",
+  "reasoning",
+  "reasoning-effort",
+  "structured_output",
+  "temperature",
+]);
+export type ModelFeature = z.infer<typeof ModelFeature>;
+
+export const ModelModality = z.enum(["text", "image", "audio", "video", "pdf"]);
+export type ModelModality = z.infer<typeof ModelModality>;
+
+export const ModelPricing = z.object({
+  input: z.number().optional(),
+  output: z.number().optional(),
+  cacheWrite: z.number().optional(),
+  cacheRead: z.number().optional(),
+});
+export type ModelPricing = z.infer<typeof ModelPricing>;
+
+export const ModelInfo = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  contextWindow: z.number().optional(),
+  maxTokens: z.number().optional(),
+  features: z.array(ModelFeature).optional(),
+  modalities: z
+    .object({ input: z.array(ModelModality), output: z.array(ModelModality) })
+    .optional(),
+  pricing: ModelPricing.optional(),
+  thinkingConfig: z.object({ maxBudget: z.number().optional() }).optional(),
+});
+export type ModelInfo = z.infer<typeof ModelInfo>;
+
+/**
+ * Fail-open feature check (Cline semantics): a missing or empty feature list
+ * means "unknown" and carries no signal — each caller declares whether
+ * absence counts as capable. A populated list is authoritative.
+ */
+export function modelHasFeature(
+  model: { features?: readonly string[] },
+  feature: string,
+  opts?: { assumeWhenUnspecified?: boolean },
+): boolean {
+  const features = model.features;
+  if (features === undefined || features.length === 0) return opts?.assumeWhenUnspecified ?? false;
+  return features.includes(feature);
+}

@@ -27,12 +27,20 @@ const PROVIDER_CATALOG: Record<string, () => AIProvider> = {
   local: () => new LocalEchoProvider(),
 };
 
+export interface WorkspaceProfile {
+  taskClass: string;
+  primaryModel: { model?: string; providerId?: string };
+  fallbackModels: { model?: string; providerId?: string }[];
+}
+
 export interface WorkspaceAiConfig {
   candidates: ModelCandidate[];
   providers: Map<string, AIProvider>;
-  /** provider â†’ sealed secret_ref (resolved per call). */
+  /** provider — sealed secret_ref (resolved per call). */
   secrets: Map<string, string | undefined>;
   privacyMode: "local_only" | "byok_only" | "managed_allowed";
+  /** Per-task routing policy (Settings "Model routing") applied in executeRouted. */
+  profiles: WorkspaceProfile[];
 }
 
 export async function loadWorkspaceAiConfig(db: PrismaClient, workspaceId: string): Promise<WorkspaceAiConfig> {
@@ -52,12 +60,17 @@ export async function loadWorkspaceAiConfig(db: PrismaClient, workspaceId: strin
   const secrets = new Map<string, string | undefined>();
 
   for (const conn of connections) {
+    // Custom OpenAI-compatible endpoints: metadata carries their endpoint and
+    // model (Settings BYOK flow) — the catalog's hardcoded defaults don't apply.
+    const meta = (conn.metadataJson ?? {}) as { baseUrl?: string; modelId?: string };
     const factory = PROVIDER_CATALOG[conn.provider];
-    if (!factory || !conn.secretRef) continue;
-    const instance = factory();
+    if (!conn.secretRef || (!factory && !meta.baseUrl)) continue;
+    const instance = meta.baseUrl
+      ? new OpenAICompatibleProvider(conn.provider, meta.baseUrl, meta.modelId ?? defaultModelFor(conn.provider), "byok")
+      : factory!();
     providers.set(conn.provider, instance);
     try {
-      // Resolve at call time â€” plaintext never persisted or logged.
+      // Resolve at call time — plaintext never persisted or logged.
       secrets.set(conn.provider, secretBox.open(conn.secretRef));
     } catch {
       increment(METRICS.permissionDenials);
@@ -83,7 +96,6 @@ export async function loadWorkspaceAiConfig(db: PrismaClient, workspaceId: strin
   }
 
   const candidates: ModelCandidate[] = [];
-  const profileByTask = new Map(profiles.map((p) => [p.taskClass, p]));
 
   for (const [providerId, provider] of providers) {
     const health = await provider.health();
@@ -96,10 +108,9 @@ export async function loadWorkspaceAiConfig(db: PrismaClient, workspaceId: strin
       : providerId === "openai" && !hasSecret
         ? "managed"
         : "byok";
-    const primary = profileByTask.get(profileTaskFor(caps))?.primaryModel as { model?: string } | null | undefined;
     candidates.push({
       providerId,
-      model: primary?.model ?? defaultModelFor(providerId),
+      model: defaultModelFor(providerId),
       capabilities: caps,
       privacyMode: mode === "managed" && !privacyAllows(privacyMode, "managed") ? "byok" : mode,
       healthScore: health.score,
@@ -109,7 +120,17 @@ export async function loadWorkspaceAiConfig(db: PrismaClient, workspaceId: strin
     });
   }
 
-  return { candidates, providers, secrets, privacyMode };
+  return {
+    candidates,
+    providers,
+    secrets,
+    privacyMode,
+    profiles: profiles.map((p) => ({
+      taskClass: p.taskClass,
+      primaryModel: (p.primaryModel ?? {}) as WorkspaceProfile["primaryModel"],
+      fallbackModels: (p.fallbackModels ?? []) as WorkspaceProfile["fallbackModels"],
+    })),
+  };
 }
 
 function profileTaskFor(caps: string[]): string {
@@ -135,6 +156,21 @@ function defaultModelFor(providerId: string): string {
   }
 }
 
+/**
+ * Vision-capable default per provider — text-only models (groq llama-3.3,
+ * deepseek-chat) reject image input outright, so vision requests are
+ * constrained to providers with a multimodal default. A saved openai-compat
+ * connection keeps whatever model the user configured.
+ */
+function visionDefaults(): Record<string, string> {
+  return {
+    openai: "gpt-4o-mini",
+    groq: "meta-llama/llama-4-scout-17b-16e-instruct",
+    bai: process.env.OPENAI_COMPAT_VISION_MODEL ?? "deepseek-v4-flash-vision-exp",
+    openrouter: process.env.OPENROUTER_VISION_MODEL ?? "minimax/minimax-m3:free",
+  };
+}
+
 export interface RouteDeps {
   db: PrismaClient;
   breakers: CircuitBreakerRegistry;
@@ -151,6 +187,41 @@ export async function executeRouted(
   const traceId = newTraceId();
   const eligible = cfg.candidates.filter((c) => privacyAllows(cfg.privacyMode, c.privacyMode));
 
+  // Routing chain: the task's profile primary, then its fallbacks in order,
+  // then remaining candidates. Provider-scoped overrides — a profile naming
+  // providerId X only reshapes X's model; unmatched picks default to the
+  // first eligible candidate.
+  let chain = eligible;
+  const profile = cfg.profiles.find((p) => p.taskClass === request.taskClass);
+  if (profile) {
+    const pick = (ref: { model?: string; providerId?: string }): ModelCandidate | null => {
+      if (!ref.model) return null;
+      const base = ref.providerId
+        ? eligible.find((c) => c.providerId === ref.providerId)
+        : eligible[0];
+      return base ? { ...base, model: ref.model } : null;
+    };
+    const head = [
+      pick(profile.primaryModel),
+      ...profile.fallbackModels.map((f) => pick(f)),
+    ].filter((c): c is ModelCandidate => c != null);
+    if (head.length > 0) {
+      const seen = new Set(head.map((c) => `${c.providerId}:${c.model}`));
+      chain = [...head, ...eligible.filter((c) => !seen.has(`${c.providerId}:${c.model}`))];
+    }
+  }
+
+  // Vision requests: constrain to providers with a multimodal default and
+  // swap in the vision model — a text-only model just answers "no image
+  // support" and the request is wasted.
+  if (request.taskClass === "vision") {
+    const defaults = visionDefaults();
+    const visionChain = chain
+      .filter((c) => c.providerId in defaults || c.providerId === "openai-compat")
+      .map((c) => (defaults[c.providerId] ? { ...c, model: defaults[c.providerId]! } : c));
+    if (visionChain.length > 0) chain = visionChain;
+  }
+
   const outcome = await route(
     request,
     {
@@ -159,7 +230,7 @@ export async function executeRouted(
       traceId,
       secret: undefined, // resolved per candidate below
     },
-    eligible,
+    chain,
     (c) => deps.breakers.penaltyFor(workspaceId, c.providerId, c.model, request.taskClass),
     (c) => deps.breakers.check(workspaceId, c.providerId, c.model, request.taskClass),
     async (c, _attempt): Promise<InvokeOutcome> => {
