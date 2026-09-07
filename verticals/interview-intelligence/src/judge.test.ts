@@ -16,11 +16,14 @@ test("accepts a well-formed fresh suggestion", () => {
   assert.deepEqual(v, { accept: true, reason: "ok" });
 });
 
-test("rejects low confidence, missing question, empty outline", () => {
+test("rejects low confidence and empty outline; empty question is accepted (WHEN IN DOUBT, ANSWER)", () => {
   const state = createJudgeState();
   assert.equal(judgeSuggestion(state, { ...good, confidence: 0.2 }, 0).reason, "low_confidence");
-  assert.equal(judgeSuggestion(state, { ...good, detected_question: "" }, 0).reason, "no_question");
   assert.equal(judgeSuggestion(state, { ...good, suggested_outline: [] }, 0).reason, "empty_outline");
+  // Spoken questions often lack "?" and the offline fallback can't always
+  // spot interrogatives — a framework with an outline still ships.
+  const noQ = judgeSuggestion(createJudgeState(), { ...good, detected_question: "" }, 0);
+  assert.ok(noQ.accept, "empty detected_question no longer rejects a useful framework");
 });
 
 test("suppresses duplicate question inside the window, allows after it", () => {

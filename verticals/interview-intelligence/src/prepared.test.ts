@@ -43,3 +43,24 @@ test("returns null on empty bank or empty question", () => {
   assert.equal(matchPreparedQa("anything", []), null);
   assert.equal(matchPreparedQa("", BANK), null);
 });
+
+test("matches unmarked docx shape: question sentence followed by answer", () => {
+  const docx: PreparedQa[] = [
+    {
+      id: "d1",
+      title: "sample interview",
+      content:
+        "Tell me about your experience as an AI training specialist. I'm a Computer Science professional focused on evaluating and improving AI generated outputs. I review responses to technical and programming questions and assess them against criteria such as factual correctness, logical consistency, relevance, instruction following and safety.",
+    },
+  ];
+  const m = matchPreparedQa("Can you tell me about your experience as an AI training specialist?", docx);
+  assert.ok(m, "expected a match on the unmarked docx entry");
+  assert.ok(m.answer.includes("Computer Science professional"), "answer should be the text following the matched question sentence");
+});
+
+test("no false positive on unrelated question (unmarked doc)", () => {
+  const docx: PreparedQa[] = [
+    { id: "d2", title: "s", content: "Tell me about your experience as an AI training specialist. I'm a Computer Science professional." },
+  ];
+  assert.equal(matchPreparedQa("What is your greatest weakness?", docx), null);
+});

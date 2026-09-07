@@ -64,6 +64,7 @@ export default function Settings() {
   const [testing, setTesting] = useState<Record<string, string | "busy">>({});
   const [routing, setRouting] = useState<Record<string, RoutingRow>>({});
   const [privacyMode, setPrivacyMode] = useState<string>("managed_allowed");
+  const [benchSchedule, setBenchSchedule] = useState<string>("at_launch");
   const [stealthAllowed, setStealthAllowed] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -143,8 +144,9 @@ export default function Settings() {
       ));
     } catch { /* no profiles yet */ }
     try {
-      const policy = (await api.policy(workspaceId)) as { privacyMode?: string; stealthAllowed?: boolean };
+      const policy = (await api.policy(workspaceId)) as { privacyMode?: string; stealthAllowed?: boolean; benchSchedule?: string };
       if (policy.privacyMode) setPrivacyMode(policy.privacyMode);
+      if (policy.benchSchedule) setBenchSchedule(policy.benchSchedule);
       setStealthAllowed(policy.stealthAllowed === true);
     } catch { /* default policy */ }
     const s = await stealthGetState().catch(() => null);
@@ -237,7 +239,7 @@ export default function Settings() {
   async function savePolicy() {
     if (!workspaceId) return;
     try {
-      await api.updatePolicy(workspaceId, { privacyMode, stealthAllowed });
+      await api.updatePolicy(workspaceId, { privacyMode, stealthAllowed, benchSchedule });
       flash("Policy saved");
     } catch (e) { fail(e); }
   }
@@ -519,6 +521,29 @@ function RoutingPicker(props: {
               <button className="ghost" onClick={() => { try { void navigator.clipboard.writeText(typeof token === "string" ? token : ""); flash("Token copied"); } catch { fail("Clipboard unavailable"); } }}>Copy</button>
             </div>
             <span className="small muted">Select text on any page → Ctrl+Shift+Y → it lands in your live session as web context.</span>
+          </Section>
+
+          <Section kicker="Model benchmarking" title="Auto-probe schedule">
+            <span className="small muted">
+              The probe discovers every live model on your gateways, benchmarks TTFT / latency / JSON reliability and writes the winners into the router — deprecated or rate-limited models are replaced automatically.
+            </span>
+            <div className="row">
+              <label className="col small" style={{ gap: 4, maxWidth: 240 }}>
+                Probe schedule
+                <select
+                  value={benchSchedule}
+                  onChange={(e) => setBenchSchedule(e.target.value)}
+                >
+                  <option value="at_launch">At launch (default)</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="4h">Every 4 hours</option>
+                  <option value="daily">Daily</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+              <button className="primary" style={{ alignSelf: "flex-end" }} onClick={() => void savePolicy()}>Save schedule</button>
+            </div>
+            <span className="small muted">Off disables automatic probing entirely — model winners stay frozen until you run <span className="mono">pnpm bench:models</span> manually.</span>
           </Section>
 
           <Section kicker="Privacy & policy" title="Workspace rules">

@@ -24,7 +24,7 @@ export function createJudgeState(): JudgeState {
 
 export interface JudgeVerdict {
   accept: boolean;
-  reason: "ok" | "low_confidence" | "no_question" | "empty_outline" | "duplicate_question";
+  reason: "ok" | "low_confidence" | "empty_outline" | "duplicate_question" | "no_question";
 }
 
 /**
@@ -44,17 +44,18 @@ export function judgeSuggestion(
   if (typeof fw.confidence !== "number" || fw.confidence < minConfidence) {
     return { accept: false, reason: "low_confidence" };
   }
-  if (!fw.detected_question) {
-    return { accept: false, reason: "no_question" };
-  }
   if (!Array.isArray(fw.suggested_outline) || fw.suggested_outline.length === 0) {
     return { accept: false, reason: "empty_outline" };
   }
-  if (fw.detected_question === state.lastQuestion && atMs - state.lastAcceptedAtMs < duplicateWindowMs) {
+  // Rival policy: WHEN IN DOUBT, ANSWER. An empty detected_question no longer
+  // rejects the framework — spoken questions (read-aloud TTS) often lack "?"
+  // and the offline fallback can't reliably spot interrogatives. A framework
+  // with an outline is still useful; the UI flags it for review.
+  if (fw.detected_question && fw.detected_question === state.lastQuestion && atMs - state.lastAcceptedAtMs < duplicateWindowMs) {
     return { accept: false, reason: "duplicate_question" };
   }
 
-  state.lastQuestion = fw.detected_question;
+  if (fw.detected_question) state.lastQuestion = fw.detected_question;
   state.lastAcceptedAtMs = atMs;
   return { accept: true, reason: "ok" };
 }

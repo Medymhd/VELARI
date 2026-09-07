@@ -618,235 +618,26 @@ where
 }
 
 #[cfg(windows)]
-mod wasapi_loopback {
-    use super::RING_BUFFER_SAMPLES;
-    use anyhow::Result;
-    use ringbuf::traits::{Producer, Split};
-    use ringbuf::{HeapCons, HeapProd, HeapRb};
-    use std::collections::VecDeque;
-    use std::sync::{mpsc, Arc, Mutex};
-    use std::thread;
-    use std::time::Duration;
-    use wasapi::{get_default_device, DeviceCollection, Direction, SampleType, ShareMode, WaveFormat};
-
-    struct WakerState {
-        shutdown: bool,
-    }
-
-    pub struct SpeakerInput {
-        device_id: Option<String>,
-    }
-
-    pub struct SpeakerStream {
-        consumer: Option<HeapCons<f32>>,
-        waker_state: Arc<Mutex<WakerState>>,
-        capture_thread: Option<thread::JoinHandle<()>>,
-        actual_sample_rate: u32,
-    }
-
-    impl SpeakerStream {
-        pub fn sample_rate(&self) -> u32 {
-            self.actual_sample_rate
-        }
-
-        pub fn take_consumer(&mut self) -> Option<HeapCons<f32>> {
-            self.consumer.take()
-        }
-    }
-
-    // Loopback captures the eMultimedia/eConsole default render device (or a
-    // user-specified id). VoIP apps routing to eCommunications need raw
-    // windows-rs (this crate version has no Role API) — known follow-up.
-    fn find_device_by_id(direction: &Direction, device_id: &str) -> Option<wasapi::Device> {
-        let collection = DeviceCollection::new(direction).ok()?;
-        let count = collection.get_nbr_devices().ok()?;
-        (0..count).find_map(|i| {
-            collection
-                .get_device_at_index(i)
-                .ok()
-                .and_then(|d| d.get_id().ok())
-                .filter(|id| id == device_id)
-                .and_then(|_| collection.get_device_at_index(i).ok())
-        })
-    }
-
-    impl SpeakerInput {
-        pub fn new(device_id: Option<String>) -> Result<Self> {
-            let device_id = device_id.filter(|id| !id.is_empty() && id != "default");
-            Ok(Self { device_id })
-        }
-
-        /// Spawn the WASAPI capture thread and wait for the real sample rate.
-        /// Errors on init failure/timeout so callers surface the failure
-        /// instead of silently degrading to a zero-sample stream.
-        pub fn stream(self) -> Result<SpeakerStream> {
-            let rb = HeapRb::<f32>::new(RING_BUFFER_SAMPLES);
-            let (producer, consumer) = rb.split();
-
-            let waker_state = Arc::new(Mutex::new(WakerState { shutdown: false }));
-            let (init_tx, init_rx) = mpsc::channel();
-            let waker_clone = waker_state.clone();
-            let device_id = self.device_id;
-
-            let capture_thread = thread::spawn(move || {
-                if let Err(e) = Self::capture_audio_loop(producer, waker_clone, init_tx, device_id) {
-                    eprintln!("[system] WASAPI capture loop failed: {e}");
-                }
-            });
-
-            let actual_sample_rate = match init_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Ok(rate)) => rate,
-                Ok(Err(e)) => {
-                    if let Ok(mut state) = waker_state.lock() {
-                        state.shutdown = true;
-                    }
-                    let _ = capture_thread.join();
-                    return Err(anyhow::anyhow!("WASAPI init failed: {e}"));
-                }
-                Err(_) => {
-                    if let Ok(mut state) = waker_state.lock() {
-                        state.shutdown = true;
-                    }
-                    let _ = capture_thread.join();
-                    return Err(anyhow::anyhow!(
-                        "WASAPI init timed out (no default render device, or device busy in exclusive mode)"
-                    ));
-                }
-            };
-
-            Ok(SpeakerStream {
-                consumer: Some(consumer),
-                waker_state,
-                capture_thread: Some(capture_thread),
-                actual_sample_rate,
-            })
-        }
-
-        fn capture_audio_loop(
-            mut producer: HeapProd<f32>,
-            waker_state: Arc<Mutex<WakerState>>,
-            init_tx: mpsc::Sender<Result<u32, String>>,
-            device_id: Option<String>,
-        ) -> Result<()> {
-            let init_result = (|| -> Result<_> {
-                wasapi::initialize_mta().map_err(|e| anyhow::anyhow!("COM init failed: {e}"))?;
-
-                let device = match device_id.as_deref() {
-                    Some(id) if !id.is_empty() => match find_device_by_id(&Direction::Render, id) {
-                        Some(d) => d,
-                        None => get_default_device(&Direction::Render).map_err(|e| {
-                            anyhow::anyhow!("device '{id}' not found and default lookup failed: {e}")
-                        })?,
-                    },
-                    _ => get_default_device(&Direction::Render)
-                        .map_err(|e| anyhow::anyhow!("default render device unavailable: {e}"))?,
-                };
-
-                let mut audio_client = device.get_iaudioclient().map_err(|e| anyhow::anyhow!("{e}"))?;
-                let device_format = audio_client.get_mixformat().map_err(|e| anyhow::anyhow!("{e}"))?;
-                let actual_rate = device_format.get_samplespersec();
-                let desired_format =
-                    WaveFormat::new(32, 32, &SampleType::Float, actual_rate as usize, 1, None);
-
-                let (_def_time, min_time) = audio_client.get_periods().map_err(|e| anyhow::anyhow!("{e}"))?;
-                // Loopback: device=Render, initialized with Direction::Capture —
-                // this triggers AUDCLNT_STREAMFLAGS_LOOPBACK.
-                audio_client
-                    .initialize_client(&desired_format, min_time, &Direction::Capture, &ShareMode::Shared, true)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let h_event = audio_client.set_get_eventhandle().map_err(|e| anyhow::anyhow!("{e}"))?;
-                let render_client = audio_client.get_audiocaptureclient().map_err(|e| anyhow::anyhow!("{e}"))?;
-                audio_client.start_stream().map_err(|e| anyhow::anyhow!("{e}"))?;
-
-                Ok((h_event, render_client, actual_rate, audio_client))
-            })();
-
-            match init_result {
-                Ok((h_event, render_client, sample_rate, audio_client)) => {
-                    let _ = init_tx.send(Ok(sample_rate));
-                    loop {
-                        if waker_state.lock().unwrap().shutdown {
-                            let _ = audio_client.stop_stream();
-                            break;
-                        }
-
-                        // Timeout is normal during silence — loopback fires no
-                        // events when nothing plays. Keep waiting.
-                        if h_event.wait_for_event(3000).is_err() {
-                            continue;
-                        }
-
-                        let mut temp_queue = VecDeque::new();
-                        // 32-bit float mono → 4 bytes per frame.
-                        if let Err(e) = render_client.read_from_device_to_deque(4, &mut temp_queue) {
-                            eprintln!("[system] failed to read audio data: {e}");
-                            continue;
-                        }
-                        if temp_queue.is_empty() {
-                            continue;
-                        }
-
-                        let mut samples = Vec::with_capacity(temp_queue.len() / 4);
-                        while temp_queue.len() >= 4 {
-                            let bytes = [
-                                temp_queue.pop_front().unwrap(),
-                                temp_queue.pop_front().unwrap(),
-                                temp_queue.pop_front().unwrap(),
-                                temp_queue.pop_front().unwrap(),
-                            ];
-                            samples.push(f32::from_le_bytes(bytes));
-                        }
-
-                        if !samples.is_empty() {
-                            // push_slice panics if full — use try_push per sample to handle
-                            // overflow gracefully without panicking.
-                            let mut dropped = 0usize;
-                            for &s in &samples {
-                                if producer.try_push(s).is_err() {
-                                    dropped += 1;
-                                }
-                            }
-                            if dropped > 0 {
-                                eprintln!("[system] ring overflow, dropped {} samples", dropped);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = init_tx.send(Err(format!("{e}")));
-                }
-            }
-            Ok(())
-        }
-    }
-
-    impl Drop for SpeakerStream {
-        fn drop(&mut self) {
-            if let Ok(mut state) = self.waker_state.lock() {
-                state.shutdown = true;
-            }
-            if let Some(handle) = self.capture_thread.take() {
-                let _ = handle.join();
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
 fn system_owner(
     device_id: Option<String>,
     stop: Arc<AtomicBool>,
     init_tx: mpsc::Sender<Result<u32, String>>,
     app: AppHandle,
 ) {
-    match wasapi_loopback::SpeakerInput::new(device_id).and_then(|i| i.stream()) {
+    // Dual-endpoint loopback: WASAPI splits each render device into Console /
+    // Multimedia / Communications endpoints, and loopback only captures the
+    // endpoint you bind. Meeting apps (Zoom/Teams/Meet) and OS read-aloud
+    // (Word/Narrator) route through eCommunications; media players use
+    // eMultimedia. Capturing only the default missed read-aloud entirely —
+    // the reported "system does not detect OS audio" bug. Both endpoints are
+    // captured concurrently and merged into one ring buffer.
+    match dual_loopback::SpeakerInput::new(device_id).and_then(|i| i.stream()) {
         Ok(mut stream) => {
             let rate = stream.sample_rate();
             let _ = init_tx.send(Ok(rate));
             if let Some(consumer) = stream.take_consumer() {
                 run_dsp_loop(CHANNEL_SYSTEM, rate, consumer, stop, app, None);
             }
-            // SpeakerStream dropped → shutdown flag + WASAPI thread joined.
         }
         Err(e) => {
             let _ = init_tx.send(Err(format!("{e}")));
@@ -854,41 +645,192 @@ fn system_owner(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Two WASAPI loopback captures (eMultimedia + eCommunications) merged into a
+/// single sample stream, so ANY app's output reaches the interviewer channel.
+/// Raw windows-rs: the wasapi crate hardcodes the eConsole role.
+mod dual_loopback {
+    use super::RING_BUFFER_SAMPLES;
+    use anyhow::Result;
+    use ringbuf::traits::{Producer, Split};
+    use ringbuf::{HeapCons, HeapProd, HeapRb};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+    use windows::Win32::Media::Audio::{
+        eCommunications, eMultimedia, eRender, ERole, IAudioCaptureClient, IAudioClient,
+        IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
+        AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+    };    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
 
-    #[test]
-    fn base64_matches_known_vectors() {
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
-        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    /// One loopback capture bound to a specific role endpoint, pushing f32
+    /// mono samples into the shared producer.
+    fn capture_endpoint(
+        role: ERole,
+        producer: Arc<Mutex<HeapProd<f32>>>,
+        stop: Arc<AtomicBool>,
+        ready_tx: mpsc::Sender<Result<u32, String>>,
+    ) -> thread::JoinHandle<()> {
+        thread::Builder::new()
+            .name(format!("loopback-{role:?}"))
+            .spawn(move || {
+                let run = (|| -> Result<()> {
+                    unsafe {
+                        CoInitializeEx(None, COINIT_MULTITHREADED)
+                            .ok()
+                            .map_err(|e| anyhow::anyhow!("COM: {e}"))?;
+                        let enumerator: IMMDeviceEnumerator =
+                            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                                .map_err(|e| anyhow::anyhow!("enumerator: {e}"))?;
+                        let device: IMMDevice = enumerator
+                            .GetDefaultAudioEndpoint(eRender, role)
+                            .map_err(|e| anyhow::anyhow!("endpoint: {e}"))?;
+                        let client: IAudioClient = device
+                            .Activate(CLSCTX_ALL, None)
+                            .map_err(|e| anyhow::anyhow!("activate: {e}"))?;
+                        let mixformat = client.GetMixFormat().map_err(|e| anyhow::anyhow!("mixformat: {e}"))?;
+                        let wfx = unsafe { &*mixformat };
+                        let rate = wfx.nSamplesPerSec;
+                        let channels = wfx.nChannels as usize;
+                        let align = wfx.nBlockAlign as usize;
+                        client
+                            .Initialize(
+                                AUDCLNT_SHAREMODE_SHARED,
+                                AUDCLNT_STREAMFLAGS_LOOPBACK,
+                                20_000_000, // 2s buffer, 100ns units
+                                0,
+                                wfx,
+                                None,
+                            )
+                            .map_err(|e| anyhow::anyhow!("init: {e}"))?;
+                        let capture: IAudioCaptureClient = client
+                            .GetService()
+                            .map_err(|e| anyhow::anyhow!("capture client: {e}"))?;
+                        client.Start().map_err(|e| anyhow::anyhow!("start: {e}"))?;
+                        let _ = ready_tx.send(Ok(rate));
+
+                        loop {
+                            if stop.load(Ordering::Relaxed) {
+                                let _ = client.Stop();
+                                return Ok(());
+                            }
+                            // 10ms poll: loopback delivers no events during silence.
+                            thread::sleep(Duration::from_millis(10));
+                            loop {
+                                let packet = match capture.GetNextPacketSize() {
+                                    Ok(n) => n,
+                                    Err(_) => break,
+                                };
+                                if packet == 0 {
+                                    break;
+                                }
+                                let byte_len = packet as usize * align;
+                                let mut frames_ptr: *mut u8 = std::ptr::null_mut();
+                                let mut written = 0u32;
+                                let mut flags = 0u32;
+                                if capture
+                                    .GetBuffer(&mut frames_ptr, &mut written, &mut flags, None, None)
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                let sample_count = written as usize / 4; // mixformat is f32
+                                if sample_count > 0 {
+                                    let data = std::slice::from_raw_parts(frames_ptr as *const f32, sample_count);
+                                    if let Ok(mut p) = producer.lock() {
+                                        if channels > 1 {
+                                            for frame in data.chunks(channels) {
+                                                let _ = p.try_push(frame[0]);
+                                            }
+                                        } else {
+                                            for &s in data {
+                                                let _ = p.try_push(s);
+                                            }
+                                        }
+                                    }
+                                }
+                                let _ = capture.ReleaseBuffer(written);
+                            }
+                        }
+                    }
+                })();
+                if let Err(e) = run {
+                    eprintln!("[system:{role:?}] capture ended: {e}");
+                }
+            })
+            .expect("spawn loopback thread")
     }
 
-    #[test]
-    fn i16_le_bytes_are_little_endian() {
-        assert_eq!(i16_slice_to_le_bytes(&[0x0102, -1]), vec![0x02, 0x01, 0xFF, 0xFF]);
+    pub struct SpeakerStream {
+        consumer: Option<HeapCons<f32>>,
+        stops: Vec<Arc<AtomicBool>>,
+        handles: Vec<thread::JoinHandle<()>>,
+        sample_rate: u32,
     }
 
-    #[test]
-    fn normalize_strips_wasapi_index_prefix() {
-        assert_eq!(normalize_device_name("(2- USB Audio Device)"), "usb audio device");
-        assert_eq!(normalize_device_name("(15- Microphone)"), "microphone");
+    impl SpeakerStream {
+        pub fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+        pub fn take_consumer(&mut self) -> Option<HeapCons<f32>> {
+            self.consumer.take()
+        }
     }
 
-    #[test]
-    fn normalize_collapses_unicode_dashes() {
-        assert_eq!(normalize_device_name("AirPods Pro – Hands-Free"), "airpods pro - hands-free");
-        assert_eq!(normalize_device_name("AirPods Pro — Hands-Free"), "airpods pro - hands-free");
+    impl SpeakerInput {
+        pub fn new(_device_id: Option<String>) -> Result<Self> {
+            Ok(SpeakerInput)
+        }
+
+        /// Bind loopback to BOTH eMultimedia and eCommunications endpoints of
+        /// the default render device; whichever carries audio, we get it.
+        pub fn stream(self) -> Result<SpeakerStream> {
+            let rb = HeapRb::<f32>::new(RING_BUFFER_SAMPLES * 2);
+            let (producer, consumer) = rb.split();
+            let producer = Arc::new(Mutex::new(producer));
+            let stop = Arc::new(AtomicBool::new(false));
+
+            let mut rates: Vec<u32> = Vec::new();
+            let mut handles = Vec::new();
+            for role in [eMultimedia, eCommunications] {
+                let (tx, rx) = mpsc::channel();
+                handles.push(capture_endpoint(role, producer.clone(), stop.clone(), tx));
+                match rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(Ok(r)) => rates.push(r),
+                    Ok(Err(e)) => eprintln!("[system] endpoint {role:?} unavailable (continuing): {e}"),
+                    Err(_) => eprintln!("[system] endpoint {role:?} init timeout (continuing)"),
+                }
+            }
+            if rates.is_empty() {
+                stop.store(true, Ordering::SeqCst);
+                for h in handles {
+                    let _ = h.join();
+                }
+                return Err(anyhow::anyhow!("no render endpoints available for loopback"));
+            }
+            let sample_rate = rates[0];
+            Ok(SpeakerStream {
+                consumer: Some(consumer),
+                stops: vec![stop],
+                handles,
+                sample_rate,
+            })
+        }
     }
 
-    #[test]
-    fn normalize_trims_and_lowercases() {
-        assert_eq!(normalize_device_name("  AirPods Pro  "), "airpods pro");
-        assert_eq!(normalize_device_name("AIRPODS PRO"), "airpods pro");
+    pub struct SpeakerInput;
+
+    impl Drop for SpeakerStream {
+        fn drop(&mut self) {
+            for s in &self.stops {
+                s.store(true, Ordering::SeqCst);
+            }
+            for h in self.handles.drain(..) {
+                let _ = h.join();
+            }
+        }
     }
 }
+

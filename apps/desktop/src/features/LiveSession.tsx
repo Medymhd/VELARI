@@ -381,6 +381,15 @@ export default function LiveSession() {
     // global chord and the X button can never disagree.
     try {
       const visible = await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
+      if (visible) {
+        // Backfill: overlay opened mid-session gets the recent transcript +
+        // latest insight immediately instead of waiting for the next frame.
+        for (const t of transcript.slice(-4)) {
+          void emit("overlay://transcript", { speaker: t.speaker ?? null, text: t.text, isFinal: t.isFinal });
+        }
+        const ins = insights[insights.length - 1];
+        if (ins) void emit("overlay://insight", { contentJson: ins.contentJson });
+      }
       if (on !== visible) {
         // Desired state differs from post-toggle reality (e.g. X pressed
         // between) — force it once more.

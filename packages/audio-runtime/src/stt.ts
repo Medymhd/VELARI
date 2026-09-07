@@ -318,10 +318,10 @@ export function createSttEngine(opts: {
     engines.push(new DeepgramStreamingSttEngine(opts.deepgramKey, { factory: opts.wsFactory }));
   }
   if (opts.mode !== "rest" || !opts.deepgramKey) {
-    // Moonshine first: higher quality, WASM runtime (no native-thread
-    // pathologies), init timeout degrades cleanly. Sherpa second as the
-    // fully-offline rung — its watchdog releases the chain if its decoder
-    // silently stalls.
+    // Moonshine first: PROVEN in-server (WASM, no native-thread conflicts),
+    // tail-window decode keeps it real-time for hours. Sherpa second: true
+    // streaming, but its native decoder stalls inside the API process
+    // (works standalone — KI-001 residue); watchdog releases the chain.
     engines.push(new MoonshineStreamingSttEngine());
     engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
   }

@@ -119,12 +119,17 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     }
     const audioMs = (this.buffer.length / this.sampleRate) * 1000;
 
-    // Silence endpointing: Moonshine is a non-streaming decoder — without an
-    // explicit endpoint it never produces finals during a live session (only
-    // flush-on-disconnect), which starves the coach and overlay. 1.5s of
-    // quiet after speech finalizes the utterance.
+    // Endpointing: quiet tail after speech finalizes the utterance.
     const hasSpeech = this.lastLoudAtMs > this.audioStartMs;
     if (hasSpeech && atMs - this.lastLoudAtMs >= MOONSHINE_ENDPOINT_MS && !this.decodeInFlight) {
+      void this.decode(true);
+      return;
+    }
+
+    // Hard cap: monologues without pauses would grow the buffer unbounded —
+    // force-final the head so decode windows stay bounded (rival
+    // MAX_SEGMENT_MS parity).
+    if (this.buffer.length >= this.sampleRate * MOONSHINE_MAX_SEGMENT_S && !this.decodeInFlight) {
       void this.decode(true);
       return;
     }
@@ -167,8 +172,10 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     if (this.unavailableFired) return false;
     if (!this.initPromise) {
       // First load may fetch weights from the HF hub; a stalled network must
-      // degrade to the next rung instead of stalling the whole chain.
-      const INIT_TIMEOUT_MS = 10_000;
+      // degrade to the next rung instead of stalling the whole chain. 30s:
+      // under system load (Word + desktop + capture) a cold load can take
+      // well past 10s — 10s released healthy decoders mid-session.
+      const INIT_TIMEOUT_MS = 30_000;
       this.initPromise = Promise.race([
         this.factory()
           .then(async (p) => {
@@ -209,11 +216,12 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     try {
       if (!(await this.init()) || !this.pipeline) return;
       if (this.closed) return;
-      // Trim trailing silence: inference on a silent tail wastes CPU, and the
-      // whole-buffer RMS gate would misread speech+silence mixtures as silence
-      // and drop real speech.
-      const audio = trimTrailingSilence(raw);
-      if (audio.length === 0) {
+      // Tail-window decode (bounded inference): re-decoding the entire buffer
+      // starves long sessions — decode time grows linearly until it exceeds
+      // the audio arrival rate. The last 10s is enough context for partials;
+      // endpointing/force-flush keep utterances bounded.
+      const trimmedFull = trimTrailingSilence(raw);
+      if (trimmedFull.length === 0) {
         // Pure silence since utterance start — drop the buffer entirely.
         this.buffer = new Float32Array(0);
         this.decodedThroughMs = 0;
@@ -221,12 +229,14 @@ export class MoonshineStreamingSttEngine implements SttEngine {
         this.audioStartMs = 0;
         return;
       }
+      const maxTail = this.sampleRate * MOONSHINE_TAIL_S;
+      const audio = trimmedFull.length > maxTail ? trimmedFull.slice(trimmedFull.length - maxTail) : trimmedFull;
       let energy = 0;
       for (let i = 0; i < audio.length; i++) energy += audio[i]! * audio[i]!;
       const rms = Math.sqrt(energy / Math.max(1, audio.length));
       if (process.env.MOONSHINE_DEBUG === "1" && this.dbgDecodeCount < 5) {
         this.dbgDecodeCount += 1;
-        console.log(`[moonshine:dbg] decode #${this.dbgDecodeCount}: trimmedMs=${Math.round((audio.length / this.sampleRate) * 1000)} rms=${rms.toFixed(5)} final=${final}`);
+        console.log(`[moonshine:dbg] decode #${this.dbgDecodeCount}: tailMs=${Math.round((audio.length / this.sampleRate) * 1000)} rms=${rms.toFixed(5)} final=${final}`);
       }
       if (rms < MOONSHINE_SILENCE_RMS) {
         // Mixed buffer too quiet to decode — keep it, wait for loud audio.
@@ -270,7 +280,12 @@ export class MoonshineStreamingSttEngine implements SttEngine {
  *  Kept low (≈65 int16) so quiet laptop mics pass — true silence sits ≈0-10. */
 const MOONSHINE_SILENCE_RMS = 0.002;
 /** Quiet tail (ms) after speech that finalizes the utterance. */
-const MOONSHINE_ENDPOINT_MS = 1500;
+const MOONSHINE_ENDPOINT_MS = 800;
+/** Monologue force-final threshold (s) — keeps decode windows bounded. */
+const MOONSHINE_MAX_SEGMENT_S = 20;
+/** Partial/final decodes consider at most the last N seconds of buffered
+ *  audio — bounded inference keeps long sessions real-time. */
+const MOONSHINE_TAIL_S = 10;
 /** Per-sample amplitude below which tail samples count as trailing silence. */
 const TRIM_AMPLITUDE = 0.002;
 

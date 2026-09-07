@@ -20,7 +20,7 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
 };
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o-mini",
-  groq: "llama-3.3-70b-versatile",
+  groq: "qwen/qwen3.8-27b",
   deepseek: "deepseek-chat",
   bai: "qwen3.8-flash",
 };
