@@ -798,7 +798,17 @@ mod wasapi_loopback {
                         }
 
                         if !samples.is_empty() {
-                            let _ = producer.push_slice(&samples);
+                            // push_slice panics if full — use try_push per sample to handle
+                            // overflow gracefully without panicking.
+                            let mut dropped = 0usize;
+                            for &s in &samples {
+                                if producer.try_push(s).is_err() {
+                                    dropped += 1;
+                                }
+                            }
+                            if dropped > 0 {
+                                eprintln!("[system] ring overflow, dropped {} samples", dropped);
+                            }
                         }
                     }
                 }

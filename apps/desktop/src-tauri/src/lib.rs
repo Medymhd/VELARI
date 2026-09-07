@@ -38,7 +38,7 @@ fn app_toggle_main(app: tauri::AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 fn stealth_get_state(state: tauri::State<AppState>) -> StealthState {
-    state.stealth.lock().unwrap().clone()
+    state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[tauri::command]
@@ -48,12 +48,12 @@ fn stealth_set_capture_exclusion(
     enabled: bool,
 ) -> Result<StealthState, String> {
     {
-        let mut s = state.stealth.lock().unwrap();
+        let mut s = state.stealth.lock().unwrap_or_else(|e| e.into_inner());
         s.capture_exclusion = enabled;
         s.enforced_at_ms = now_ms();
     }
     stealth::apply_capture_exclusion(&app, enabled)?;
-    Ok(state.stealth.lock().unwrap().clone())
+    Ok(state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 #[tauri::command]
@@ -63,12 +63,12 @@ fn stealth_set_taskbar_hidden(
     enabled: bool,
 ) -> Result<StealthState, String> {
     {
-        let mut s = state.stealth.lock().unwrap();
+        let mut s = state.stealth.lock().unwrap_or_else(|e| e.into_inner());
         s.taskbar_hidden = enabled;
         s.enforced_at_ms = now_ms();
     }
     stealth::apply_taskbar_hidden(&app, enabled)?;
-    Ok(state.stealth.lock().unwrap().clone())
+    Ok(state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 #[tauri::command]
@@ -79,13 +79,13 @@ fn stealth_set_masquerade(
     custom_title: Option<String>,
 ) -> Result<StealthState, String> {
     {
-        let mut s = state.stealth.lock().unwrap();
+        let mut s = state.stealth.lock().unwrap_or_else(|e| e.into_inner());
         s.masquerade = profile.clone();
         s.masquerade_title = custom_title.clone();
         s.enforced_at_ms = now_ms();
     }
     stealth::apply_masquerade(&app, &profile, custom_title)?;
-    Ok(state.stealth.lock().unwrap().clone())
+    Ok(state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 #[tauri::command]
@@ -93,10 +93,10 @@ fn stealth_enforce_now(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<StealthState, String> {
-    let s = state.stealth.lock().unwrap().clone();
+    let s = state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone();
     stealth::enforce_all(&app, &s)?;
     {
-        let mut locked = state.stealth.lock().unwrap();
+        let mut locked = state.stealth.lock().unwrap_or_else(|e| e.into_inner());
         locked.enforced_at_ms = now_ms();
         return Ok(locked.clone());
     }
@@ -112,7 +112,7 @@ fn stealth_enable_for_all_browsers_and_apps(
     // "chrome" and is not the foreground app).
     let hint = foreground_hint.or_else(stealth::foreground_window_title);
     {
-        let mut s = state.stealth.lock().unwrap();
+        let mut s = state.stealth.lock().unwrap_or_else(|e| e.into_inner());
         s.capture_exclusion = true;
         s.taskbar_hidden = true;
         if let Some(h) = &hint {
@@ -124,7 +124,7 @@ fn stealth_enable_for_all_browsers_and_apps(
         }
         s.enforced_at_ms = now_ms();
     }
-    let s = state.stealth.lock().unwrap().clone();
+    let s = state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Universal stealth: WDA + TOOLWINDOW for all our windows Works for any browser/app sharing
     stealth::enforce_all(&app, &s)?;
     if let Some(hint) = hint {
@@ -260,7 +260,7 @@ pub fn run() {
                 let h = handle.clone();
                 move |_| {
                     if let Some(state) = h.try_state::<AppState>() {
-                        let s = state.stealth.lock().unwrap().clone();
+                        let s = state.stealth.lock().unwrap_or_else(|e| e.into_inner()).clone();
                         let _ = stealth::enforce_all(&h, &s);
                     }
                 }
@@ -274,17 +274,17 @@ pub fn run() {
                 let Some(state) = reassert_handle.try_state::<AppState>() else {
                     continue;
                 };
-                let s = { state.stealth.lock().unwrap().clone() };
+                let s = match state.stealth.lock() {
+                    Ok(g) => g.clone(),
+                    Err(e) => e.into_inner().clone(),
+                };
                 if !s.capture_exclusion && !s.taskbar_hidden && s.masquerade == "none" {
                     continue;
                 }
                 if let Err(e) = stealth::enforce_all(&reassert_handle, &s) {
                     eprintln!("[stealth reassert] {e}");
-                } else {
-                    // update enforced_at_ms without dead-locking (try_lock)
-                    if let Ok(mut locked) = state.stealth.try_lock() {
-                        locked.enforced_at_ms = now_ms();
-                    }
+                } else if let Ok(mut locked) = state.stealth.try_lock() {
+                    locked.enforced_at_ms = now_ms();
                 }
             });
 
