@@ -16,6 +16,7 @@ import { visionRoutes } from "./routes/vision.js";
 import { recallRoutes } from "./routes/recall.js";
 import { profileRoutes } from "./routes/profile.js";
 import { contextRoutes } from "./routes/contexts.js";
+import { startModelProbeScheduler } from "./ai/modelProbeScheduler.js";
 import { registerRealtime } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
@@ -205,6 +206,11 @@ async function main(): Promise<void> {
   const host = "0.0.0.0";
   await app.listen({ port, host });
   log.info(`App API listening on http://${host}:${port}`, { port });
+
+  // Model-probe scheduler (at_launch default; workspace policy benchSchedule
+  // controls it: hourly / 4h / daily / off). Keeps COACH_MODEL_* winners in
+  // .env fresh without anyone touching a hardcoded model name.
+  startModelProbeScheduler(prisma);
 
   const shutdown = async (signal: string) => {
     log.info(`received ${signal}, shutting down`);
