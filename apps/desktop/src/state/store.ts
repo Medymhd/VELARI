@@ -24,7 +24,6 @@ interface InsightItem {
   contentJson: Record<string, unknown>;
   createdAt: string;
 }
-
 export interface Notice {
   id: string;
   kind: "info" | "success" | "error";
