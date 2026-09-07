@@ -8,8 +8,10 @@ export interface CoachContextInput {
   verbatimTranscript: string;
   rollingSummary?: string | undefined;
   roleDescription?: string | undefined;
-  /** Mode persona id (reference ModesManager parity). Defaults to "general". */
+  /** Mode persona id (rival ModesManager parity). Defaults to "general". */
   mode?: string | undefined;
+  /** Session prep materials (JD/CV/notes) — quote them, never invent. */
+  prepContext?: string | undefined;
 }
 
 export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
@@ -41,6 +43,7 @@ export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
     input.rollingSummary ? `Earlier session summary (context only):\n${input.rollingSummary}` : "",
     `Recent verbatim transcript:\n${input.verbatimTranscript}`,
     input.roleDescription ? `Candidate role/context:\n${input.roleDescription}` : "",
+    input.prepContext ? `SESSION PREP MATERIALS (the user prepared these — ground the outline and talking points in them; quote the JD's own requirements where relevant):\n${input.prepContext}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

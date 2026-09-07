@@ -37,7 +37,10 @@
     "@prisma/client": "^6.2.1",
     "fastify": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
-    "ws": "^8.18.0"
+    "mammoth": "^1.12.2",
+    "pdf-parse": "^2.4.5",
+    "ws": "^8.18.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.7",

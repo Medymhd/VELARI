@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import { stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar, type MasqueradeProfile, type StealthState } from "../lib/tauri";
@@ -71,6 +71,19 @@ function pcmToBase64(pcm: Int16Array): string {
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** File → base64 (no data: prefix) for server-side extraction. */
+function fileToBase64(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result);
+      resolve(s.slice(s.indexOf(",") + 1));
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  });
 }
 
 function useRealtime(sessionId: string | null) {
@@ -697,6 +710,69 @@ export default function LiveSession() {
     return undefined;
   })();
 
+  // Session prep (CV / job description / notes / drilled Q&As) — the rival's
+  // biggest advantage: answers grounded in materials the user uploaded before
+  // the interview. Q&A entries surface instantly via prepared-answer recall.
+  type CtxRow = { id: string; kind: string; title: string; content: string };
+  const [contexts, setContexts] = useState<CtxRow[]>([]);
+  const [prepKind, setPrepKind] = useState("jd");
+  const [prepTitle, setPrepTitle] = useState("");
+  const [prepText, setPrepText] = useState("");
+  const [prepBusy, setPrepBusy] = useState(false);
+
+  const refreshContexts = useCallback(async () => {
+    if (!sessionId) return;
+    try { setContexts(await api.sessionContexts(sessionId)); } catch { /* best-effort */ }
+  }, [sessionId]);
+  useEffect(() => { void refreshContexts(); }, [refreshContexts]);
+
+  async function addPrep() {
+    if (!sessionId || (!prepText.trim())) return;
+    setPrepBusy(true);
+    try {
+      await api.addSessionContext(sessionId, { kind: prepKind, title: prepTitle.trim() || undefined, content: prepText.trim() });
+      setPrepText("");
+      setPrepTitle("");
+      notify("success", `Added ${prepKind.toUpperCase()} — the coach now uses it`);
+      void refreshContexts();
+      wsRef.current?.readyState === WebSocket.OPEN &&
+        wsRef.current.send(JSON.stringify({ type: "session.reload_contexts", eventId: Math.random().toString(36).slice(2) }));
+    } catch (e) {
+      notify("error", `Add failed: ${errText(e)}`);
+    } finally {
+      setPrepBusy(false);
+    }
+  }
+
+  async function addPrepFiles(files: FileList | null) {
+    if (!sessionId || !files || files.length === 0) return;
+    setPrepBusy(true);
+    try {
+      const payload = await Promise.all(
+        Array.from(files).map(async (f) => ({ name: f.name, base64: await fileToBase64(f) })),
+      );
+      await api.addSessionContext(sessionId, { kind: prepKind, files: payload });
+      notify("success", `Added ${payload.length} file(s) — text extracted server-side`);
+      void refreshContexts();
+      wsRef.current?.readyState === WebSocket.OPEN &&
+        wsRef.current.send(JSON.stringify({ type: "session.reload_contexts", eventId: Math.random().toString(36).slice(2) }));
+    } catch (e) {
+      notify("error", `Upload failed: ${errText(e)}`);
+    } finally {
+      setPrepBusy(false);
+    }
+  }
+
+  async function removePrep(ctxId: string) {
+    if (!sessionId) return;
+    try {
+      await api.deleteSessionContext(sessionId, ctxId);
+      setContexts((c) => c.filter((x) => x.id !== ctxId));
+    } catch (e) {
+      notify("error", `Delete failed: ${errText(e)}`);
+    }
+  }
+
   if (!sessionId) return <div className="card muted">Select or create a session from Home.</div>;
 
   return (
@@ -771,7 +847,19 @@ export default function LiveSession() {
           </div>
           {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
           {insights.slice(-6).reverse().map((ins) => (
-            ins.type === "auto_answer" ? (
+            ins.type === "prepared_answer" ? (
+              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)", borderColor: "var(--success)" }}>
+                <div className="small muted" style={{ marginBottom: 4 }}>
+                  Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) — {String(ins.contentJson.title ?? "")}
+                </div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {overlayOn && (
+                  <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { contentJson: { talking_points: [String(ins.contentJson.answer ?? "")] } })}>
+                    Send to overlay
+                  </button>
+                )}
+              </div>
+            ) : ins.type === "auto_answer" ? (
               <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)", borderColor: "var(--accent)" }}>
                 <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer — {String(ins.contentJson.question ?? "").slice(0, 120)}</div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
@@ -791,6 +879,54 @@ export default function LiveSession() {
               </div>
             )
           ))}
+        </div>
+
+        <div className="card grid">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span className="kicker">Prep materials</span>
+            <span className="small muted">{contexts.length} loaded</span>
+          </div>
+          <span className="small muted" style={{ margin: 0 }}>
+            CV, job description, notes, drilled Q&As — the coach grounds every answer in these. Q&As surface instantly when the interviewer asks a matching question.
+          </span>
+          <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
+            <select value={prepKind} onChange={(e) => setPrepKind(e.target.value)} style={{ maxWidth: 120 }}>
+              <option value="jd">Job description</option>
+              <option value="cv">CV / resume</option>
+              <option value="notes">Notes</option>
+              <option value="qa">Q&amp;A (Q: … A: …)</option>
+            </select>
+            <input placeholder="Title (optional)" value={prepTitle} onChange={(e) => setPrepTitle(e.target.value)} style={{ maxWidth: 140 }} />
+          </div>
+          <textarea
+            rows={3}
+            placeholder={prepKind === "qa" ? "Q: What is your greatest weakness?\nA: I used to over-polish deliverables…" : prepKind === "jd" ? "Paste the job description…" : "Paste text…"}
+            value={prepText}
+            onChange={(e) => setPrepText(e.target.value)}
+          />
+          <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
+            <button className="primary" disabled={prepBusy || !prepText.trim()} onClick={() => void addPrep()}>
+              {prepBusy ? "Working…" : "Add"}
+            </button>
+            <label className="ghost" style={{ cursor: "pointer", padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13 }}>
+              Upload pdf/docx/xlsx/txt
+              <input type="file" accept=".pdf,.txt,.md,.docx,.xls,.xlsx,.csv" multiple style={{ display: "none" }} onChange={(e) => { void addPrepFiles(e.target.files); e.target.value = ""; }} />
+            </label>
+          </div>
+          {contexts.length > 0 && (
+            <div className="col" style={{ gap: 6 }}>
+              {contexts.map((c) => (
+                <div key={c.id} className="row small" style={{ justifyContent: "space-between", borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span className="badge" style={{ marginRight: 6 }}>{c.kind.toUpperCase()}</span>
+                    {c.title}
+                    <span className="small muted" style={{ marginLeft: 6 }}>{(c.content.length / 1000).toFixed(1)}k chars</span>
+                  </span>
+                  <button className="ghost" onClick={() => void removePrep(c.id)}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="card grid">

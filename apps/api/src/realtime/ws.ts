@@ -15,6 +15,7 @@ import {
   sanitizeCoachFramework,
   stripLeakage,
   isInterviewMode,
+  matchPreparedQa,
   type CoachFramework,
 } from "@app/vertical-interview-intelligence";
 import { captureStyleProfile, withStyle, type StyleProfile } from "@app/ai-runtime";
@@ -78,6 +79,30 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let sessionMode = "general";
     /** Profile Intelligence persona — coach answers cite real background. */
     let personaContext: string | undefined;
+    /** Session prep materials: CV/JD/notes text for the coach prompt, and the
+     *  drilled Q&A bank for instant recall (no LLM latency). Reloadable
+     *  mid-session via the session.reload_contexts frame. */
+    let prepContext: string | undefined;
+    let qaBank: { id: string; title: string; content: string }[] = [];
+    /** Last Q&A the recall surfaced — one prepared answer per question. */
+    let lastRecalledQaId = "";
+
+    async function loadPrepMaterials(): Promise<void> {
+      const contexts = await db.sessionContext.findMany({ where: { sessionId: session!.id } });
+      if (contexts.length === 0) {
+        prepContext = undefined;
+        qaBank = [];
+        return;
+      }
+      const byKind = (k: string) => contexts.filter((c) => c.kind === k);
+      prepContext = [
+        ...byKind("jd").map((c) => `Job description (${c.title}):\n${c.content.slice(0, 4000)}`),
+        ...byKind("cv").map((c) => `CV (${c.title}):\n${c.content.slice(0, 3000)}`),
+        ...byKind("notes").map((c) => `Prep notes (${c.title}):\n${c.content.slice(0, 3000)}`),
+      ].join("\n\n") || undefined;
+      qaBank = byKind("qa").map((c) => ({ id: c.id, title: c.title, content: c.content }));
+      log.info("session prep loaded", { contexts: contexts.length, qaBank: qaBank.length });
+    }
 
     // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
     // attribution. Browser (channel-less) chunks share the default engine.
@@ -123,6 +148,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           .join("\n");
       }
       log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
+      await loadPrepMaterials();
     } catch (e) {
       log.warn("failed to load workspace AI config, using local fallback", { error: String(e) });
     }
@@ -189,6 +215,53 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
 
       lastFinalIds = [...lastFinalIds.slice(-4), segmentId];
+
+      // Instant prepared-answer recall (rival knowledge-packs parity): match
+      // interviewer questions against the drilled Q&A bank — ~0ms, ahead of
+      // the LLM coach. One recall per question text.
+      if (speaker === "interviewer" && qaBank.length > 0) {
+        const match = matchPreparedQa(text, qaBank);
+        if (match && match.qa.id !== lastRecalledQaId) {
+          lastRecalledQaId = match.qa.id;
+          const insightId = randomUUID();
+          const contentJson = {
+            question: text.slice(0, 300),
+            answer: match.answer,
+            title: match.qa.title,
+            score: Math.round(match.score * 100) / 100,
+          };
+          try {
+            await db.sessionInsight.create({
+              data: {
+                id: insightId,
+                sessionId: session!.id,
+                type: "prepared_answer",
+                sourceSegmentIds: [segmentId],
+                contentJson: contentJson as any,
+                modelTraceId: traceId,
+              },
+            });
+          } catch (e) {
+            log.warn("failed to persist prepared answer", { error: String(e) });
+          }
+          emit({
+            type: "coach.suggestion",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            insight: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "prepared_answer",
+              sourceSegmentIds: [segmentId],
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
+      }
 
       emit({
         type: "transcript.final",
@@ -299,6 +372,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           rollingSummary,
           mode: sessionMode,
           roleDescription: personaContext,
+          prepContext,
         });
         if (styleProfile) {
           messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
@@ -514,6 +588,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           sessionMode = frame.mode;
           log.info("session mode set", { mode: sessionMode, sessionId: session!.id });
         }
+        return;
+      }
+
+      if (frame.type === "session.reload_contexts") {
+        await loadPrepMaterials();
         return;
       }
 
