@@ -314,3 +314,27 @@ model SessionContext {
   @@index([sessionId, kind])
   @@map("session_contexts")
 }
+
+/// Cross-session answer cache: accepted, judged coach answers keyed by the
+/// normalized question + mode + length + prep fingerprint. A hit serves in
+/// ~0ms without an LLM call; fuzzy tiers tolerate slightly-changed questions.
+model AnswerCacheEntry {
+  id              String   @id @default(uuid())
+  workspaceId     String   @map("workspace_id")
+  keyHash         String   @map("key_hash")
+  question        String
+  tokensJson      Json     @map("tokens_json")
+  embeddingJson   Json     @map("embedding_json")
+  frameworkJson   Json     @map("framework_json")
+  answerText      String   @map("answer_text")
+  mode            String
+  length          String
+  prepHash        String   @map("prep_hash")
+  hitCount        Int      @default(0) @map("hit_count")
+  sourceSessionId String?  @map("source_session_id")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([workspaceId, keyHash])
+  @@index([workspaceId, createdAt])
+  @@map("answer_cache_entries")
+}

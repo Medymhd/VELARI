@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, Prisma } from "@prisma/client";
 import { newAssemblerState, ingestSegment } from "@app/domain";
 import { RealtimeClientFrame } from "@app/contracts";
 import { CircuitBreakerRegistry, createSttEngine, type SttEngine } from "@app/ai-runtime";
@@ -18,8 +18,9 @@ import {
   matchPreparedQa,
   type CoachFramework,
 } from "@app/vertical-interview-intelligence";
-import { captureStyleProfile, withStyle, type StyleProfile } from "@app/ai-runtime";
+import { captureStyleProfile, withStyle, type StyleProfile, createEmbeddingProvider } from "@app/ai-runtime";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
+import { AnswerCache, prepHashOf, questionTokens, keyHashFor } from "../services/answerCache.js";
 
 const log = logger({ svc: "realtime" });
 const breakers = new CircuitBreakerRegistry();
@@ -121,6 +122,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       sherpaModelDir?: string;
     } = {};
     const sttEngines = new Map<string, SttEngine>();
+    /** Per-channel partial/final recency — drives the staleness watchdog. */
+    const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number }>();
     const engineFor = (channel?: string): SttEngine => {
       const key = channel ?? "default";
       let engine = sttEngines.get(key);
@@ -133,6 +136,62 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     const judge = createJudgeState();
     let rollingSummary: string | undefined;
     let finalsSinceSummary = 0;
+
+    // Answer cache: tolerant lookup (exact → fuzzy → vector) before any LLM
+    // call. Loaded with the workspace's recent accepted answers; seeded after
+    // every judge-accepted insight. Quality guard: only accepted outputs enter.
+    const embedder = createEmbeddingProvider({
+      embeddingBaseUrl: process.env.EMBEDDING_BASE_URL,
+      embeddingApiKey: process.env.EMBEDDING_API_KEY,
+      embeddingModel: process.env.EMBEDDING_MODEL,
+    });
+    const answerCache = new AnswerCache(async (texts) => embedder.embed(texts));
+    let activePrepHash = "";
+    try {
+      const rows = await db.answerCacheEntry.findMany({
+        where: { workspaceId: session!.workspaceId },
+        orderBy: { createdAt: "asc" },
+        take: 500,
+      });
+      answerCache.load(rows.map((r) => ({
+        id: r.id,
+        question: r.question,
+        tokensJson: r.tokensJson,
+        embeddingJson: r.embeddingJson,
+        frameworkJson: r.frameworkJson as Record<string, unknown>,
+        answerText: r.answerText,
+        mode: r.mode,
+        length: r.length,
+        prepHash: r.prepHash,
+      })));
+    } catch (e) {
+      log.warn("answer cache load failed (cache disabled this session)", { error: String(e) });
+    }
+
+    /** Staleness watchdog: a partial hanging with no final (engine wedged,
+     *  gate never closed) force-finalizes after 10s by flushing the engine —
+     *  "70% partials get stuck" is a dead-end otherwise. */
+    const staleTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [channel, rec] of channelAudio) {
+        if (rec.lastPartialAt > rec.lastFinalAt && now - rec.lastPartialAt > 10_000) {
+          rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
+          const engine = sttEngines.get(channel);
+          if (engine) {
+            log.info("stale partial — forcing flush", { sessionId: session!.id, channel });
+            try {
+              engine.flush((r) => {
+                if (r.isFinal && r.text.trim()) {
+                  const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+                  void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
+                  advanceTurn(channel);
+                }
+              });
+            } catch { /* engine already gone */ }
+          }
+        }
+      }
+    }, 5_000);
 
     try {
       workspaceCfg = await loadWorkspaceAiConfig(db, session!.workspaceId);
@@ -461,6 +520,57 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (styleProfile) {
         messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
       }
+      // Answer cache lookup BEFORE the LLM — a question asked (nearly) before
+      // is answered in ~0ms. Hit quality is guaranteed: only judge-accepted,
+      // sanitized outputs are ever cached, keyed by mode+length+prepHash.
+      const prepHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+      const lastQuestionLine = verbatim.split("\n").filter(Boolean).at(-1) ?? "";
+      if (answerCache.size() > 0 && lastQuestionLine.length > 12) {
+        try {
+          const hit = await answerCache.lookup(lastQuestionLine, { mode: sessionMode, length: sessionLength, prepHash });
+          if (hit) {
+            log.info("answer cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
+            await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
+            const contentJson: Record<string, unknown> = {
+              ...hit.frameworkJson,
+              cached: true,
+              cache_tier: hit.key,
+              cache_score: hit.score,
+              cached_question: hit.matchedQuestion,
+            };
+            const insightId = randomUUID();
+            await db.sessionInsight.create({
+              data: {
+                id: insightId,
+                sessionId: session!.id,
+                type: "suggested_answer",
+                sourceSegmentIds: lastFinalIds.slice(-3),
+                contentJson: contentJson as any,
+                modelTraceId: traceId,
+              },
+            }).catch(() => {});
+            emit({
+              type: "coach.suggestion",
+              eventId: randomUUID(),
+              sequenceNo: serverSeq++,
+              occurredAt: new Date().toISOString(),
+              sessionId: session!.id,
+              insight: {
+                id: insightId,
+                sessionId: session!.id,
+                type: "suggested_answer",
+                sourceSegmentIds: lastFinalIds.slice(-3),
+                contentJson: contentJson as any,
+                modelTraceId: traceId,
+                createdAt: new Date().toISOString(),
+              },
+            });
+            return;
+          }
+        } catch (e) {
+          log.warn("answer cache lookup failed (continuing to LLM)", { error: String(e) });
+        }
+      }
       // ASR confidence of the triggering speech — rides on the insight so the
       // UI can flag answers built on a misheard question ("low confidence —
       // verify" chip) instead of presenting a wrong answer as certain.
@@ -578,12 +688,60 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             },
           });
 
+          // Seed the answer cache with the accepted answer so the same (or a
+          // slightly reworded) question next time is answered without an LLM.
+          try {
+            const seedQuestion = String(contentJson.detected_question ?? lastQuestionLine).trim();
+            if (seedQuestion.length > 12) {
+              const [emb] = await embedder.embed([seedQuestion]).catch(() => [[] as number[]]);
+              const entryId = randomUUID();
+              // Prisma Json columns need InputJsonValue — cast through unknown.
+              const frameworkJson = contentJson as unknown as Prisma.InputJsonValue;
+              const entry = {
+                id: entryId,
+                workspaceId: session!.workspaceId,
+                keyHash: keyHashFor({ question: seedQuestion, mode: sessionMode, length: sessionLength, prepHash }),
+                question: seedQuestion,
+                tokensJson: questionTokens(seedQuestion),
+                embeddingJson: (emb ?? []) as unknown as Prisma.InputJsonValue,
+                frameworkJson,
+                answerText: (contentJson.talking_points as string[] | undefined)?.join(" ") ?? String(contentJson.detected_question ?? ""),
+                mode: sessionMode,
+                length: sessionLength,
+                prepHash,
+                hitCount: 0,
+                sourceSessionId: session!.id,
+              };
+              await db.answerCacheEntry.upsert({
+                where: { workspaceId_keyHash: { workspaceId: session!.workspaceId, keyHash: entry.keyHash } },
+                create: entry,
+                update: { frameworkJson, answerText: entry.answerText, embeddingJson: entry.embeddingJson, tokensJson: entry.tokensJson },
+              });
+              answerCache.seed({
+                id: entryId,
+                question: seedQuestion,
+                tokens: entry.tokensJson as string[],
+                embedding: emb ?? [],
+                frameworkJson: contentJson,
+                answerText: entry.answerText,
+                mode: sessionMode,
+                length: sessionLength,
+                prepHash,
+              });
+            }
+          } catch (e) {
+            log.warn("answer cache seed failed (non-fatal)", { error: String(e) });
+          }
+
           // Auto-answer pass (reference SimpleAutoAnswer parity): strong question
           // with high confidence â†’ draft the exact spoken words as its own
           // insight. Fire-and-forget; failure never affects the coach path.
           const q = String(contentJson.detected_question ?? "").trim();
           const conf = Number(contentJson.confidence ?? 0);
-          if (q && conf >= 0.6 && q.includes("?")) {
+          // Draft gate 0.55: STT partial confidence (0.7) and marginal LLM
+          // confidence must still draft — the judge and postProcess guard
+          // quality; silence is the only unacceptable outcome.
+          if (q && conf >= 0.55 && q.includes("?")) {
             void draftAutoAnswer(q, verbatim.slice(-2000));
           }
         } catch (e) {
@@ -755,6 +913,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
       if (frame.type === "session.reload_contexts") {
         await loadPrepMaterials();
+        activePrepHash = prepHashOf(prepContext, qaBank);
         return;
       }
 
@@ -768,7 +927,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           // sync sends from inside a native (napi) callback stack corrupt the
           // recognizer's decode state.
           queueMicrotask(() => {
+            const rec = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0 };
+            channelAudio.set(frame.channel ?? "default", rec);
             if (!result.isFinal) {
+              rec.lastPartialAt = nowMs;
               emit({
                 type: "transcript.partial",
                 eventId: randomUUID(),
@@ -792,6 +954,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
                 },
               });
             } else {
+              rec.lastFinalAt = nowMs;
               // The final commits the partial row in place, then the turn
               // advances so the next utterance starts a fresh line.
               void handleFinal(result.text, result.confidence, result.startedAtMs, result.endedAtMs, engine.source, speaker, utteranceId(frame.channel));
@@ -811,6 +974,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     socket.on("close", () => {
       if (coachTimer) clearTimeout(coachTimer);
+      if (staleTimer) clearInterval(staleTimer);
       // Flush every engine so trailing audio finalizes instead of being lost
       // when the client stops sending (partial-only sessions otherwise end
       // with zero persisted segments).
