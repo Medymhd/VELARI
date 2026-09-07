@@ -6,6 +6,7 @@
 //! derives all window flags from the mode — no per-vertical Rust code.
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU8, Ordering};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -147,6 +148,10 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         let _ = w.show();
         let _ = w.set_focus();
+        // Smart passthrough: body click-through (scroll Word beneath the
+        // panel), header band interactive on hover.
+        #[cfg(windows)]
+        spawn_smart_passthrough_poller(app.clone());
         let _ = app.emit("overlay://visibility", true);
         if let Ok(pos) = w.outer_position() {
             println!("[overlay] shown at physical ({}, {}), size {}x{}, spot {}", pos.x, pos.y, width, height, placement_state::current().as_str());
@@ -248,6 +253,7 @@ pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enable
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
+    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_FULL } else { PASSTHROUGH_SMART }, Ordering::Relaxed);
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
@@ -270,6 +276,74 @@ pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enable
     let _ = app.emit("overlay://passthrough", enabled);
     Ok(())
 }
+
+/// Overlay passthrough mode: Smart (body click-through, header interactive —
+/// the default so the user can scroll/operate apps beneath the overlay),
+/// Full (everything click-through, Ctrl+Shift+B), Off.
+static PASSTHROUGH_MODE: AtomicU8 = AtomicU8::new(0);
+
+const PASSTHROUGH_OFF: u8 = 0;
+const PASSTHROUGH_SMART: u8 = 1;
+const PASSTHROUGH_FULL: u8 = 2;
+
+#[cfg(windows)]
+fn set_overlay_click_through(hwnd: windows::Win32::Foundation::HWND, transparent: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
+    };
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if transparent {
+            current | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize
+        } else {
+            current & !(WS_EX_TRANSPARENT.0 as isize)
+        };
+        if next != current {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+/// Cursor-poll hover-margin (rival `syncOverlayInteractionPolicy` parity):
+/// while Smart mode is on, the overlay body stays click-through (scroll Word
+/// beneath it) and becomes interactive only when the cursor hovers the header
+/// band — the only region with buttons/drag.
+#[cfg(windows)]
+fn spawn_smart_passthrough_poller(app: tauri::AppHandle) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        if PASSTHROUGH_MODE.load(Ordering::Relaxed) != PASSTHROUGH_SMART {
+            continue;
+        }
+        let Some(w) = app.get_webview_window("overlay:interview-intelligence") else {
+            return; // overlay destroyed — poller exits
+        };
+        if !w.is_visible().unwrap_or(false) {
+            continue;
+        }
+        let Ok(hwnd) = w.hwnd() else { continue };
+        let raw = HWND(hwnd.0);
+        let mut cursor = windows::Win32::Foundation::POINT::default();
+        if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+            continue;
+        }
+        let Ok(pos) = w.outer_position() else { continue };
+        let Ok(size) = w.outer_size() else { continue };
+        let within = cursor.x >= pos.x
+            && cursor.x < pos.x + size.width as i32
+            && cursor.y >= pos.y
+            && cursor.y < pos.y + size.height as i32;
+        // Header band: top 48 logical px of the panel = buttons + drag region.
+        let header_px = (48.0 * w.scale_factor().unwrap_or(1.0)) as i32;
+        let over_header = within && (cursor.y - pos.y) < header_px;
+        set_overlay_click_through(raw, !over_header);
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_smart_passthrough_poller(_app: tauri::AppHandle) {}
 
 /// Content-driven height (reference auto-resize parity): the overlay page reports
 /// its panel size and the window grows/shrinks to fit. Height clamped so the
