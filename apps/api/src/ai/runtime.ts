@@ -20,7 +20,12 @@ import { METRICS, increment, newTraceId } from "@app/observability";
 
 const PROVIDER_CATALOG: Record<string, () => AIProvider> = {
   openai: () => new OpenAICompatibleProvider("openai", "https://api.openai.com/v1", "gpt-4o-mini", "managed"),
-  groq: () => new OpenAICompatibleProvider("groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "byok"),
+  // Groq free tier — 2026-09-07 measured benchmark (bench in docs/groq-tier.md):
+  // qwen3.8-27b TTFT 267-497ms, total 637-924ms, strict JSON schema supported;
+  // gpt-oss-120b TTFT ~850ms, total ~1.1s; compound models 5.6s+ and non-JSON
+  // (excluded). llama-3.3-70b-versatile was REMOVED from Groq (404) — the old
+  // default here silently 404'd every coach call.
+  groq: () => new OpenAICompatibleProvider("groq", "https://api.groq.com/openai/v1", "qwen/qwen3.8-27b", "byok"),
   deepseek: () => new OpenAICompatibleProvider("deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "byok"),
   bai: () => new OpenAICompatibleProvider("bai", "https://api.b.ai/v1", "qwen3.8-flash", "managed"),
   anthropic: () => new AnthropicProvider(),
@@ -144,7 +149,10 @@ function defaultModelFor(providerId: string): string {
     case "anthropic":
       return "claude-sonnet-4-5";
     case "groq":
-      return "llama-3.3-70b-versatile";
+      // 2026-09-07 benchmark: qwen3.8-27b is the fastest strict-JSON model on
+      // the Groq free tier (TTFT 267-497ms, total 637-924ms). gpt-oss-120b is
+      // the quality upgrade (~850ms TTFT). llama-3.3-70b was REMOVED from Groq.
+      return "qwen/qwen3.8-27b";
     case "deepseek":
       return "deepseek-chat";
     case "bai":
