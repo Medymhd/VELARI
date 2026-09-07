@@ -12,6 +12,7 @@
                     "typecheck":  "turbo run typecheck",
                     "test":  "turbo run test",
                     "lint":  "turbo run lint",
+                    "bench:models":  "node benchmarks/probe-models.mjs",
                     "dev:api":  "pnpm --filter @app/api dev",
                     "dev:worker":  "pnpm --filter @app/worker dev",
                     "dev:desktop":  "pnpm --filter @app/desktop tauri dev",

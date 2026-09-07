@@ -40,6 +40,21 @@ export class OpenAICompatibleProvider extends AIProvider {
     return { score: this.healthScore, lastError: this.lastError, updatedAt: Date.now() };
   }
 
+  /** Task-scoped model resolution (probe-based, never hardcoded):
+   *  COACH_MODEL_<GATEWAY> > COACH_MODEL > catalog default. The probe script
+   *  (benchmarks/probe-models.mjs / pnpm bench:models) benchmarks every live
+   *  gateway model and writes the winners into .env — a deprecated, removed
+   *  or rate-limited model is replaced automatically on the next probe run
+   *  instead of 404-ing every call silently. */
+  private modelFor(request: ModelRequest): string {
+    const prefix = `COACH_MODEL_${this.id.toUpperCase().replace(/-/g, "_")}`;
+    const byTask =
+      request.taskClass === "vision"
+        ? process.env[`VISION_MODEL_${this.id.toUpperCase().replace(/-/g, "_")}`] ?? process.env.VISION_MODEL
+        : process.env[prefix] ?? process.env.COACH_MODEL;
+    return byTask && byTask.length > 0 ? byTask : this.defaultModel;
+  }
+
   async execute(request: ModelRequest, ctx: RequestContext): Promise<InvokeOutcome> {
     const started = Date.now();
     if (!ctx.secret && this.privacyMode !== "local") {
@@ -57,7 +72,7 @@ export class OpenAICompatibleProvider extends AIProvider {
           "x-request-id": ctx.requestId,
         },
         body: JSON.stringify({
-          model: this.defaultModel,
+          model: this.modelFor(request),
           messages: request.messages ?? [],
           ...(request.responseSchema
             ? {
