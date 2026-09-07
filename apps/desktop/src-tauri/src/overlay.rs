@@ -105,8 +105,10 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
 
     builder.build().map_err(|e| e.to_string())?;
 
+    let shown = app.get_webview_window(&label);
+
     if mode.no_activate() {
-        if let Some(w) = app.get_webview_window(&label) {
+        if let Some(w) = &shown {
             if let Ok(hwnd) = w.hwnd() {
                 use windows::Win32::UI::WindowsAndMessaging::{
                     GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
@@ -121,7 +123,7 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
     }
 
     if mode.capture_exclusion() {
-        if let Some(w) = app.get_webview_window(&label) {
+        if let Some(w) = &shown {
             if let Ok(hwnd) = w.hwnd() {
                 use windows::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity;
                 use windows::Win32::UI::WindowsAndMessaging::WDA_EXCLUDEFROMCAPTURE;
@@ -135,7 +137,18 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
         }
     }
 
-    let _ = app.get_webview_window(&label).map(|w| w.show());
+    if let Some(w) = &shown {
+        // Position was applied at build; assert it again post-creation (some
+        // platform builds clamp or reset initial position for transparent
+        // frameless windows), then make visible + topmost.
+        let (x, y) = placement(&app, width);
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        let _ = w.show();
+        let _ = w.set_focus();
+        if let Ok(pos) = w.outer_position() {
+            println!("[overlay] shown at physical ({}, {}), size {}x{}", pos.x, pos.y, width, height);
+        }
+    }
     Ok(())
 }
 
@@ -207,11 +220,16 @@ fn placement(app: &AppHandle, width: f64) -> (f64, f64) {
     let monitor = app.primary_monitor().ok().flatten();
     match monitor {
         Some(m) => {
-            let size = m.size();
-            let pos = m.position();
-            let x = pos.x as f64 + size.width as f64 - width - MARGIN;
-            let y = pos.y as f64 + MARGIN;
-            (x, y)
+            let scale = m.scale_factor();
+            let size = m.size(); // PHYSICAL pixels
+            let pos = m.position(); // PHYSICAL pixels
+            // Tauri window geometry (position/inner_size) is LOGICAL — monitor
+            // metrics are PHYSICAL. Mixing them (the old code) pushes the
+            // overlay off-screen on any display scaling != 100%, which reads
+            // as "the overlay doesn't show up".
+            let x_logical = (pos.x as f64 + size.width as f64 - width * scale - MARGIN * scale) / scale;
+            let y_logical = (pos.y as f64 + MARGIN * scale) / scale;
+            (x_logical.max(0.0), y_logical.max(0.0))
         }
         None => (100.0, 100.0),
     }
