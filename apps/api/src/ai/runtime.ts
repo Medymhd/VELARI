@@ -213,12 +213,15 @@ export async function executeRouted(
 
   // Vision requests: constrain to providers with a multimodal default and
   // swap in the vision model — a text-only model just answers "no image
-  // support" and the request is wasted.
+  // support" and the request is wasted. Known-multimodal providers always
+  // outrank a custom compat endpoint (its models may be text-only).
   if (request.taskClass === "vision") {
     const defaults = visionDefaults();
-    const visionChain = chain
-      .filter((c) => c.providerId in defaults || c.providerId === "openai-compat")
-      .map((c) => (defaults[c.providerId] ? { ...c, model: defaults[c.providerId]! } : c));
+    const withDefaults = chain
+      .filter((c) => c.providerId in defaults)
+      .map((c) => ({ ...c, model: defaults[c.providerId]! }));
+    const compat = chain.filter((c) => c.providerId === "openai-compat");
+    const visionChain = withDefaults.length > 0 ? [...withDefaults, ...compat] : compat;
     if (visionChain.length > 0) chain = visionChain;
   }
 

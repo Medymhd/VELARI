@@ -318,12 +318,12 @@ export function createSttEngine(opts: {
     engines.push(new DeepgramStreamingSttEngine(opts.deepgramKey, { factory: opts.wsFactory }));
   }
   if (opts.mode !== "rest" || !opts.deepgramKey) {
-    // Sherpa first: TRUE streaming zipformer — handles hours-long sessions with
-    // native endpointing (Moonshine re-decodes the whole buffer and stalls on
-    // long sessions). Sherpa's watchdog releases the chain if it ever stalls.
-    // Moonshine second: chunked decoder, first-use model download, 10s init cap.
-    engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
+    // Moonshine first: PROVEN in-server (WASM, no native-thread conflicts),
+    // tail-window decode keeps it real-time for hours. Sherpa second: true
+    // streaming, but its native decoder stalls inside the API process
+    // (works standalone — KI-001 residue); watchdog releases the chain.
     engines.push(new MoonshineStreamingSttEngine());
+    engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
   }
   if (opts.deepgramKey) engines.push(new DeepgramSttEngine(opts.deepgramKey));
   if (opts.localWhisperAvailable || opts.localWhisperUrl) {
