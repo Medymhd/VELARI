@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import { stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar, type MasqueradeProfile, type StealthState } from "../lib/tauri";
@@ -34,6 +34,21 @@ const MODES: { id: string; label: string }[] = [
   { id: "seminar", label: "Seminar / talk" },
   { id: "support", label: "Support / call center" },
 ];
+
+const TranscriptRow = memo(function TranscriptRow({ t }: { t: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number | null; speaker?: string } }) {
+  const conf = t.confidence ?? 0;
+  const confClass = conf >= 0.8 ? "conf-high" : conf >= 0.5 ? "conf-med" : conf > 0 ? "conf-low" : "";
+  return (
+    <div className={`seg-enter ${confClass} hud-scanlines`} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10, position: "relative" }}>
+      <div style={{ fontSize: 13 }} className={t.isFinal ? "" : "char-appear"}>
+        {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
+        {t.text}
+      </div>
+      <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
+      {t.confidence != null && <div className={`confidence-meter ${confClass.replace("conf-", "")}`}><div style={{ width: `${Math.round(conf * 100)}%` }} /></div>}
+    </div>
+  );
+});
 
 function base64ToPcm(b64: string): Int16Array {
   const bin = atob(b64);
@@ -225,7 +240,12 @@ export default function LiveSession() {
       }
     }, 5_000);
     return () => clearInterval(t);
-  }, [nativeMic, nativeSystem, notify]);
+  }, [nativeMic, nativeSystem]);
+
+  // Clear large screenshot data when session changes to free memory
+  useEffect(() => {
+    return () => setShot(null);
+  }, [sessionId]);
 
   useEffect(() => {
     if (nativeAvailable) void listInputDevices().then(setMicDevices).catch(() => {});
@@ -259,7 +279,10 @@ export default function LiveSession() {
       },
     };
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(frame));
-    else pendingClientFinals.current.push(frame);
+    else {
+      if (pendingClientFinals.current.length >= 100) pendingClientFinals.current.shift();
+      pendingClientFinals.current.push(frame);
+    }
   }
   sendClientFinalRef.current = sendClientFinal;
 
@@ -399,9 +422,22 @@ export default function LiveSession() {
     try {
       lastNativeBatchAt.current[batch.channel] = Date.now();
       watchdogWarned.current[batch.channel] = false;
-      const pcm = base64ToPcm(batch.dataB64);
-      sendPcm(pcm, batch.channel);
-      relayRef.current?.send(new Uint8Array(pcm.buffer));
+      // Native batch is already 16kHz PCM base64 — forward without decode/re-encode
+      const frame = JSON.stringify({
+        type: "audio.chunk",
+        eventId: Math.random().toString(36).slice(2),
+        sequenceNo: Date.now(),
+        occurredAt: new Date().toISOString(),
+        payloadB64: batch.dataB64,
+        format: "pcm_s16le_16k",
+        channel: batch.channel,
+      });
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(frame);
+      // Relay needs raw PCM bytes
+      try {
+        const pcm = base64ToPcm(batch.dataB64);
+        relayRef.current?.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
+      } catch {}
     } catch (e) {
       console.warn("native batch forward failed", e);
     }
@@ -465,6 +501,7 @@ export default function LiveSession() {
 
   async function startCapture() {
     if (!sessionId || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (audioRef.current) stopCapture();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -637,7 +674,13 @@ export default function LiveSession() {
 
   // STT engine visibility: the transcript frames carry the producing engine's
   // source — surface it so "demo" vs real transcription is never a mystery.
-  const lastSource = transcript.slice().reverse().find((t) => t.source)?.source;
+  const badgeSource = (() => {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const s = transcript[i]?.source;
+      if (s) return s;
+    }
+    return undefined;
+  })();
 
   if (!sessionId) return <div className="card muted">Select or create a session from Home.</div>;
 
@@ -652,9 +695,9 @@ export default function LiveSession() {
             <span className="badge">{connected ? "realtime connected" : "offline"}</span>
             {relayActive && <span className="badge warn">direct relay</span>}
             {overlayOn && <span className="badge accent">overlay live</span>}
-            {lastSource && (
-              <span className={`badge ${lastSource === "simulated" ? "danger" : ""}`} title={`Engine: ${lastSource}`}>
-                STT: {lastSource === "simulated" ? "DEMO" : lastSource === "local_stt" ? "local" : lastSource === "cloud_stt" ? "cloud" : lastSource}
+            {badgeSource && (
+              <span className={`badge ${badgeSource === "simulated" ? "danger" : ""}`} title={`Engine: ${badgeSource}`}>
+                STT: {badgeSource === "simulated" ? "DEMO" : badgeSource === "local_stt" ? "local" : badgeSource === "cloud_stt" ? "cloud" : badgeSource}
               </span>
             )}
             {!consentConfirmed && <span className="badge warn">consent required</span>}
@@ -669,7 +712,7 @@ export default function LiveSession() {
 
         <Toggle checked={consentConfirmed} onChange={setConsent} label="I have consent to record and process this session." />
 
-        {(() => {
+        {useMemo(() => {
           const userCount = transcript.filter((t) => t.speaker === "user").length;
           const ivCount = transcript.filter((t) => t.speaker === "interviewer").length;
           const total = userCount + ivCount;
@@ -687,26 +730,13 @@ export default function LiveSession() {
               </div>
             </div>
           );
-        })()}
+        }, [transcript])}
 
         <div className="card stagger">
           <span className="kicker" style={{ marginBottom: 8, display: "block" }}>Transcript — finals are persisted, partials are ephemeral</span>
-          <div className="scroll grid" style={{ gap: 8 }}>
+          <div className="scroll grid" style={{ gap: 8, contain: "content" }}>
             {transcript.length === 0 && <span className="small muted">No transcript yet. Start the session and speak.</span>}
-            {transcript.slice(-80).map((t) => {
-              const conf = t.confidence ?? 0;
-              const confClass = conf >= 0.8 ? "conf-high" : conf >= 0.5 ? "conf-med" : conf > 0 ? "conf-low" : "";
-              return (
-                <div key={t.id} className={`seg-enter ${confClass} hud-scanlines`} style={{ opacity: t.isFinal ? 1 : 0.55, borderLeft: `2px solid ${t.isFinal ? "var(--accent)" : "var(--border)"}`, paddingLeft: 10, position: "relative" }}>
-                  <div style={{ fontSize: 13 }} className={t.isFinal ? "" : "char-appear"}>
-                    {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
-                    {t.text}
-                  </div>
-                  <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
-                  {t.confidence != null && <div className={`confidence-meter ${confClass.replace("conf-", "")}`}><div style={{ width: `${Math.round(conf * 100)}%` }} /></div>}
-                </div>
-              );
-            })}
+            {useMemo(() => transcript.slice(-80).map((t) => <TranscriptRow key={t.id} t={t} />), [transcript])}
           </div>
         </div>
       </div>
