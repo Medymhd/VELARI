@@ -79,10 +79,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let sessionMode = "general";
     /** Response length preference (rival length modes): short | medium | long. */
     let sessionLength: "short" | "medium" | "long" = "medium";
-    /** Phone-call mode: coach also fires on mic speech (interviewer arrives via
-     *  the user's mic on speakerphone/in-person calls — without this the coach
-     *  waits for loopback audio that never comes). */
-    let coachOnUserSpeech = false;
+    /** Whether the interviewer channel has produced any final this session.
+     *  Mic speech coaches only while it hasn't: speakerphone/in-person calls
+     *  deliver the interviewer through the mic (no loopback), so the mic IS
+     *  the conversation until loopback audio appears — then it's just the
+     *  user's own voice and coaching on it stops automatically. No toggle. */
+    let sawInterviewer = false;
     /** Profile Intelligence persona — coach answers cite real background. */
     let personaContext: string | undefined;
     /** Session prep materials: CV/JD/notes text for the coach prompt, and the
@@ -196,6 +198,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         }
       }
 
+      if (speaker === "interviewer") sawInterviewer = true;
+
       const sequenceNo = assembler.nextSequenceNo;
       const segmentId = randomUUID();
       const segment = {
@@ -242,8 +246,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
       // Instant prepared-answer recall (rival knowledge-packs parity): match
       // interviewer questions against the drilled Q&A bank — ~0ms, ahead of
-      // the LLM coach. One recall per question text.
-      if (speaker === "interviewer" && qaBank.length > 0) {
+      // the LLM coach. One recall per question text. Mic speech matches too
+      // while no interviewer audio exists (phone-mode sessions).
+      if ((speaker === "interviewer" || (speaker === "user" && !sawInterviewer)) && qaBank.length > 0) {
         const match = matchPreparedQa(text, qaBank);
         if (match && match.qa.id !== lastRecalledQaId) {
           lastRecalledQaId = match.qa.id;
@@ -304,9 +309,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
       // Rival semantic (Cluely/LockedIn parity): the coach responds to the
       // interviewer's speech (loopback). Channel-less (browser mic) finals
-      // count as interviewer. Phone-call mode opts mic speech in as well —
-      // speakerphone/in-person interviews deliver the interviewer via mic.
-      if (speaker !== "user" || coachOnUserSpeech) scheduleCoaching();
+      // count as interviewer. Until interviewer audio exists at all, mic
+      // speech drives coaching — the mic is the only conversation in a
+      // speakerphone/in-person session. Once loopback interviewer audio
+      // appears, mic speech stops coaching (it's the user's own voice).
+      if (speaker !== "user" || !sawInterviewer) scheduleCoaching();
     }
 
     /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
@@ -626,12 +633,6 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           sessionLength = frame.length as "short" | "medium" | "long";
           log.info("session length set", { length: sessionLength, sessionId: session!.id });
         }
-        return;
-      }
-
-      if (frame.type === "session.coach_user_speech") {
-        coachOnUserSpeech = frame.enabled;
-        log.info("coach user-speech mode set", { enabled: coachOnUserSpeech, sessionId: session!.id });
         return;
       }
 

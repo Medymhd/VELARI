@@ -271,12 +271,6 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
     /** Response length preference: short (1-2 sentences) | medium (default) | long. */
     length: z.enum(["short", "medium", "long"]),
   }),
-  z.object({
-    type: z.literal("session.coach_user_speech"),
-    eventId: z.string(),
-    /** Phone-call mode: also coach on mic speech (interviewer arrives via mic). */
-    enabled: z.boolean(),
-  }),
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;
 

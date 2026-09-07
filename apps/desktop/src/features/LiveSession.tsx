@@ -244,15 +244,6 @@ export default function LiveSession() {
     }
   }, [length, connected]);
 
-  // Phone-call mode — coach also fires on mic speech when the interviewer's
-  // voice reaches the user's mic (speakerphone / in-person interviews).
-  const [coachOnUser, setCoachOnUser] = useState(false);
-  useEffect(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "session.coach_user_speech", eventId: Math.random().toString(36).slice(2), enabled: coachOnUser }));
-    }
-  }, [coachOnUser, connected]);
-
   // Audio watchdog — reference "0 chunks in 12s" banner parity: a capture toggle
   // that is ON but receives no audio for 12s means a dead/busy device.
   const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
@@ -865,14 +856,6 @@ export default function LiveSession() {
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="kicker">Coaching</span>
             <span className="row" style={{ gap: 6 }}>
-              <label className="row small" style={{ gap: 4, cursor: "pointer" }} title="Phone-call mode — coach also listens to your mic. ON when the interviewer's voice reaches your mic (speakerphone / in-person); OFF for headphones + loopback.">
-                <input
-                  type="checkbox"
-                  checked={coachOnUser}
-                  onChange={(e) => setCoachOnUser(e.target.checked)}
-                />
-                Coach on my voice
-              </label>
               <select
                 value={length}
                 onChange={(e) => setLength(e.target.value as "short" | "medium" | "long")}
