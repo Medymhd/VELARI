@@ -62,13 +62,19 @@ export class OpenAICompatibleProvider extends AIProvider {
     }
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), request.maxLatencyMs ?? 20_000);
-    // 2048: reasoning models (gpt-oss) burn completion tokens on analysis
-    // before the JSON payload — 300-class budgets trip "max completion tokens
-    // reached" and the strict schema never validates.
+    // Superseded live calls (interruption preemption) cancel the in-flight
+    // HTTP request — frees the provider slot instead of letting it drain.
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    // 2048 default: reasoning models (gpt-oss) burn completion tokens on
+    // analysis before the JSON payload — 300-class budgets trip "max
+    // completion tokens reached" and the strict schema never validates.
+    // Task-scoped budgets (maxTokens) shrink completion time for tight
+    // contracts like the live coach.
     const body = {
       model: this.modelFor(request),
       messages: request.messages ?? [],
-      max_tokens: 2048,
+      max_tokens: request.maxTokens ?? 2048,
       ...(request.responseSchema
         ? {
             response_format: {
@@ -139,6 +145,7 @@ export class OpenAICompatibleProvider extends AIProvider {
       return err(pe);
     } finally {
       clearTimeout(deadline);
+      request.signal?.removeEventListener("abort", onExternalAbort);
     }
   }
 }
@@ -173,6 +180,8 @@ export class AnthropicProvider extends AIProvider {
     const messages = request.messages?.filter((m) => m.role !== "system") ?? [];
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), request.maxLatencyMs ?? 20_000);
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -205,6 +214,7 @@ export class AnthropicProvider extends AIProvider {
       return err(pe);
     } finally {
       clearTimeout(deadline);
+      request.signal?.removeEventListener("abort", onExternalAbort);
     }
   }
 }

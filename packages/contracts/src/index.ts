@@ -93,7 +93,12 @@ export const ModelRequest = z.object({
   privacyMode: PrivacyMode,
   stream: z.boolean().optional(),
 });
-export type ModelRequest = z.infer<typeof ModelRequest>;
+/** Runtime-only extensions (never serialized): cancellation for superseded
+ *  live-coach calls, and a task-scoped completion budget. */
+export type ModelRequest = z.infer<typeof ModelRequest> & {
+  signal?: AbortSignal;
+  maxTokens?: number;
+};
 
 export const ModelResponse = z.object({
   text: z.string(),

@@ -24,7 +24,7 @@ import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
 const log = logger({ svc: "realtime" });
 const breakers = new CircuitBreakerRegistry();
 
-/** GET /v1/realtime â€” WebSocket upgrade. Client auth via ?token=&sessionId= */
+/** GET /v1/realtime Ã¢â‚¬â€ WebSocket upgrade. Client auth via ?token=&sessionId= */
 export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
   // fastify-websocket registers `app.get` with { websocket: true }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,24 +75,24 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
-    /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
+    /** Mode persona (rival ModesManager parity) â€” client-switchable mid-session. */
     let sessionMode = "general";
     /** Response length preference (rival length modes): short | medium | long. */
     let sessionLength: "short" | "medium" | "long" = "medium";
     /** Whether the interviewer channel has produced any final this session.
      *  Mic speech coaches only while it hasn't: speakerphone/in-person calls
      *  deliver the interviewer through the mic (no loopback), so the mic IS
-     *  the conversation until loopback audio appears — then it's just the
+     *  the conversation until loopback audio appears â€” then it's just the
      *  user's own voice and coaching on it stops automatically. No toggle. */
     let sawInterviewer = false;
-    /** Profile Intelligence persona — coach answers cite real background. */
+    /** Profile Intelligence persona â€” coach answers cite real background. */
     let personaContext: string | undefined;
     /** Session prep materials: CV/JD/notes text for the coach prompt, and the
      *  drilled Q&A bank for instant recall (no LLM latency). Reloadable
      *  mid-session via the session.reload_contexts frame. */
     let prepContext: string | undefined;
     let qaBank: { id: string; title: string; content: string }[] = [];
-    /** Last Q&A the recall surfaced — one prepared answer per question. */
+    /** Last Q&A the recall surfaced â€” one prepared answer per question. */
     let lastRecalledQaId = "";
 
     async function loadPrepMaterials(): Promise<void> {
@@ -112,7 +112,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.info("session prep loaded", { contexts: contexts.length, qaBank: qaBank.length });
     }
 
-    // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
+    // Dual-channel STT: native capture tags chunks mic|system â†’ user|interviewer
     // attribution. Browser (channel-less) chunks share the default engine.
     const sttOpts: {
       deepgramKey?: string;
@@ -179,9 +179,24 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       status: session.status,
     });
 
-    async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer"): Promise<void> {
+    /** Per-utterance segment ids: partials and their final share one id so the
+     *  client renders ONE evolving line per speech turn that commits in place
+     *  (dictation UX). The turn advances when a final is committed — the next
+     *  partial starts a fresh line. */
+    const utteranceTurn: Record<string, number> = {};
+    const utteranceId = (channel: string | undefined): string => {
+      const ch = channel ?? "default";
+      utteranceTurn[ch] ??= 0;
+      return `u-${ch}-${utteranceTurn[ch]}`;
+    };
+    const advanceTurn = (channel: string | undefined): void => {
+      const ch = channel ?? "default";
+      utteranceTurn[ch] = (utteranceTurn[ch] ?? 0) + 1;
+    };
+
+    async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer", segmentId?: string): Promise<void> {
       // Echo dedup (rival `ECHO_WINDOW` parity): the mic hears the speaker's
-      // output acoustically — if a user final near-identically repeats the
+      // output acoustically â€” if a user final near-identically repeats the
       // last interviewer final within 8s, it's echo, drop it.
       if (speaker === "user" && text.length > 8) {
         const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
@@ -201,9 +216,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (speaker === "interviewer") sawInterviewer = true;
 
       const sequenceNo = assembler.nextSequenceNo;
-      const segmentId = randomUUID();
+      const finalSegmentId = segmentId ?? randomUUID();
       const segment = {
-        id: segmentId,
+        id: finalSegmentId,
         sessionId: session!.id,
         sequenceNo,
         startedAtMs,
@@ -216,11 +231,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         createdAt: new Date().toISOString(),
       };
 
-      // Persist (speaker rides along — attribution must survive reload/Review)
+      // Persist (speaker rides along â€” attribution must survive reload/Review)
   try {
     await db.transcriptSegment.create({
       data: {
-        id: segmentId,
+        id: finalSegmentId,
         sessionId: session!.id,
         sequenceNo,
         startedAtMs,
@@ -237,15 +252,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
   }
 
       try {
-        ingestSegment(assembler, segment as never, `srv:${segmentId}`);
+        ingestSegment(assembler, segment as never, `srv:${finalSegmentId}`);
       } catch {
-        /* assembler ordering edge â€” non-fatal */
+        /* assembler ordering edge Ã¢â‚¬â€ non-fatal */
       }
 
-      lastFinalIds = [...lastFinalIds.slice(-4), segmentId];
+      lastFinalIds = [...lastFinalIds.slice(-4), finalSegmentId];
 
       // Instant prepared-answer recall (rival knowledge-packs parity): match
-      // interviewer questions against the drilled Q&A bank — ~0ms, ahead of
+      // interviewer questions against the drilled Q&A bank â€” ~0ms, ahead of
       // the LLM coach. One recall per question text. Mic speech matches too
       // while no interviewer audio exists (phone-mode sessions).
       if ((speaker === "interviewer" || (speaker === "user" && !sawInterviewer)) && qaBank.length > 0) {
@@ -265,7 +280,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
                 id: insightId,
                 sessionId: session!.id,
                 type: "prepared_answer",
-                sourceSegmentIds: [segmentId],
+                sourceSegmentIds: [finalSegmentId],
                 contentJson: contentJson as any,
                 modelTraceId: traceId,
               },
@@ -283,7 +298,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               id: insightId,
               sessionId: session!.id,
               type: "prepared_answer",
-              sourceSegmentIds: [segmentId],
+              sourceSegmentIds: [finalSegmentId],
               contentJson: contentJson as any,
               modelTraceId: traceId,
               createdAt: new Date().toISOString(),
@@ -302,7 +317,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       });
 
       finalsSinceSummary += 1;
-      if (finalsSinceSummary >= 8) {
+      // Summary runs only when the coach is idle â€” on rate-limited tiers the
+      // two calls would queue behind each other and delay the live answer.
+      // The counter persists, so the summary fires on a later quiet final.
+      if (finalsSinceSummary >= 8 && !coachBusy) {
         finalsSinceSummary = 0;
         void summarizeChunk();
       }
@@ -310,13 +328,13 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // Rival semantic (Cluely/LockedIn parity): the coach responds to the
       // interviewer's speech (loopback). Channel-less (browser mic) finals
       // count as interviewer. Until interviewer audio exists at all, mic
-      // speech drives coaching — the mic is the only conversation in a
+      // speech drives coaching â€” the mic is the only conversation in a
       // speakerphone/in-person session. Once loopback interviewer audio
       // appears, mic speech stops coaching (it's the user's own voice).
       if (speaker !== "user" || !sawInterviewer) scheduleCoaching();
     }
 
-    /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
+    /** Rolling ~30s chunk summary feeding the coach's context window (Â§7). */
     async function summarizeChunk(): Promise<void> {
       if (!workspaceCfg) return;
       const chunk = assembler.finals.slice(-8).map((s: { text: string }) => s.text).join("\n");
@@ -389,54 +407,98 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
     }
 
-    function scheduleCoaching(): void {
-      if (coachTimer) clearTimeout(coachTimer);
-      coachTimer = setTimeout(async () => {
-        if (!workspaceCfg) return;
-        const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
-        // Style adaptation: learn the user's voice from their own transcript
-        // lines so the coach output reads naturally in their register.
-        const userLines = assembler.finals.slice(-12)
-          .filter((s: { speaker?: string; text: string }) => s.speaker === "user" || !s.speaker)
-          .map((s: { text: string }) => s.text);
-        const styleProfile: StyleProfile | undefined = userLines.length >= 3
-          ? captureStyleProfile(userLines)
-          : undefined;
-        const messages = buildCoachMessages({
-          verbatimTranscript: verbatim.slice(-4000) || "No transcript yet.",
-          rollingSummary,
-          mode: sessionMode,
-          roleDescription: personaContext,
-          prepContext,
-          length: sessionLength,
-        });
-        if (styleProfile) {
-          messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
-        }
+    /** Single-flight coach control: a new trigger ABORTS any in-flight call
+     *  (interruption preemption â€” the newest speech is the most urgent
+     *  context) and the epoch discards results that finish after being
+     *  superseded. This is what keeps provider slots free: no queued,
+     *  stale, or duplicate coach calls piling up on rate-limited tiers. */
+    let coachAbort: AbortController | null = null;
+    let coachEpoch = 0;
+    let coachBusy = false;
 
-        try {
-          const outcome = await executeRouted(
-            { db, breakers },
-            workspaceCfg,
-            session!.workspaceId,
-            session!.id,
-            {
-              taskClass: "live_coach",
-              privacyMode: workspaceCfg.privacyMode,
-              messages,
-              responseSchema: {
-                type: "object",
-                properties: {
-                  detected_question: { type: "string" },
-                  suggested_outline: { type: "array", items: { type: "string" } },
-                  talking_points: { type: "array", items: { type: "string" } },
-                  confidence: { type: "number" },
-                  requires_user_review: { type: "boolean" },
-                },
-                required: ["detected_question", "suggested_outline", "talking_points", "confidence", "requires_user_review"],
+    /** Confirmation window: coaching fires only after the speaker has held
+     *  still for this long. Every new final from the same conversation resets
+     *  it, so a short mid-sentence pause never triggers a premature (wrong)
+     *  answer. Wait-for-completion beats raw speed. */
+    const COACH_CONFIRM_MS = 900;
+
+    function scheduleCoaching(): void {
+      // Preempt immediately: whatever the coach is crafting is already stale â€”
+      // the conversation moved on.
+      coachAbort?.abort();
+      coachAbort = null;
+      if (coachTimer) clearTimeout(coachTimer);
+      coachTimer = setTimeout(() => {
+        void runCoach();
+      }, COACH_CONFIRM_MS);
+    }
+
+    async function runCoach(): Promise<void> {
+      if (!workspaceCfg) return;
+      coachAbort?.abort();
+      const abort = new AbortController();
+      coachAbort = abort;
+      const epoch = ++coachEpoch;
+      coachBusy = true;
+      const startedAt = Date.now();
+      const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
+      // Style adaptation: learn the user's voice from their own transcript
+      // lines so the coach output reads naturally in their register.
+      const userLines = assembler.finals.slice(-12)
+        .filter((s: { speaker?: string; text: string }) => s.speaker === "user" || !s.speaker)
+        .map((s: { text: string }) => s.text);
+      const styleProfile: StyleProfile | undefined = userLines.length >= 3
+        ? captureStyleProfile(userLines)
+        : undefined;
+      const messages = buildCoachMessages({
+        verbatimTranscript: verbatim.slice(-4000) || "No transcript yet.",
+        rollingSummary,
+        mode: sessionMode,
+        roleDescription: personaContext,
+        prepContext,
+        length: sessionLength,
+      });
+      if (styleProfile) {
+        messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
+      }
+      // ASR confidence of the triggering speech — rides on the insight so the
+      // UI can flag answers built on a misheard question ("low confidence —
+      // verify" chip) instead of presenting a wrong answer as certain.
+      const lastIvFinal = [...assembler.finals].reverse().find((s: { speaker?: string }) => s.speaker !== "user");
+      const sttConfidence = typeof lastIvFinal?.confidence === "number" ? lastIvFinal.confidence : undefined;
+
+      try {
+        const outcome = await executeRouted(
+          { db, breakers },
+          workspaceCfg,
+          session!.workspaceId,
+          session!.id,
+          {
+            taskClass: "live_coach",
+            privacyMode: workspaceCfg.privacyMode,
+            messages,
+            maxTokens: 512,
+            signal: abort.signal,
+            responseSchema: {
+              type: "object",
+              properties: {
+                detected_question: { type: "string" },
+                suggested_outline: { type: "array", items: { type: "string" } },
+                talking_points: { type: "array", items: { type: "string" } },
+                confidence: { type: "number" },
+                requires_user_review: { type: "boolean" },
               },
-            } as never,
-          );
+              required: ["detected_question", "suggested_outline", "talking_points", "confidence", "requires_user_review"],
+            },
+          } as never,
+        );
+        // Superseded mid-flight (interruption or newer final): the result is
+        // stale â€” discard silently, no UI noise, no persistence.
+        if (epoch !== coachEpoch) {
+          log.info("coach result discarded (superseded)", { sessionId: session!.id, waitedMs: Date.now() - startedAt });
+          return;
+        }
+        log.info("coach latency", { sessionId: session!.id, ms: Date.now() - startedAt });
 
           let contentJson: Record<string, unknown>;
           if (outcome.ok && outcome.structured) {
@@ -461,15 +523,25 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           // JSON-envelope leakage / AI tells, compress to speakable lines.
           const sanitized = sanitizeCoachFramework(contentJson as unknown as CoachFramework);
           if (!sanitized) {
-            log.info("coach suggestion dropped: nothing speakable after sanitize");
+            log.info("coach suggestion dropped: nothing speakable after sanitize â€” offline scaffold shown");
+            emitOfflineScaffold(verbatim);
             return;
           }
           contentJson = sanitized as unknown as Record<string, unknown>;
+          if (sttConfidence !== undefined) contentJson.stt_confidence = sttConfidence;
 
           // Auto-answer judge: filter weak/repetitive output before UI + persistence.
           const verdict = judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
           if (!verdict.accept) {
-            log.info("coach suggestion filtered", { reason: verdict.reason });
+            // Duplicates are correct suppression (same question already answered);
+            // everything else still shows the offline scaffold so the panel is
+            // never silently empty.
+            if (verdict.reason === "duplicate_question") {
+              log.info("coach suggestion filtered", { reason: verdict.reason });
+            } else {
+              log.info("coach suggestion filtered â€” offline scaffold shown", { reason: verdict.reason });
+              emitOfflineScaffold(verbatim);
+            }
             return;
           }
 
@@ -507,7 +579,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           });
 
           // Auto-answer pass (reference SimpleAutoAnswer parity): strong question
-          // with high confidence → draft the exact spoken words as its own
+          // with high confidence â†’ draft the exact spoken words as its own
           // insight. Fire-and-forget; failure never affects the coach path.
           const q = String(contentJson.detected_question ?? "").trim();
           const conf = Number(contentJson.confidence ?? 0);
@@ -515,6 +587,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             void draftAutoAnswer(q, verbatim.slice(-2000));
           }
         } catch (e) {
+          if (abort.signal.aborted) return; // superseded â€” silent by design
           log.warn("coaching pipeline failed", { error: String(e) });
           emit({
             type: "pipeline.warning",
@@ -524,11 +597,55 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             code: "coach_failed",
             message: String(e),
           });
+        } finally {
+          coachBusy = false;
+          if (coachAbort === abort) coachAbort = null;
         }
-      }, 400);
     }
 
-    /** Question dedup for auto-answer — one draft per question text. */
+    /** Always-answer fallback: when the LLM output is unusable, the user still
+     *  gets a structural scaffold for the last heard question instead of a
+     *  silently empty panel. Marked offline so the UI styles it honestly. */
+    function emitOfflineScaffold(verbatim: string): void {
+      const lastLine = verbatim.split("\n").filter(Boolean).at(-1) ?? "";
+      const insightId = randomUUID();
+      const contentJson = {
+        detected_question: lastLine.slice(-300) || "Question still formingâ€¦",
+        suggested_outline: ["Direct answer first", "One concrete proof point", "Close with the outcome"],
+        talking_points: ["Name the core answer in one sentence", "Back it with a specific project result"],
+        confidence: 0.3,
+        requires_user_review: true,
+        offline: true,
+      };
+      void db.sessionInsight.create({
+        data: {
+          id: insightId,
+          sessionId: session!.id,
+          type: "suggested_answer",
+          sourceSegmentIds: lastFinalIds.slice(-3),
+          contentJson: contentJson as any,
+          modelTraceId: traceId,
+        },
+      }).catch(() => {});
+      emit({
+        type: "coach.suggestion",
+        eventId: randomUUID(),
+        sequenceNo: serverSeq++,
+        occurredAt: new Date().toISOString(),
+        sessionId: session!.id,
+        insight: {
+          id: insightId,
+          sessionId: session!.id,
+          type: "suggested_answer",
+          sourceSegmentIds: lastFinalIds.slice(-3),
+          contentJson: contentJson as any,
+          modelTraceId: traceId,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    /** Question dedup for auto-answer â€” one draft per question text. */
     let lastAnsweredQuestion = "";
 
     async function draftAutoAnswer(question: string, transcriptTail: string): Promise<void> {
@@ -647,7 +764,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const engine = engineFor(frame.channel);
         const speaker = frame.channel === "system" ? "interviewer" : frame.channel === "mic" ? "user" : undefined;
         engine.feed(pcm, nowMs, (result) => {
-          // Defer socket writes out of the engine's synchronous decode loop —
+          // Defer socket writes out of the engine's synchronous decode loop â€”
           // sync sends from inside a native (napi) callback stack corrupt the
           // recognizer's decode state.
           queueMicrotask(() => {
@@ -659,7 +776,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
                 occurredAt: new Date().toISOString(),
                 sessionId: session!.id,
                 segment: {
-                  id: randomUUID(),
+                  // Stable per-utterance id: every partial of the same speech
+                  // turn shares it, so the client UPDATES one evolving line
+                  // (dictation UX) instead of appending a new row per revision.
+                  id: utteranceId(frame.channel),
                   sessionId: session!.id,
                   sequenceNo: assembler.nextSequenceNo,
                   startedAtMs: nowMs,
@@ -672,7 +792,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
                 },
               });
             } else {
-              void handleFinal(result.text, result.confidence, result.startedAtMs, result.endedAtMs, engine.source, speaker);
+              // The final commits the partial row in place, then the turn
+              // advances so the next utterance starts a fresh line.
+              void handleFinal(result.text, result.confidence, result.startedAtMs, result.endedAtMs, engine.source, speaker, utteranceId(frame.channel));
+              advanceTurn(frame.channel);
             }
           });
         });
@@ -692,7 +815,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // when the client stops sending (partial-only sessions otherwise end
       // with zero persisted segments).
       for (const [channel, engine] of sttEngines) {
-        // Close AFTER flush completes — async engines (Moonshine) decode the
+        // Close AFTER flush completes â€” async engines (Moonshine) decode the
         // trailing utterance during flush; closing first kills their pipeline
         // and the final is lost.
         let closed = false;
@@ -706,7 +829,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             try {
               if (r.isFinal && r.text.trim()) {
                 const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
-                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker);
+                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
                 log.info("flush final on disconnect", { sessionId: session!.id, channel, chars: r.text.length });
               } else {
                 log.info("flush on disconnect produced no text", { sessionId: session!.id, channel });
