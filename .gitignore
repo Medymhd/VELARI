@@ -7,12 +7,12 @@ target/
 *.tsbuildinfo
 .turbo/
 
-# Secrets & local config Ã¢â‚¬â€ never commit
+# Secrets & local config ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never commit
 .env
 .env.local
 *.local
 
-# Signing keys (private material Ã¢â‚¬â€ back up outside the repo)
+# Signing keys (private material ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â back up outside the repo)
 apps/desktop/keys/updater.key
 
 # Native model downloads & generated corpus
@@ -42,5 +42,8 @@ coverage/
 Thumbs.db
 .DS_Store
 
-# Personal prep samples (CV/JD/Q&A docs) � never public
+# Personal prep samples (CV/JD/Q&A docs) — never public
 docs/samples/
+
+# Reference repos (audit-only clones, never tracked)
+reference/
