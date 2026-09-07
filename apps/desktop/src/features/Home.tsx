@@ -6,7 +6,7 @@ import { EmptyState, MotionCard, PageHeader, Skeleton, Sparkline, StatusPill } f
 type SessionRow = { id: string; title: string | null; status: string };
 
 export default function Home() {
-  const { workspaceId, setSession, setScreen, clearAuth } = useStore();
+  const { workspaceId, setSession, setScreen, clearAuth, resetLive } = useStore();
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [title, setTitle] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -37,6 +37,7 @@ export default function Home() {
     try {
       const s = await api.createSession({ workspaceId, title: title || null, consentStatus: "confirmed" });
       setTitle("");
+      resetLive(); // a new session starts clean — never inherits the previous one's transcript/insights
       setSession(s.id, "draft");
       setScreen("live");
     } catch (ex) {
@@ -133,8 +134,9 @@ export default function Home() {
               className="card hoverable row"
               style={{ justifyContent: "space-between" }}
               onClick={() => {
+                resetLive(); // clear the previous view; LiveSession hydrates from the API
                 setSession(s.id, s.status);
-                setScreen(s.status === "completed" ? "review" : "live");
+                setScreen("live");
               }}
             >
               <div className="col" style={{ gap: 2 }}>

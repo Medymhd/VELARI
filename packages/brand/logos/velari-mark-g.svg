@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Velari Concept G — "Velocity": forward-leaning V with motion streaks -->
+  <defs>
+    <linearGradient id="vg1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5f6dff"/>
+      <stop offset="100%" stop-color="#9d5cff"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="17" width="11" height="4.5" rx="2.25" fill="#6c7bff" opacity="0.55"/>
+  <rect x="4" y="26" width="7" height="4" rx="2" fill="#6c7bff" opacity="0.35"/>
+  <g transform="skewX(-10) translate(7 0)">
+    <path d="M8 10 L21 10 L32 42 L43 10 L56 10 L37.5 54 L26.5 54 Z" fill="url(#vg1)"/>
+  </g>
+</svg>

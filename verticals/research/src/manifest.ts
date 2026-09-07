@@ -1,14 +1,15 @@
 /**
  * Research vertical — perplexity-type chat (valeriworkvertical.md §5 Guide mode, Knowledge Worker).
  * Perplexity-style: new chat, follow-up questions, history tomorrow, pgvector recall.
- * Brand-neutral: id "research" (not "velari-research"), overlay none — immersive desktop to interact.
+ * User-facing name: "Copilot". Brand-neutral id stays "research" (no migrations,
+ * stable routes/screens); overlay none — immersive desktop to interact.
  */
 import type { VerticalManifest } from "@app/contracts";
 
 export const researchManifest: VerticalManifest = {
   id: "research",
   version: "0.1.0",
-  displayName: "Research",
+  displayName: "Copilot",
   requiredCapabilities: ["chat", "structured_output", "streaming", "embeddings", "vision"],
   requiredPermissions: [],
   routes: [

@@ -101,7 +101,7 @@ function NavItem(props: { label: string; icon: () => ReactNode; active: boolean;
 }
 
 export default function App() {
-  const { screen, setScreen, setStealth, clearAuth, token, notices, dismiss } = useStore();
+  const { screen, setScreen, setStealth, clearAuth, setToken, token, notices, dismiss } = useStore();
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
 
@@ -145,11 +145,19 @@ export default function App() {
   useEffect(() => {
     stealthGetState().then(setStealth).catch(() => {});
     // A stale token (rotated JWT secret, expired) must land on onboarding, not Home.
+    // A transient network failure (API still booting, Postgres not up) must NOT
+    // wipe a possibly-valid session — that forced re-onboarding on every restart
+    // whenever the desktop shell won the startup race against the API.
     if (token) {
       api.me().then((me) => {
+        if (me.valid && me.token) setToken(me.token); // sliding renewal (30d)
         if (!me.valid) clearAuth();
         setReady(true);
-      }).catch(() => { clearAuth(); setReady(true); });
+      }).catch(() => {
+        // API unreachable — keep the stored session and proceed; the token is
+        // re-verified on the first real API call, and a 401 there clears auth.
+        setReady(true);
+      });
     } else {
       setReady(true);
     }

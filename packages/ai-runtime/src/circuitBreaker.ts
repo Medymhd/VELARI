@@ -27,6 +27,8 @@ interface Entry {
   openedAt: number;
   successfulProbes: number;
   penalty: number;
+  /** Until this timestamp the candidate scores as excluded (429 Retry-After). */
+  rateLimitedUntil: number;
 }
 
 export class CircuitBreakerRegistry {
@@ -39,7 +41,7 @@ export class CircuitBreakerRegistry {
   private entry(k: string): Entry {
     let e = this.entries.get(k);
     if (!e) {
-      e = { failures: [], state: "closed", openedAt: 0, successfulProbes: 0, penalty: 0 };
+      e = { failures: [], state: "closed", openedAt: 0, successfulProbes: 0, penalty: 0, rateLimitedUntil: 0 };
       this.entries.set(k, e);
     }
     return e;
@@ -95,7 +97,17 @@ export class CircuitBreakerRegistry {
     }
   }
 
+  /** 429 with a Retry-After: penalize for exactly that window so the router
+   *  stops re-picking a candidate the provider told us to back off from. */
+  recordRateLimit(workspaceId: string, providerId: string, model: string, taskClass: string, retryAfterMs: number): void {
+    const e = this.entry(this.key(workspaceId, providerId, model, taskClass));
+    e.rateLimitedUntil = Date.now() + Math.max(retryAfterMs, 1000);
+  }
+
   penaltyFor(workspaceId: string, providerId: string, model: string, taskClass: string): number {
-    return this.entry(this.key(workspaceId, providerId, model, taskClass)).penalty;
+    const e = this.entry(this.key(workspaceId, providerId, model, taskClass));
+    // 1.0 on top of the score range (~0..1) effectively excludes the candidate
+    // while the provider's own Retry-After window is active.
+    return e.penalty + (Date.now() < e.rateLimitedUntil ? 1 : 0);
   }
 }

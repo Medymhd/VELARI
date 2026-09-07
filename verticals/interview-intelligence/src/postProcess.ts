@@ -41,7 +41,17 @@ export function stripLeakage(text: string): string {
     }
   }
   for (const [re, rep] of AI_TELLS) t = t.replace(re, rep);
-  return t.replace(/\s{2,}/g, " ").trim();
+  // Punctuation = breathing, not typography: a comma is a short pause inside
+  // the sentence, a period ends the thought. Split chained run-ons so each
+  // line reads the way it should be spoken.
+  t = t
+    .replace(/\s*,\s*(?:and then|and also|but then)\s+/gi, ". ")
+    .replace(/([.!?])\s+([a-z])/g, (_, p: string, c: string) => `${p} ${c.toUpperCase()}`)
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  // End the thought with a period when punctuation is missing entirely.
+  if (t.length > 0 && !/[.!?]$/.test(t)) t += ".";
+  return t;
 }
 
 /** Split a raw line into sentence-ish speakable chunks (max 3 per point). */

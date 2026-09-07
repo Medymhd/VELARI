@@ -213,6 +213,16 @@ pub async fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), Str
     Ok(())
 }
 
+/// Broadcast an event from Rust's emitter. JS-to-JS cross-webview `emit()` is
+/// the least reliable path in the event chain (main-window → overlay delivery
+/// silently failed in the field); routing through the same Rust emitter that
+/// powers `overlay://visibility` (which provably works) removes that class of
+/// failure entirely.
+#[tauri::command]
+pub async fn overlay_emit(app: AppHandle, event: String, payload: serde_json::Value) -> Result<(), String> {
+    app.emit(&event, payload).map_err(|e| e.to_string())
+}
+
 /// Authoritative overlay toggle: checks REAL window visibility, not JS state.
 /// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
 /// the previous JS-side toggle died whenever LiveSession was unmounted.

@@ -1,0 +1,220 @@
+{
+  "startedAt": "2026-09-07T15:52:59.004Z",
+  "rounds": 1,
+  "endpoints": {
+    "groq": {
+      "model": "qwen/qwen3.8-27b",
+      "jsonValidity": 0.9166666666666666,
+      "avgTotalMs": 1028,
+      "avgTtftMs": 544,
+      "first3AvgMs": 1438,
+      "last3AvgMs": 941,
+      "driftMs": -497,
+      "perQuestion": [
+        {
+          "round": 1,
+          "questionNo": 1,
+          "question": "Tell me about yourself.",
+          "ttftMs": 1349,
+          "totalMs": 1784,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 2,
+          "question": "Tell me about your experience as an AI Training Specialist.",
+          "ttftMs": 533,
+          "totalMs": 1192,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 3,
+          "question": "What is LLM evaluation?",
+          "ttftMs": 367,
+          "totalMs": 1338,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 4,
+          "question": "How would you evaluate two AI responses?",
+          "ttftMs": 251,
+          "totalMs": 537,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 5,
+          "question": "What is a hallucination?",
+          "ttftMs": 871,
+          "totalMs": 1351,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 6,
+          "question": "What is prompt engineering?",
+          "ttftMs": 392,
+          "totalMs": 857,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 7,
+          "question": "What makes good AI training data?",
+          "ttftMs": 279,
+          "totalMs": 675,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 8,
+          "question": "How would you evaluate an AI response using a rubric?",
+          "ttftMs": 377,
+          "totalMs": 753,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 9,
+          "question": "Suppose an AI generates Python code that works but contains a security vulnerabi",
+          "ttftMs": 312,
+          "totalMs": 715,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 10,
+          "question": "What if an AI answer is technically correct but doesn't follow the instructions?",
+          "ttftMs": 383,
+          "totalMs": 754,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 11,
+          "question": "What would you do if an AI response contains bias?",
+          "ttftMs": 872,
+          "totalMs": 1355,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 12,
+          "question": "Which response is better and why? Answer A gives specific libraries and meets th",
+          "ttftMs": 917,
+          "totalMs": 1227,
+          "jsonOk": false
+        }
+      ]
+    },
+    "bai": {
+      "model": "qwen3.8-flash",
+      "jsonValidity": 0.8333333333333334,
+      "avgTotalMs": 10436,
+      "avgTtftMs": 8830,
+      "first3AvgMs": 13279,
+      "last3AvgMs": 10276,
+      "driftMs": -3003,
+      "perQuestion": [
+        {
+          "round": 1,
+          "questionNo": 1,
+          "question": "Tell me about yourself.",
+          "ttftMs": -1,
+          "totalMs": -1,
+          "jsonOk": false
+        },
+        {
+          "round": 1,
+          "questionNo": 2,
+          "question": "Tell me about your experience as an AI Training Specialist.",
+          "ttftMs": 13293,
+          "totalMs": 15156,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 3,
+          "question": "What is LLM evaluation?",
+          "ttftMs": 5695,
+          "totalMs": 7730,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 4,
+          "question": "How would you evaluate two AI responses?",
+          "ttftMs": 15361,
+          "totalMs": 16950,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 5,
+          "question": "What is a hallucination?",
+          "ttftMs": 5869,
+          "totalMs": 7454,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 6,
+          "question": "What is prompt engineering?",
+          "ttftMs": 8619,
+          "totalMs": 10380,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 7,
+          "question": "What makes good AI training data?",
+          "ttftMs": 7943,
+          "totalMs": 9131,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 8,
+          "question": "How would you evaluate an AI response using a rubric?",
+          "ttftMs": 5233,
+          "totalMs": 6727,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 9,
+          "question": "Suppose an AI generates Python code that works but contains a security vulnerabi",
+          "ttftMs": -1,
+          "totalMs": -1,
+          "jsonOk": false
+        },
+        {
+          "round": 1,
+          "questionNo": 10,
+          "question": "What if an AI answer is technically correct but doesn't follow the instructions?",
+          "ttftMs": 9850,
+          "totalMs": 11134,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 11,
+          "question": "What would you do if an AI response contains bias?",
+          "ttftMs": 9792,
+          "totalMs": 11151,
+          "jsonOk": true
+        },
+        {
+          "round": 1,
+          "questionNo": 12,
+          "question": "Which response is better and why? Answer A gives specific libraries and meets th",
+          "ttftMs": 6649,
+          "totalMs": 8542,
+          "jsonOk": true
+        }
+      ]
+    }
+  }
+}

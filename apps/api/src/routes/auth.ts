@@ -52,6 +52,8 @@ export function authRoutes(app: FastifyInstance, db: PrismaClient): void {
     const token = (req.query as { token?: string }).token;
     const user = token ? verifyToken(token) : null;
     if (!user) return reply.status(401).send({ valid: false });
-    return reply.send({ valid: true, userId: (user as AuthUser).userId });
+    // Sliding session: every successful verify re-issues a fresh 30d token so
+    // regular users never hit expiry mid-work.
+    return reply.send({ valid: true, userId: (user as AuthUser).userId, token: issueToken((user as AuthUser).userId) });
   });
 }

@@ -93,7 +93,15 @@ export const ModelRequest = z.object({
   privacyMode: PrivacyMode,
   stream: z.boolean().optional(),
 });
-export type ModelRequest = z.infer<typeof ModelRequest>;
+/** Runtime-only extensions (never serialized): cancellation for superseded
+ *  live-coach calls, a task-scoped completion budget, and streaming deltas
+ *  (onDelta fires per text chunk when the provider streams). AbortSignal is
+ *  structural so this package compiles without DOM lib. */
+export type ModelRequest = z.infer<typeof ModelRequest> & {
+  signal?: { aborted: boolean; addEventListener(type: "abort", listener: () => void, opts?: { once?: boolean }): void; removeEventListener(type: "abort", listener: () => void): void };
+  maxTokens?: number;
+  onDelta?: (delta: string) => void;
+};
 
 export const ModelResponse = z.object({
   text: z.string(),
@@ -207,6 +215,13 @@ export const RealtimeEvent = z.discriminatedUnion("type", [
     insight: SessionInsightDto,
   }),
   z.object({
+    type: z.literal("coach.working"),
+    eventId: z.string(),
+    sequenceNo: z.number().int().nonnegative(),
+    occurredAt: z.string().datetime(),
+    sessionId: z.string().uuid(),
+  }),
+  z.object({
     type: z.literal("session.status"),
     eventId: z.string(),
     sequenceNo: z.number().int().nonnegative(),
@@ -264,6 +279,12 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.reload_contexts"),
     eventId: z.string(),
+  }),
+  z.object({
+    type: z.literal("session.length"),
+    eventId: z.string(),
+    /** Response length preference: short (1-2 sentences) | medium (default) | long. */
+    length: z.enum(["short", "medium", "long"]),
   }),
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;

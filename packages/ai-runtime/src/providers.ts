@@ -21,6 +21,8 @@ export class OpenAICompatibleProvider extends AIProvider {
   readonly id: string;
   private lastError: string | null = null;
   private healthScore = 1;
+  /** Retry-After from the most recent 429 (seconds string), read in the catch. */
+  private lastRetryAfter: string | null = null;
 
   constructor(
     id: string,
@@ -55,6 +57,37 @@ export class OpenAICompatibleProvider extends AIProvider {
     return byTask && byTask.length > 0 ? byTask : this.defaultModel;
   }
 
+  /** Consume an SSE chat-completions stream, fanning deltas out and
+   *  returning the fully assembled text. */
+  private async consumeSse(res: Response, onDelta: (d: string) => void): Promise<string> {
+    let text = "";
+    const reader = res.body?.getReader();
+    if (!reader) return text;
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        try {
+          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            text += delta;
+            onDelta(delta);
+          }
+        } catch { /* keepalive/comment frame */ }
+      }
+    }
+    return text;
+  }
+
   async execute(request: ModelRequest, ctx: RequestContext): Promise<InvokeOutcome> {
     const started = Date.now();
     if (!ctx.secret && this.privacyMode !== "local") {
@@ -62,8 +95,33 @@ export class OpenAICompatibleProvider extends AIProvider {
     }
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), request.maxLatencyMs ?? 20_000);
+    // Superseded live calls (interruption preemption) cancel the in-flight
+    // HTTP request — frees the provider slot instead of letting it drain.
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    // 2048 default: reasoning models (gpt-oss) burn completion tokens on
+    // analysis before the JSON payload — 300-class budgets trip "max
+    // completion tokens reached" and the strict schema never validates.
+    // Task-scoped budgets (maxTokens) shrink completion time for tight
+    // contracts like the live coach.
+    const body = {
+      model: this.modelFor(request),
+      messages: request.messages ?? [],
+      max_tokens: request.maxTokens ?? 2048,
+      // Streaming: onDelta consumers (live answers) get text as it arrives;
+      // the outcome still carries the fully assembled text.
+      ...(request.onDelta ? { stream: true } : {}),
+      ...(request.responseSchema
+        ? {
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "app_output", schema: request.responseSchema, strict: true },
+            },
+          }
+        : {}),
+    };
     try {
-      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      let res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         signal: controller.signal,
         headers: {
@@ -71,42 +129,92 @@ export class OpenAICompatibleProvider extends AIProvider {
           ...(ctx.secret ? { authorization: `Bearer ${ctx.secret}` } : {}),
           "x-request-id": ctx.requestId,
         },
-        body: JSON.stringify({
-          model: this.modelFor(request),
-          messages: request.messages ?? [],
-          ...(request.responseSchema
-            ? {
-                response_format: {
-                  type: "json_schema",
-                  json_schema: { name: "app_output", schema: request.responseSchema, strict: true },
-                },
-              }
-            : {}),
-        }),
+        body: JSON.stringify(body),
       });
-      const body = (await res.json()) as ChatCompletionResponse;
-      if (!res.ok || body.error) {
-        throw classifyHttp(res.status, body.error?.message ?? res.statusText);
+      // Strict json_schema rejected by the provider/model (HTTP 400) — retry
+      // once without it and parse the plain text leniently.
+      if (!res.ok && request.responseSchema && res.status === 400) {
+        const { response_format: _dropped, ...plain } = body as Record<string, unknown>;
+        res = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "content-type": "application/json",
+            ...(ctx.secret ? { authorization: `Bearer ${ctx.secret}` } : {}),
+            "x-request-id": ctx.requestId,
+          },
+          body: JSON.stringify(plain),
+        });
       }
-      const text = body.choices?.[0]?.message?.content ?? "";
+      if (!res.ok) {
+        this.lastRetryAfter = res.headers.get("retry-after");
+        throw classifyHttp(res.status, (await res.text()).slice(0, 300));
+      }
+      // SSE path — deltas fan out to onDelta, then the assembled text parses
+      // exactly like the buffered path below.
+      if (request.onDelta) {
+        const text = await this.consumeSse(res, request.onDelta);
+        let structured: Record<string, unknown> | null = null;
+        if (request.responseSchema) {
+          try {
+            structured = JSON.parse(text) as Record<string, unknown>;
+          } catch {
+            const m = /\{[\s\S]*\}/.exec(text.replace(/```(?:json)?/g, ""));
+            if (m) {
+              try {
+                structured = JSON.parse(m[0]) as Record<string, unknown>;
+              } catch {
+                throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+              }
+            } else {
+              throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+            }
+          }
+        }
+        this.healthScore = Math.min(1, this.healthScore + 0.05);
+        this.lastError = null;
+        return ok(text, structured, Date.now() - started);
+      }
+      const payload = (await res.json()) as ChatCompletionResponse;
+      if (!res.ok || payload.error) {
+        this.lastRetryAfter = res.headers.get("retry-after");
+        throw classifyHttp(res.status, payload.error?.message ?? res.statusText);
+      }
+      this.lastRetryAfter = null;
+      let text = payload.choices?.[0]?.message?.content ?? "";
       let structured: Record<string, unknown> | null = null;
       if (request.responseSchema) {
         try {
           structured = JSON.parse(text) as Record<string, unknown>;
         } catch {
-          throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+          // Lenient retry (no-schema fallback path): strip code fences and
+          // take the outermost {...} before giving up.
+          const m = /\{[\s\S]*\}/.exec(text.replace(/```(?:json)?/g, ""));
+          if (m) {
+            try {
+              structured = JSON.parse(m[0]) as Record<string, unknown>;
+              text = m[0];
+            } catch {
+              throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+            }
+          } else {
+            throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+          }
         }
       }
       this.healthScore = Math.min(1, this.healthScore + 0.05);
       this.lastError = null;
-      return ok(text, structured, Date.now() - started, body.usage);
+      return ok(text, structured, Date.now() - started, payload.usage);
     } catch (e) {
       const pe = e instanceof ProviderError ? e : new ProviderError("connection", String(e));
       this.lastError = pe.message;
       this.healthScore = Math.max(0, this.healthScore - 0.2);
-      return err(pe);
+      // Rate-limit responses carry Retry-After — surface it so the router can
+      // penalize this candidate for exactly that long instead of blind backoff.
+      return err(pe, pe.httpStatus === 429 ? retryAfterMsOf(this.lastRetryAfter) : undefined);
     } finally {
       clearTimeout(deadline);
+      request.signal?.removeEventListener("abort", onExternalAbort);
     }
   }
 }
@@ -141,6 +249,8 @@ export class AnthropicProvider extends AIProvider {
     const messages = request.messages?.filter((m) => m.role !== "system") ?? [];
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), request.maxLatencyMs ?? 20_000);
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -173,6 +283,7 @@ export class AnthropicProvider extends AIProvider {
       return err(pe);
     } finally {
       clearTimeout(deadline);
+      request.signal?.removeEventListener("abort", onExternalAbort);
     }
   }
 }
@@ -229,7 +340,7 @@ function ok(
   text: string,
   structured: Record<string, unknown> | null,
   latencyMs: number,
-  usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+  usage?: { prompt_tokens?: number; completion_tokens?: number },
 ): InvokeOutcome {
   return {
     ok: true,
@@ -241,8 +352,8 @@ function ok(
   };
 }
 
-function err(e: ProviderError): InvokeOutcome {
-  return { ok: false, error: e };
+function err(e: ProviderError, retryAfterMs?: number): InvokeOutcome {
+  return { ok: false, error: e, retryAfterMs };
 }
 
 export function classifyHttp(status: number, message: string): ProviderError {
@@ -260,6 +371,16 @@ export function classifyHttp(status: number, message: string): ProviderError {
     default:
       return new ProviderError("connection", message, status);
   }
+}
+
+/** Parse a Retry-After header (seconds or HTTP-date) into milliseconds. */
+export function retryAfterMsOf(h: string | null): number | undefined {
+  if (!h) return undefined;
+  const secs = Number(h);
+  if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, 60_000);
+  const date = Date.parse(h);
+  if (!Number.isNaN(date)) return Math.min(Math.max(date - Date.now(), 0), 60_000);
+  return undefined;
 }
 
 export function extractQuestion(transcript: string): string {

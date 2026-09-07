@@ -77,8 +77,8 @@ export default function Research() {
   return (
     <div className="col" style={{ height: "calc(100vh - 120px)" }}>
       <PageHeader
-        kicker="Research"
-        title={activeId ? chats.find((c) => c.id === activeId)?.title ?? "Thread" : "New research"}
+        kicker="Copilot"
+        title={activeId ? chats.find((c) => c.id === activeId)?.title ?? "Thread" : "New thread"}
         description="Ask, follow up, and revisit threads later — answers route through your providers, free local rungs included."
       />
       {notice && <span className="small" style={{ color: "var(--warn)" }}>{notice}</span>}
@@ -106,7 +106,7 @@ export default function Research() {
           <div ref={threadRef} className="col" style={{ flex: 1, overflowY: "auto", minHeight: 0, gap: 10 }}>
             {loading && <Skeleton height="60px" />}
             {!loading && messages.length === 0 && (
-              <span className="small muted">Ask a research question — follow-ups stay in this thread with full context.</span>
+              <span className="small muted">Ask anything — follow-ups stay in this thread with full context.</span>
             )}
             {messages.map((m) => (
               <div

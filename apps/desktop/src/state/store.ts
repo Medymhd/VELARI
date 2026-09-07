@@ -24,7 +24,6 @@ interface InsightItem {
   contentJson: Record<string, unknown>;
   createdAt: string;
 }
-
 export interface Notice {
   id: string;
   kind: "info" | "success" | "error";
@@ -43,11 +42,15 @@ interface State {
   insights: InsightItem[];
   stealth: StealthState;
   connected: boolean;
+  /** True while the coach LLM is mid-generation (first token received). */
+  coachWorking: boolean;
   error: string | null;
   notices: Notice[];
 
   setScreen(s: Screen): void;
   setAuth(token: string, userId: string, workspaceId: string): void;
+  /** Rotate just the token (sliding session renewal) — keeps identity/workspace. */
+  setToken(token: string): void;
   clearAuth(): void;
   setSession(id: string | null, status?: string): void;
   setConsent(v: boolean): void;
@@ -55,6 +58,7 @@ interface State {
   pushInsight(item: InsightItem): void;
   setStealth(s: StealthState): void;
   setConnected(v: boolean): void;
+  setCoachWorking(v: boolean): void;
   setError(e: string | null): void;
   notify(kind: Notice["kind"], message: string): void;
   dismiss(id: string): void;
@@ -73,6 +77,7 @@ export const useStore = create<State>((set) => ({
   insights: [],
   stealth: { captureExclusion: false, taskbarHidden: false, masquerade: "none", masqueradeTitle: null, enforcedAtMs: 0 },
   connected: false,
+  coachWorking: false,
   error: null,
   notices: [],
 
@@ -89,12 +94,29 @@ export const useStore = create<State>((set) => ({
     localStorage.removeItem(`${STORAGE_PREFIX}_workspaceId`);
     set({ token: null, userId: null, workspaceId: null, screen: "onboarding" });
   },
+  setToken: (newToken) => {
+    localStorage.setItem(`${STORAGE_PREFIX}_token`, newToken);
+    set({ token: newToken });
+  },
   setSession: (sessionId, sessionStatus) => set({ sessionId, ...(sessionStatus ? { sessionStatus } : {}) }),
   setConsent: (consentConfirmed) => set({ consentConfirmed }),
-  pushTranscript: (item) => set((s) => ({ transcript: [...s.transcript, item].slice(-300) })),
+  pushTranscript: (item) =>
+    set((s) => {
+      // Dictation UX: a partial updates its existing line in place (stable
+      // per-utterance id from the server); a final commits it. No row churn —
+      // one line per utterance, like a voice-typing keyboard.
+      const idx = s.transcript.findIndex((t) => t.id === item.id);
+      if (idx >= 0) {
+        const next = s.transcript.slice();
+        next[idx] = item;
+        return { transcript: next };
+      }
+      return { transcript: [...s.transcript, item].slice(-300) };
+    }),
   pushInsight: (item) => set((s) => ({ insights: [...s.insights, item].slice(-50) })),
   setStealth: (stealth) => set({ stealth }),
   setConnected: (connected) => set({ connected }),
+  setCoachWorking: (coachWorking) => set({ coachWorking }),
   setError: (error) => set({ error }),
   notify: (kind, message) =>
     set((s) => ({

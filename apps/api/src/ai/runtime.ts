@@ -258,6 +258,11 @@ export async function executeRouted(
         deps.breakers.recordSuccess(workspaceId, c.providerId, c.model, request.taskClass);
       } else if (result.error?.isFailoverEligible) {
         deps.breakers.recordFailure(workspaceId, c.providerId, c.model, request.taskClass);
+        // A 429 with Retry-After excludes this candidate for exactly that
+        // window — no more blind re-picks against a rate-limited tier.
+        if (result.error.kind === "rate_limited" && result.retryAfterMs) {
+          deps.breakers.recordRateLimit(workspaceId, c.providerId, c.model, request.taskClass, result.retryAfterMs);
+        }
         increment(METRICS.providerFallbacks);
       }
       await recordUsage(deps.db, {
