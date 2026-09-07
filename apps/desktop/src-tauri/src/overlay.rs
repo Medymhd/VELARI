@@ -147,6 +147,7 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         let _ = w.show();
         let _ = w.set_focus();
+        let _ = app.emit("overlay://visibility", true);
         if let Ok(pos) = w.outer_position() {
             println!("[overlay] shown at physical ({}, {}), size {}x{}, spot {}", pos.x, pos.y, width, height, placement_state::current().as_str());
         }
@@ -203,7 +204,37 @@ pub async fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), Str
         let _ = existing.hide();
     }
     let _ = app.emit("overlay://hidden", ());
+    let _ = app.emit("overlay://visibility", false);
     Ok(())
+}
+
+/// Authoritative overlay toggle: checks REAL window visibility, not JS state.
+/// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
+/// the previous JS-side toggle died whenever LiveSession was unmounted.
+#[tauri::command]
+pub async fn overlay_toggle(app: AppHandle, vertical_id: String) -> Result<bool, String> {
+    let label = format!("overlay:{}", vertical_id);
+    let visible = app
+        .get_webview_window(&label)
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if visible {
+        overlay_hide(app.clone(), vertical_id.clone()).await?;
+        Ok(false)
+    } else {
+        overlay_show(
+            app.clone(),
+            OverlayParams {
+                mode: "stealth".into(),
+                vertical_id,
+                width: None,
+                height: None,
+            },
+        )
+        .await?;
+        let _ = app.emit("overlay://visibility", true);
+        Ok(true)
+    }
 }
 
 /// Mouse passthrough (reference `syncOverlayInteractionPolicy` parity): when

@@ -320,30 +320,30 @@ export default function LiveSession() {
     return () => un?.();
   }, [nativeAvailable, sessionId]);
 
-  // Global chords (Ctrl+Shift+O overlay, Ctrl+Shift+B mouse passthrough);
-  // also registered app-wide in Rust at startup. Ctrl+Shift+H (app show/hide)
-  // is handled in Rust directly so it works on every screen.
+  // Global chords Ctrl+Shift+O (overlay) and Ctrl+Shift+H (app) are handled
+  // authoritatively in Rust — they work on every screen and check real window
+  // visibility. Here we only register Ctrl+Shift+B (passthrough) and
+  // Ctrl+Shift+P (position cycle), and keep the checkbox in sync with the
+  // overlay's true visibility.
   const overlayOnRef = useRef(false);
   const passthroughRef = useRef(false);
   useEffect(() => {
     if (!nativeAvailable) return;
-    invoke("register_global_chord", { chord: "Ctrl+Shift+O", action: "overlay-toggle" }).catch((e) =>
-      console.warn("global chord unavailable", e),
-    );
     invoke("register_global_chord", { chord: "Ctrl+Shift+B", action: "passthrough-toggle" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
     invoke("register_global_chord", { chord: "Ctrl+Shift+P", action: "overlay-cycle-position" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
+    let unVis: UnlistenFn | null = null;
+    void listen<boolean>("overlay://visibility", (e) => {
+      overlayOnRef.current = e.payload;
+      setOverlayOn(e.payload);
+    }).then((u) => (unVis = u));
     let un: UnlistenFn | null = null;
     void listen("chord://activated", (e) => {
-      const action = (e.payload as { action?: string }).action ?? "overlay-toggle";
-      if (action === "overlay-toggle") {
-        const next = !overlayOnRef.current;
-        overlayOnRef.current = next;
-        void toggleOverlay(next);
-      } else if (action === "passthrough-toggle") {
+      const action = (e.payload as { action?: string }).action ?? "";
+      if (action === "passthrough-toggle") {
         if (!overlayOnRef.current) return; // passthrough only makes sense with the overlay visible
         const next = !passthroughRef.current;
         passthroughRef.current = next;
@@ -357,15 +357,22 @@ export default function LiveSession() {
           .catch((err) => notify("error", `Position cycle failed: ${errText(err)}`));
       }
     }).then((u) => (un = u));
-    return () => un?.();
+    return () => {
+      un?.();
+      unVis?.();
+    };
   }, [nativeAvailable]);
 
   async function toggleOverlay(on: boolean) {
-    overlayOnRef.current = on;
-    setOverlayOn(on);
+    // Route through the same authoritative toggle so the checkbox, the
+    // global chord and the X button can never disagree.
     try {
-      if (on) await invoke("overlay_show", { params: { mode: "stealth", verticalId: "interview-intelligence" } });
-      else await invoke("overlay_hide", { verticalId: "interview-intelligence" });
+      const visible = await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
+      if (on !== visible) {
+        // Desired state differs from post-toggle reality (e.g. X pressed
+        // between) — force it once more.
+        await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
+      }
     } catch (e) {
       console.warn("overlay failed", e);
       overlayOnRef.current = false;
