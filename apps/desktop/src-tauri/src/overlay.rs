@@ -67,7 +67,9 @@ fn default_mode() -> String { "stealth".into() }
 fn default_vertical_id() -> String { "interview-intelligence".into() }
 
 #[tauri::command]
-pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String> {
+/// async: creating a window from a sync command deadlocks on Windows —
+/// build() needs the main thread, and sync commands run ON the main thread.
+pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String> {
     let label = format!("overlay:{}", params.vertical_id);
     let mode = OverlayMode::from_str(&params.mode);
 
@@ -153,7 +155,7 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
+pub async fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.hide();
@@ -168,7 +170,7 @@ pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
 /// the frontend calling this again with `enabled:false` — the tray/Show chord
 /// also disengages it. Ctrl+Shift+B toggles.
 #[tauri::command]
-pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
+pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
@@ -200,7 +202,7 @@ pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: boo
 /// its panel size and the window grows/shrinks to fit. Height clamped so the
 /// panel never runs off-screen.
 #[tauri::command]
-pub fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Result<(), String> {
+pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
