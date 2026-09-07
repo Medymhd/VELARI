@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Velari Concept C — "Cascade": abstract double-V bands, layered intelligence -->
+  <defs>
+    <linearGradient id="vc1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5f6dff"/>
+      <stop offset="100%" stop-color="#9d5cff"/>
+    </linearGradient>
+    <linearGradient id="vc2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9d5cff"/>
+      <stop offset="100%" stop-color="#c86bff"/>
+    </linearGradient>
+  </defs>
+  <path d="M8 12 L32 24 L56 12 L56 23 L32 35 L8 23 Z" fill="url(#vc1)"/>
+  <path d="M18 36 L32 43 L46 36 L46 45 L32 52 L18 45 Z" fill="url(#vc2)"/>
+</svg>

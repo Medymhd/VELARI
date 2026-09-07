@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Velari Concept E — "Veil": translucent V layers stacked in depth -->
+  <defs>
+    <linearGradient id="ve1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5f6dff"/>
+      <stop offset="100%" stop-color="#9d5cff"/>
+    </linearGradient>
+  </defs>
+  <path d="M14 26 L25 26 L32 48 L39 26 L50 26 L36 62 L28 62 Z" fill="#c86bff" opacity="0.30"/>
+  <path d="M14 19 L25 19 L32 41 L39 19 L50 19 L36 55 L28 55 Z" fill="#9d5cff" opacity="0.55"/>
+  <path d="M14 12 L25 12 L32 34 L39 12 L50 12 L36 48 L28 48 Z" fill="url(#ve1)"/>
+</svg>

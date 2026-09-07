@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Velari Concept A — "Apex": sharp tapered V monogram -->
+  <defs>
+    <linearGradient id="va" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5f6dff"/>
+      <stop offset="100%" stop-color="#9d5cff"/>
+    </linearGradient>
+    <linearGradient id="vaEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M6 8 L20 8 L32 42 L44 8 L58 8 L38 58 L26 58 Z" fill="url(#va)"/>
+  <path d="M6 8 L20 8 L32 42 L44 8 L58 8 L38 58 L26 58 Z" fill="url(#vaEdge)"/>
+</svg>
