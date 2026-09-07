@@ -25,12 +25,15 @@ Brand is configured in one place: `packages/brand/src/index.ts`. Change the valu
 
 - **Dual-channel capture** — native mic (CPAL) and system loopback (dual-endpoint WASAPI covering both media and communications endpoints) are captured, gated, resampled and attributed to the right speaker automatically
 - **Dictation-style partials** — each utterance is one evolving line that commits in place; no transcript clutter
-- **Single-flight coaching with interruption preemption** — a new utterance aborts any in-flight LLM call; a 900 ms confirmation window makes sure the speaker has truly finished before the coach crafts an answer
-- **Prepared-answer recall** — your uploaded Q&A bank answers drilled questions in ~0 ms, ahead of the LLM
-- **ASR self-correction** — the coach silently normalizes mishears ("a eye training data" → "AI training data") using your prep-material vocabulary; low-confidence questions are flagged with a "verify" chip instead of answered blindly
+- **Single-flight coaching with interruption preemption** — a new utterance aborts any in-flight LLM call; a 900 ms confirmation window makes sure the speaker has truly finished before the coach crafts an answer; a first-token "crafting answer…" indicator replaces dead air while the LLM generates
+- **Tolerant answer cache** — a question asked (nearly) before is answered in ~0 ms without an LLM call: normalized exact match → stem-lite token-overlap fuzzy match (≥0.80) → vector cosine over hashed embeddings (≥0.92). Only judge-accepted answers are cached; changed prep materials auto-invalidate (`prepHash`); hits are badged "cached" with the matched question shown on fuzzy hits
+- **Prepared-answer recall** — your uploaded Q&A bank answers drilled questions in ~0 ms, ahead of both the cache and the LLM
+- **ASR self-correction** — the coach silently normalizes mishears ("a eye training data" → "AI training data") using your prep-material vocabulary; low-confidence questions are flagged with a yellow "verify" chip instead of answered blindly
+- **Response ring system** — green ring = newest response, yellow = low-confidence question, blue = older ones, in both the main panel and the overlay
 - **Response length modes** (short / medium / long), 9 mode personas, style adaptation learned from your own speech
 - **Always answers** — when the LLM output is unusable, a structural offline scaffold is shown instead of silence
-- **Stealth overlay** — card stack with the newest response pinned on top, driven by app-level forwarding that works from every screen, with `Ctrl+Shift+O` toggle, `Ctrl+Shift+P` position cycling, `Ctrl+Shift+B` click-through passthrough, `Ctrl+Shift+H` app show/hide
+- **Session lifecycle done right** — new sessions start clean, any session (including completed ones) reopens with its full transcript and insights restored, and a "Reopen session" button continues capture
+- **Stealth overlay** — card stack with the newest response pinned on top, driven by Rust-emitter event forwarding that works from every screen, with `Ctrl+Shift+O` toggle, `Ctrl+Shift+P` position cycling, `Ctrl+Shift+B` click-through passthrough, `Ctrl+Shift+H` app show/hide
 - **Post-session review** — persisted transcript and insights with search and print-to-PDF export
 
 ## Model routing: BYOK + benchmark-driven ranking
@@ -38,7 +41,7 @@ Brand is configured in one place: `packages/brand/src/index.ts`. Change the valu
 Velari is model-agnostic. Keys stay in your workspace vault (AES-256-GCM sealed); managed keys are optional.
 
 - **Bring your own OpenAI-compatible endpoint** — base URL + key is all it takes; the platform tests your models against the real coach prompt
-- **Built-in test-and-ranker** — `pnpm bench:models` discovers every live model on your configured gateways, benchmarks streaming TTFT, total latency and strict-JSON reliability, and writes the winners into the router (`COACH_MODEL_*`). Deprecated, renamed or rate-limited models are replaced automatically on the next run. Schedule it at launch (default), hourly, every 4 hours, daily, or off — in Settings → Model benchmarking.
+- **Built-in test-and-ranker** — `pnpm bench:models` discovers every live model on your configured gateways, benchmarks streaming TTFT, total latency and strict-JSON reliability, and writes the winners into the router (`COACH_MODEL_*`). Deprecated, renamed or rate-limited models are replaced automatically on the next run. Schedule it at launch (default), hourly, every 4 hours, daily, or off — in Settings → Model benchmarking. At request time, a 429 with `Retry-After` excludes that candidate for exactly the provider's window — no blind re-picks against a rate-limited tier.
 - **Measured reference points** (see `benchmarks/results/`): Groq's `qwen/qwen3.8-27b` delivers flat ~1 s coach turnaround across a full 12-question simulated interview (92% JSON validity, no degradation curve), with `openai/gpt-oss-20b` and `groq/compound-mini` as measured failovers. OpenRouter's free pool is supported as a $0 fallback rung.
 
 ## Getting started
@@ -135,6 +138,7 @@ Capture invisibility (`SetWindowDisplayAffinity WDA_EXCLUDEFROMCAPTURE`), taskba
 - **Local STT model missing** — Moonshine downloads on first use (~50 MB, HF hub); sherpa: `models/sherpa` via `ensureSherpaModel()`.
 - **Piper TTS** — set `PIPER_PATH` (binary) and `PIPER_MODEL_PATH` (.onnx voice model); falls back to Web Speech API on the frontend when unset.
 - **Coach answers empty** — check the API terminal for `pipeline.warning` frames; the offline scaffold still appears in the panel when the LLM is unreachable.
+- **Answers show "cached"** — that's the answer cache serving a question asked (nearly) before at 0 ms; fuzzy hits show the question they were originally answered as. Change your prep materials to invalidate.
 
 ## Project status
 
@@ -142,9 +146,9 @@ Three verticals ship on one binary:
 
 - **Interview Intelligence** — real-time dual-channel live support as described above, plus post-session review with search and export.
 - **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve, annotation service with Krippendorff's alpha agreement metrics, coding review, Studio authoring in the web console, agent runner with kill switch.
-- **Velari Research** — deep-research chat with source tracking in the web console.
+- **Velari Copilot** — conversational research chat with source tracking and pgvector recall (user-facing name; stable `research` id).
 
-Infrastructure: multi-rung STT chain, provider router + circuit breakers + task-scoped model profiles, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, TTS, integration APIs, signed NSIS installer, 18/18 build, 19 interview-vertical tests + 90+ TS tests + 24 cargo tests, CI pipeline.
+Infrastructure: multi-rung STT chain, provider router + circuit breakers + task-scoped model profiles + Retry-After-aware rate-limit penalties, tolerant answer cache, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, TTS, integration APIs, signed NSIS installer, 18/18 build, 19 interview-vertical + 12 answer-cache + 35 ai-runtime tests + 24 cargo tests, CI pipeline.
 
 ## License
 
