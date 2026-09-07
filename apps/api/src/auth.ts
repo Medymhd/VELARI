@@ -16,7 +16,10 @@ declare module "fastify" {
 }
 
 export function issueToken(userId: string): string {
-  return jwt.sign({ sub: userId }, env.jwtSecret, { expiresIn: "12h", jwtid: randomUUID() });
+  // 30d — a local-first desktop app must not force re-onboarding after every
+  // restart; the verify endpoint re-issues a fresh token on each successful
+  // boot (sliding session), so active users never see expiry at all.
+  return jwt.sign({ sub: userId }, env.jwtSecret, { expiresIn: "30d", jwtid: randomUUID() });
 }
 
 export function verifyToken(token: string): AuthUser | null {

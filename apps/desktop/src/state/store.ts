@@ -48,6 +48,8 @@ interface State {
 
   setScreen(s: Screen): void;
   setAuth(token: string, userId: string, workspaceId: string): void;
+  /** Rotate just the token (sliding session renewal) — keeps identity/workspace. */
+  setToken(token: string): void;
   clearAuth(): void;
   setSession(id: string | null, status?: string): void;
   setConsent(v: boolean): void;
@@ -88,6 +90,10 @@ export const useStore = create<State>((set) => ({
     localStorage.removeItem(`${STORAGE_PREFIX}_userId`);
     localStorage.removeItem(`${STORAGE_PREFIX}_workspaceId`);
     set({ token: null, userId: null, workspaceId: null, screen: "onboarding" });
+  },
+  setToken: (newToken) => {
+    localStorage.setItem(`${STORAGE_PREFIX}_token`, newToken);
+    set({ token: newToken });
   },
   setSession: (sessionId, sessionStatus) => set({ sessionId, ...(sessionStatus ? { sessionStatus } : {}) }),
   setConsent: (consentConfirmed) => set({ consentConfirmed }),

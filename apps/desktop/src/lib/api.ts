@@ -41,7 +41,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, displayName }),
     }),
-  me: () => req<{ valid: boolean; userId?: string }>("/auth/verify?token=" + encodeURIComponent(token() ?? "")),
+  me: () =>
+    req<{ valid: boolean; userId?: string; token?: string }>(
+      "/auth/verify?token=" + encodeURIComponent(token() ?? ""),
+    ),
   listWorkspaces: () => req<{ id: string; name: string; role: string }[]>("/workspaces"),
   listSessions: (workspaceId: string) =>
     req<{ id: string; title: string | null; status: string; consentStatus: string }[]>(
