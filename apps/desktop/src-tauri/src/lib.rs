@@ -182,6 +182,7 @@ pub fn run() {
             overlay::overlay_hide,
             overlay::overlay_set_passthrough,
             overlay::overlay_resize,
+            overlay::overlay_cycle_position,
             tts::tts_piper_available,
             tts::tts_speak,
             audio::list_input_devices,
@@ -232,6 +233,7 @@ pub fn run() {
 
             // Global chords registered app-wide (independent of any screen):
             //   Ctrl+Shift+O — stealth overlay toggle (handled by JS screens)
+            //   Ctrl+Shift+P — cycle overlay position (top-center/right/left)
             //   Ctrl+Shift+H — main-window show/hide (handled here in Rust so
             //                  it works even when no screen is listening)
             let _ = stealth::keybind::register_chord(

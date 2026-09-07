@@ -333,6 +333,9 @@ export default function LiveSession() {
     invoke("register_global_chord", { chord: "Ctrl+Shift+B", action: "passthrough-toggle" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
+    invoke("register_global_chord", { chord: "Ctrl+Shift+P", action: "overlay-cycle-position" }).catch((e) =>
+      console.warn("global chord unavailable", e),
+    );
     let un: UnlistenFn | null = null;
     void listen("chord://activated", (e) => {
       const action = (e.payload as { action?: string }).action ?? "overlay-toggle";
@@ -347,6 +350,11 @@ export default function LiveSession() {
         void invoke("overlay_set_passthrough", { verticalId: "interview-intelligence", enabled: next })
           .then(() => notify("info", next ? "Overlay click-through ON (Ctrl+Shift+B to toggle)" : "Overlay click-through OFF"))
           .catch((err) => notify("error", `Passthrough failed: ${errText(err)}`));
+      } else if (action === "overlay-cycle-position") {
+        if (!overlayOnRef.current) return;
+        void invoke<string>("overlay_cycle_position", { verticalId: "interview-intelligence" })
+          .then((spot) => notify("info", `Overlay position: ${spot} (Ctrl+Shift+P to cycle)`))
+          .catch((err) => notify("error", `Position cycle failed: ${errText(err)}`));
       }
     }).then((u) => (un = u));
     return () => un?.();
@@ -865,6 +873,7 @@ export default function LiveSession() {
           </button>
           <span className="small muted">One-click: WDA 0x11 + TOOLWINDOW for every window — works on any share client.</span>
           <Toggle checked={overlayOn} onChange={(v) => void toggleOverlay(v)} label="Stealth overlay — live answers (Ctrl+Shift+O)" />
+          <div className="small muted">Position: Ctrl+Shift+P cycles top-center → right → left · Passthrough: Ctrl+Shift+B</div>
           <div className="small muted">Applied: capture={String(stealth.captureExclusion)} taskbar={String(stealth.taskbarHidden)} masquerade={stealth.masquerade}</div>
           <div className="small muted">Recovery: Ctrl+Shift+H shows/hides the app · the tray menu always reaches a hidden window.</div>
         </div>

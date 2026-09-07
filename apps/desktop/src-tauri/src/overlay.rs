@@ -82,7 +82,7 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
 
     let width = params.width.unwrap_or(DEFAULT_WIDTH);
     let height = params.height.unwrap_or(DEFAULT_HEIGHT);
-    let (x, y) = placement(&app, width);
+    let (x, y) = placement(&app, width, placement_state::current());
 
     let builder = WebviewWindowBuilder::new(
         &app,
@@ -143,15 +143,57 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
         // Position was applied at build; assert it again post-creation (some
         // platform builds clamp or reset initial position for transparent
         // frameless windows), then make visible + topmost.
-        let (x, y) = placement(&app, width);
+        let (x, y) = placement(&app, width, placement_state::current());
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         let _ = w.show();
         let _ = w.set_focus();
         if let Ok(pos) = w.outer_position() {
-            println!("[overlay] shown at physical ({}, {}), size {}x{}", pos.x, pos.y, width, height);
+            println!("[overlay] shown at physical ({}, {}), size {}x{}, spot {}", pos.x, pos.y, width, height, placement_state::current().as_str());
         }
     }
     Ok(())
+}
+
+/// Session-persistent overlay placement (not saved to disk — stealth users
+/// usually want a fresh default each launch).
+mod placement_state {
+    use super::OverlayPlacement;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    // 0 = TopCenter (default), 1 = Right, 2 = Left
+    static SPOT: AtomicU8 = AtomicU8::new(0);
+
+    pub fn current() -> OverlayPlacement {
+        match SPOT.load(Ordering::Relaxed) {
+            1 => OverlayPlacement::Right,
+            2 => OverlayPlacement::Left,
+            _ => OverlayPlacement::TopCenter,
+        }
+    }
+
+    pub fn set(spot: OverlayPlacement) {
+        SPOT.store(match spot {
+            OverlayPlacement::TopCenter => 0,
+            OverlayPlacement::Right => 1,
+            OverlayPlacement::Left => 2,
+        }, Ordering::Relaxed);
+    }
+}
+
+/// Cycle the overlay position: top-center → right → left → top-center.
+/// Applies immediately when the overlay is visible; remembered for next show.
+#[tauri::command]
+pub async fn overlay_cycle_position(app: AppHandle, vertical_id: String, width: Option<f64>) -> Result<String, String> {
+    let next = placement_state::current().next();
+    placement_state::set(next);
+    let label = format!("overlay:{}", vertical_id);
+    if let Some(w) = app.get_webview_window(&label) {
+        let width = width.unwrap_or(DEFAULT_WIDTH);
+        let (x, y) = placement(&app, width, next);
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        let _ = w.show();
+    }
+    Ok(next.as_str().to_string())
 }
 
 #[tauri::command]
@@ -218,7 +260,35 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
     Ok(())
 }
 
-fn placement(app: &AppHandle, width: f64) -> (f64, f64) {
+/// Overlay placement modes: TopCenter (default), Right (top-right, where the
+/// overlay originally lived), Left (top-left). Ctrl+Shift+P cycles through
+/// them live; the choice persists for the session.
+#[derive(Clone, Copy, PartialEq)]
+pub enum OverlayPlacement {
+    TopCenter,
+    Right,
+    Left,
+}
+
+impl OverlayPlacement {
+    pub fn next(self) -> Self {
+        match self {
+            OverlayPlacement::TopCenter => OverlayPlacement::Right,
+            OverlayPlacement::Right => OverlayPlacement::Left,
+            OverlayPlacement::Left => OverlayPlacement::TopCenter,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OverlayPlacement::TopCenter => "top-center",
+            OverlayPlacement::Right => "right",
+            OverlayPlacement::Left => "left",
+        }
+    }
+}
+
+fn placement(app: &AppHandle, width: f64, spot: OverlayPlacement) -> (f64, f64) {
     let monitor = app.primary_monitor().ok().flatten();
     match monitor {
         Some(m) => {
@@ -229,9 +299,15 @@ fn placement(app: &AppHandle, width: f64) -> (f64, f64) {
             // metrics are PHYSICAL. Mixing them (the old code) pushes the
             // overlay off-screen on any display scaling != 100%, which reads
             // as "the overlay doesn't show up".
-            let x_logical = (pos.x as f64 + size.width as f64 - width * scale - MARGIN * scale) / scale;
-            let y_logical = (pos.y as f64 + MARGIN * scale) / scale;
-            (x_logical.max(0.0), y_logical.max(0.0))
+            let logical_w = size.width as f64 / scale;
+            let monitor_x = pos.x as f64 / scale;
+            let x_logical = match spot {
+                OverlayPlacement::Right => monitor_x + logical_w - width - MARGIN,
+                OverlayPlacement::Left => monitor_x + MARGIN,
+                OverlayPlacement::TopCenter => monitor_x + (logical_w - width) / 2.0,
+            };
+            let y_logical = pos.y as f64 / scale + MARGIN;
+            (x_logical.max(monitor_x + MARGIN), y_logical.max(0.0))
         }
         None => (100.0, 100.0),
     }
