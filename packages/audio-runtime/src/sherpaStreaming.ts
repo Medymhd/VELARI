@@ -135,8 +135,10 @@ export class SherpaStreamingSttEngine implements SttEngine {
   /** Watchdog: some environments (server WS handlers) yield a recognizer that
    *  constructs fine but decodes empty — without this guard the fallback
    *  chain would hang on it forever since a silent decoder never fires
-   *  onUnavailable. After 8s of fed audio with zero output, release the chain. */
+   *  onUnavailable. After 8s of SPEECH audio with zero output, release the
+   *  chain. Silence keepalives don't count toward the budget. */
   private fedSamples = 0;
+  private speechSamples = 0;
   private firstFeedMs = 0;
   private emittedAny = false;
   /** Decode cadence: sherpa decodes in ~50ms feature windows for faster partials. */
@@ -230,10 +232,17 @@ export class SherpaStreamingSttEngine implements SttEngine {
 
     if (this.firstFeedMs === 0) this.firstFeedMs = atMs;
     this.fedSamples += pcm.length >> 1;
-    // Watchdog: 8s of audio (128k samples @16k) with no output = dead decoder.
-    // Sample-count based — wall-clock spans lie when feeds arrive bursted.
-    if (!this.emittedAny && !this.unavailableFired && this.fedSamples >= this.sampleRate * 8) {
-      console.warn("[sherpa] watchdog: no output after 8s of fed audio — releasing to fallback chain");
+    // Watchdog budget counts SPEECH samples only. Silence keepalives (zero
+    // chunks from the suppressor) don't prove the decoder works, but they
+    // also don't prove it's broken — counting them released healthy decoders
+    // on silence-heavy session starts (the "DEMO spam" regression).
+    let energy = 0;
+    for (let i = 0; i + 1 < pcm.length; i += 2) energy += pcm.readInt16LE(i) * pcm.readInt16LE(i);
+    const chunkRms = Math.sqrt(energy / Math.max(1, pcm.length >> 1));
+    if (chunkRms > 65) this.speechSamples += pcm.length >> 1;
+    // 8s of actual speech with zero output = dead decoder.
+    if (!this.emittedAny && !this.unavailableFired && this.speechSamples >= this.sampleRate * 8) {
+      console.warn("[sherpa] watchdog: no output after 8s of speech audio — releasing to fallback chain");
       this.unavailableFired = true;
       this.unavailableCb?.();
       return;

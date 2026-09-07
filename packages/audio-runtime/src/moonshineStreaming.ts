@@ -167,8 +167,10 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     if (this.unavailableFired) return false;
     if (!this.initPromise) {
       // First load may fetch weights from the HF hub; a stalled network must
-      // degrade to the next rung instead of stalling the whole chain.
-      const INIT_TIMEOUT_MS = 10_000;
+      // degrade to the next rung instead of stalling the whole chain. 30s:
+      // under system load (Word + desktop + capture) a cold load can take
+      // well past 10s — 10s released healthy decoders mid-session.
+      const INIT_TIMEOUT_MS = 30_000;
       this.initPromise = Promise.race([
         this.factory()
           .then(async (p) => {
