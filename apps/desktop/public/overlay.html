@@ -49,6 +49,15 @@
         border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
         background: rgba(124, 124, 255, 0.07);
       }
+      /* Ring system: green = newest response, yellow = low STT confidence
+         (question may be misheard), blue = older responses. */
+      .resp-card.newest { border: 2px solid #34d399; box-shadow: 0 0 10px rgba(52, 211, 153, 0.25); }
+      .resp-card.lowconf { border: 2px solid #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.22); }
+      .resp-card.lowconf.newest { border-color: #34d399; box-shadow: 0 0 10px rgba(52, 211, 153, 0.25); }
+      .resp-card.older { border: 1px solid rgba(124, 124, 255, 0.45); }
+      .resp-as { font-size: 10px; color: var(--muted); margin-top: 4px; font-style: italic; }
+      .chip.cached { border-color: rgba(52, 211, 153, 0.45); color: #34d399; }
+      .chip.offline { border-color: rgba(248, 113, 113, 0.45); color: #f87171; }
       .resp-kind { font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
       .resp-q { font-size: 13px; font-weight: 600; line-height: 1.35; }
       .chip {
@@ -136,6 +145,119 @@
       const $ = (id) => document.getElementById(id);
       const tapState = { active: false, notes: "" };
 
+      // EVENT LISTENERS FIRST — they must attach before anything else in this
+      // block can throw. (A speak-button listener on a removed element used to
+      // kill the script here and leave the overlay permanently deaf.)
+      let lastInsight = null;
+
+      event.listen("overlay://transcript", (e) => {
+        const { speaker, text, isFinal } = e.payload;
+        // Both sides flow — interviewer prominent, the user's own voice muted.
+        // Newest at TOP (descending): the freshest speech is the most relevant.
+        setWave(!isFinal);
+        const el = $("transcript");
+        const existing = el.querySelector(`[data-utt="${CSS.escape(String(e.payload.id ?? ""))}"]`);
+        const line = existing ?? document.createElement("div");
+        line.className = "line" + (isFinal ? "" : " partial");
+        line.dataset.final = String(isFinal);
+        if (e.payload.id) line.dataset.utt = String(e.payload.id);
+        const who = document.createElement("span");
+        who.className = "who" + (speaker === "user" ? " you" : "");
+        who.textContent = speaker === "user" ? "YOU" : "IV";
+        if (speaker === "user") line.style.opacity = "0.6";
+        line.replaceChildren(who, document.createTextNode(text));
+        if (!existing) el.prepend(line);
+        // Cap both ends — the list grows downward from the newest line.
+        while (el.childElementCount > 8) el.removeChild(el.lastElementChild);
+        el.scrollTop = 0;
+        if (isFinal) setTimeout(() => setWave(false), 800);
+      });
+
+      event.listen("overlay://insight", (e) => {
+        const c = e.payload.contentJson ?? {};
+        // Card stack — newest response pinned at the top, previous cards
+        // below, so the latest answer is always in the same spot.
+        const stack = $("responses");
+        const empty = stack.querySelector(".resp-empty");
+        if (empty) empty.remove();
+        // Ring system: green = newest, yellow = low STT confidence, blue default.
+        const isNewest = !stack.querySelector(".resp-card.newest");
+        stack.querySelectorAll(".resp-card.newest").forEach((n) => {
+          n.classList.remove("newest");
+          n.classList.add("older");
+        });
+        const card = document.createElement("div");
+        card.className = "resp-card insight-arrive newest";
+        const lowConf = typeof c.stt_confidence === "number" && c.stt_confidence < 0.7;
+        if (lowConf) card.classList.add("lowconf");
+        const isAnswer = e.payload.type === "auto_answer" || (c.answer && !c.detected_question);
+        const isPrepared = e.payload.type === "prepared_answer";
+        const badge = document.createElement("div");
+        badge.className = "resp-kind";
+        badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
+        card.appendChild(badge);
+        const q = document.createElement("div");
+        q.className = "resp-q";
+        q.textContent = c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer");
+        card.appendChild(q);
+        if (lowConf) {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = "low confidence — verify";
+          card.appendChild(chip);
+        }
+        if (c.cached === true) {
+          const chip = document.createElement("span");
+          chip.className = "chip cached";
+          chip.textContent = "cached";
+          card.appendChild(chip);
+        }
+        if (c.offline === true) {
+          const chip = document.createElement("span");
+          chip.className = "chip offline";
+          chip.textContent = "scaffold — LLM unavailable";
+          card.appendChild(chip);
+        }
+        const body = document.createElement("div");
+        body.className = "resp-body";
+        if (isAnswer || isPrepared) {
+          body.textContent = c.answer ?? "";
+        } else {
+          const ol = document.createElement("ol");
+          for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
+            const li = document.createElement("li");
+            li.textContent = item;
+            ol.appendChild(li);
+          }
+          body.appendChild(ol);
+          const pts = document.createElement("div");
+          pts.className = "resp-points";
+          pts.textContent = (c.talking_points ?? []).join(" · ");
+          body.appendChild(pts);
+        }
+        card.appendChild(body);
+        if (c.cached === true && typeof c.cached_question === "string" && c.cached_question) {
+          const as = document.createElement("div");
+          as.className = "resp-as";
+          as.textContent = "answered as: " + c.cached_question;
+          card.appendChild(as);
+        }
+        stack.prepend(card);
+        while (stack.childElementCount > 3) stack.removeChild(stack.lastElementChild);
+        // Re-rank rings: the newest card is green, the rest keep yellow/blue.
+        stack.querySelectorAll(".resp-card").forEach((n, idx) => {
+          n.classList.toggle("newest", idx === 0);
+          n.classList.toggle("older", idx !== 0);
+        });
+        lastInsight = c;
+        pulseTiming();
+        setWave(false);
+      });
+
+      // Announce readiness — the app-level forwarder backfills the current
+      // session tail (recent transcript + latest response) on open.
+      event.emit("overlay://ready", {});
+
       $("tapBtn").addEventListener("click", async () => {
         try {
           if (tapState.active) await stopTap();
@@ -209,87 +331,11 @@
         setTimeout(() => { t.style.width = "0%"; }, 3000);
       }
 
-      // Announce readiness — the app-level forwarder backfills the current
-      // session tail (recent transcript + latest response) on open.
-      event.emit("overlay://ready", {});
-
-      event.listen("overlay://transcript", (e) => {
-        const { speaker, text, isFinal } = e.payload;
-        // Both sides flow — interviewer prominent, the user's own voice muted.
-        // Newest at TOP (descending): the freshest speech is the most relevant.
-        setWave(!isFinal);
-        const el = $("transcript");
-        const existing = el.querySelector(`[data-utt="${CSS.escape(String(e.payload.id ?? ""))}"]`);
-        const line = existing ?? document.createElement("div");
-        line.className = "line" + (isFinal ? "" : " partial");
-        line.dataset.final = String(isFinal);
-        if (e.payload.id) line.dataset.utt = String(e.payload.id);
-        const who = document.createElement("span");
-        who.className = "who" + (speaker === "user" ? " you" : "");
-        who.textContent = speaker === "user" ? "YOU" : "IV";
-        if (speaker === "user") line.style.opacity = "0.6";
-        line.replaceChildren(who, document.createTextNode(text));
-        if (!existing) el.prepend(line);
-        // Cap both ends — the list grows downward from the newest line.
-        while (el.childElementCount > 8) el.removeChild(el.lastElementChild);
-        el.scrollTop = 0;
-        if (isFinal) setTimeout(() => setWave(false), 800);
-      });
-
-      event.listen("overlay://insight", (e) => {
-        const c = e.payload.contentJson ?? {};
-        // Card stack — newest response pinned at the top, previous cards
-        // below, so the latest answer is always in the same spot.
-        const stack = $("responses");
-        const card = document.createElement("div");
-        card.className = "resp-card insight-arrive";
-        const isAnswer = e.payload.type === "auto_answer" || (c.answer && !c.detected_question);
-        const isPrepared = e.payload.type === "prepared_answer";
-        const badge = document.createElement("div");
-        badge.className = "resp-kind";
-        badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
-        card.appendChild(badge);
-        const q = document.createElement("div");
-        q.className = "resp-q";
-        q.textContent = c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer");
-        card.appendChild(q);
-        const lowConf = typeof c.stt_confidence === "number" && c.stt_confidence < 0.7;
-        if (lowConf || c.offline === true) {
-          const chip = document.createElement("span");
-          chip.className = "chip";
-          if (lowConf) chip.textContent = "low confidence — verify";
-          if (c.offline === true) chip.textContent = "scaffold — LLM unavailable";
-          card.appendChild(chip);
-        }
-        const body = document.createElement("div");
-        body.className = "resp-body";
-        if (isAnswer || isPrepared) {
-          body.textContent = c.answer ?? "";
-        } else {
-          const ol = document.createElement("ol");
-          for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
-            const li = document.createElement("li");
-            li.textContent = item;
-            ol.appendChild(li);
-          }
-          body.appendChild(ol);
-          const pts = document.createElement("div");
-          pts.className = "resp-points";
-          pts.textContent = (c.talking_points ?? []).join(" · ");
-          body.appendChild(pts);
-        }
-        card.appendChild(body);
-        stack.prepend(card);
-        while (stack.childElementCount > 3) stack.removeChild(stack.lastElementChild);
-        lastInsight = c;
-        pulseTiming();
-        setWave(false);
-      });
-
-      let lastInsight = null;
-      let speakText = "";
       // Speak reads the newest card aloud: question, then the answer/points.
-      $("speakBtn").addEventListener("click", async () => {
+      // Guarded — the button is optional chrome; a missing element must never
+      // kill this script (that class of crash left the overlay deaf once).
+      let speakText = "";
+      $("speakBtn")?.addEventListener("click", async () => {
         if (!lastInsight) return;
         const parts = [];
         if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
