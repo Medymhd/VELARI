@@ -225,8 +225,7 @@ export default function LiveSession() {
   const relayLastAttemptMs = useRef(0);
 
   // Stealth overlay: forward the live session into the always-on-top panel.
-  const [overlayOn, setOverlayOn] = useState(false);
-  const lastForwardedId = useRef<string | null>(null);
+const [overlayOn, setOverlayOn] = useState(false);
 
   // Mode persona — pushed to the server on change; overlay-mode state.
   const [mode, setMode] = useState("general");
@@ -315,19 +314,8 @@ export default function LiveSession() {
     }
   }, [connected]);
 
-  // Forward the live session into the stealth overlay panel.
-  useEffect(() => {
-    const t = transcript[transcript.length - 1];
-    if (overlayOn && t && t.id !== lastForwardedId.current) {
-      lastForwardedId.current = t.id;
-      void emit("overlay://transcript", { speaker: t.speaker ?? null, text: t.text, isFinal: t.isFinal });
-    }
-  }, [transcript, overlayOn]);
-
-  useEffect(() => {
-    const ins = insights[insights.length - 1];
-    if (overlayOn && ins) void emit("overlay://insight", { contentJson: ins.contentJson });
-  }, [insights, overlayOn]);
+  // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) —
+  // it works from every screen and backfills the panel when it opens.
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -386,18 +374,10 @@ export default function LiveSession() {
 
   async function toggleOverlay(on: boolean) {
     // Route through the same authoritative toggle so the checkbox, the
-    // global chord and the X button can never disagree.
+    // global chord and the X button can never disagree. Backfill on open is
+    // handled by the overlay itself (overlay://ready → app-level forwarder).
     try {
       const visible = await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
-      if (visible) {
-        // Backfill: overlay opened mid-session gets the recent transcript +
-        // latest insight immediately instead of waiting for the next frame.
-        for (const t of transcript.slice(-4)) {
-          void emit("overlay://transcript", { speaker: t.speaker ?? null, text: t.text, isFinal: t.isFinal });
-        }
-        const ins = insights[insights.length - 1];
-        if (ins) void emit("overlay://insight", { contentJson: ins.contentJson });
-      }
       if (on !== visible) {
         // Desired state differs from post-toggle reality (e.g. X pressed
         // between) — force it once more.
@@ -902,7 +882,19 @@ export default function LiveSession() {
               </div>
             ) : (
               <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)" }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{String(ins.contentJson.detected_question ?? "—")}</div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>
+                  {String(ins.contentJson.detected_question ?? "—")}
+                  {typeof ins.contentJson.stt_confidence === "number" && (ins.contentJson.stt_confidence as number) < 0.7 && (
+                    <span className="badge" style={{ marginLeft: 8, color: "var(--warning, #fbbf24)", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence — it may be misheard. Verify before speaking.">
+                      low confidence — verify
+                    </span>
+                  )}
+                  {ins.contentJson.offline === true && (
+                    <span className="badge" style={{ marginLeft: 8 }} title="LLM output was unusable — showing a structural scaffold instead.">
+                      offline scaffold
+                    </span>
+                  )}
+                </div>
                 <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
                   {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
                 </ul>

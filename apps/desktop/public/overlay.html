@@ -44,6 +44,23 @@
         flex: 1; min-height: 52px; overflow-y: auto; font-size: 12px; line-height: 1.5;
         border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.25);
       }
+      .resp-stack { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 84px; }
+      .resp-card {
+        border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+        background: rgba(124, 124, 255, 0.07);
+      }
+      .resp-kind { font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+      .resp-q { font-size: 13px; font-weight: 600; line-height: 1.35; }
+      .chip {
+        display: inline-block; margin-top: 4px; font-size: 10px; padding: 1px 7px; border-radius: 999px;
+        border: 1px solid rgba(251, 191, 36, 0.45); color: #fbbf24;
+      }
+      .resp-body { font-size: 11.5px; line-height: 1.45; color: var(--text); margin-top: 4px; }
+      .resp-body ol { margin: 0; padding-left: 16px; }
+      .resp-points { color: var(--muted); margin-top: 3px; }
+      .resp-empty { color: var(--muted); font-size: 11.5px; padding: 6px 2px; }
+      .insight-arrive { animation: respIn 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
+      @keyframes respIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
       .transcript .line { margin-bottom: 4px; }
       .transcript .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
       .transcript .who.you { color: var(--success); }
@@ -91,22 +108,14 @@
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
       <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
-      <section class="sec">
-        <label>Detected question</label>
-        <div class="q" id="qText">Listening…</div>
-      </section>
-      <section class="sec">
-        <label>Framework</label>
-        <ol class="outline" id="outline"></ol>
-        <button class="btn" id="speakBtn" style="margin-top:6px">🔊 Speak</button>
-      </section>
-      <section class="sec">
-        <label>Talking points</label>
-        <div class="points" id="points">—</div>
-        <div class="confidence-meter" id="confMeter" style="display:none"><div id="confFill" style="width:0%"></div></div>
+      <section class="sec" style="flex: 1;">
+        <label>Responses — newest first</label>
+        <div id="responses" class="resp-stack">
+          <div class="resp-empty">Listening — coach answers will stack here, latest on top.</div>
+        </div>
       </section>
       <section class="sec" style="flex: 1;">
-        <label>Interviewer</label>
+        <label>Interviewer — newest first</label>
         <div class="transcript" id="transcript"></div>
       </section>
       <section class="sec">
@@ -117,9 +126,11 @@
     <script>
       if (!window.__TAURI__) {
         // Never leave the overlay silently dead — say what's wrong.
-        const q = document.getElementById("qText");
-        if (q) q.textContent = "Overlay unavailable: Tauri API failed to load — restart the app.";
-        q.parentElement.style.border = "1px solid #f87171";
+        const stack = document.getElementById("responses");
+        if (stack) {
+          stack.textContent = "Overlay unavailable: Tauri API failed to load — restart the app.";
+          stack.style.border = "1px solid #f87171";
+        }
       } else {
       const { invoke, event } = window.__TAURI__;
       const $ = (id) => document.getElementById(id);
@@ -190,14 +201,6 @@
         reportHeight();
       });
       function setWave(active) { const w = $("wave"); if (w) w.style.display = active ? "flex" : "none"; }
-      function setConfidence(v) {
-        const m = $("confMeter"), f = $("confFill");
-        if (!m || !f) return;
-        if (v == null) { m.style.display = "none"; return; }
-        m.style.display = "block";
-        m.className = "confidence-meter " + (v >= 0.8 ? "high" : v >= 0.5 ? "med" : "low");
-        f.style.width = Math.round(v * 100) + "%";
-      }
       function pulseTiming() {
         const t = $("timingFill");
         if (!t) return;
@@ -206,59 +209,86 @@
         setTimeout(() => { t.style.width = "0%"; }, 3000);
       }
 
+      // Announce readiness — the app-level forwarder backfills the current
+      // session tail (recent transcript + latest response) on open.
+      event.emit("overlay://ready", {});
+
       event.listen("overlay://transcript", (e) => {
         const { speaker, text, isFinal } = e.payload;
-        // Both sides flow — interviewer prominent, the user's own voice muted
-        // so the panel reads like a live conversation, never blank.
+        // Both sides flow — interviewer prominent, the user's own voice muted.
+        // Newest at TOP (descending): the freshest speech is the most relevant.
         setWave(!isFinal);
         const el = $("transcript");
-        const line = document.createElement("div");
+        const existing = el.querySelector(`[data-utt="${CSS.escape(String(e.payload.id ?? ""))}"]`);
+        const line = existing ?? document.createElement("div");
         line.className = "line" + (isFinal ? "" : " partial");
         line.dataset.final = String(isFinal);
+        if (e.payload.id) line.dataset.utt = String(e.payload.id);
         const who = document.createElement("span");
         who.className = "who" + (speaker === "user" ? " you" : "");
         who.textContent = speaker === "user" ? "YOU" : "IV";
         if (speaker === "user") line.style.opacity = "0.6";
-        line.appendChild(who);
-        line.appendChild(document.createTextNode(text));
-        const last = el.lastElementChild;
-        if (last && last.dataset.final === "false" && !isFinal && last.querySelector(".who").textContent === who.textContent) el.replaceChild(line, last);
-        else el.appendChild(line);
-        while (el.childElementCount > 8) el.removeChild(el.firstElementChild);
-        el.scrollTop = el.scrollHeight;
+        line.replaceChildren(who, document.createTextNode(text));
+        if (!existing) el.prepend(line);
+        // Cap both ends — the list grows downward from the newest line.
+        while (el.childElementCount > 8) el.removeChild(el.lastElementChild);
+        el.scrollTop = 0;
         if (isFinal) setTimeout(() => setWave(false), 800);
       });
 
       event.listen("overlay://insight", (e) => {
         const c = e.payload.contentJson ?? {};
-        // Auto-answer: full drafted answer replaces the framework view.
-        if (e.payload.type === "auto_answer" || (c.answer && !c.detected_question)) {
-          $("qText").textContent = c.question ?? "Auto-drafted answer";
-          $("outline").textContent = "";
-          $("points").textContent = c.answer ?? "—";
-          lastInsight = { detected_question: c.question ?? "", talking_points: [c.answer ?? ""] };
-          setConfidence(null);
-          pulseTiming();
-          setWave(false);
-          return;
+        // Card stack — newest response pinned at the top, previous cards
+        // below, so the latest answer is always in the same spot.
+        const stack = $("responses");
+        const card = document.createElement("div");
+        card.className = "resp-card insight-arrive";
+        const isAnswer = e.payload.type === "auto_answer" || (c.answer && !c.detected_question);
+        const isPrepared = e.payload.type === "prepared_answer";
+        const badge = document.createElement("div");
+        badge.className = "resp-kind";
+        badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
+        card.appendChild(badge);
+        const q = document.createElement("div");
+        q.className = "resp-q";
+        q.textContent = c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer");
+        card.appendChild(q);
+        const lowConf = typeof c.stt_confidence === "number" && c.stt_confidence < 0.7;
+        if (lowConf || c.offline === true) {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          if (lowConf) chip.textContent = "low confidence — verify";
+          if (c.offline === true) chip.textContent = "scaffold — LLM unavailable";
+          card.appendChild(chip);
         }
-        if (c.detected_question) $("qText").textContent = c.detected_question;
-        const outline = $("outline");
-        outline.textContent = "";
-        for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
-          const li = document.createElement("li");
-          li.textContent = item;
-          outline.appendChild(li);
+        const body = document.createElement("div");
+        body.className = "resp-body";
+        if (isAnswer || isPrepared) {
+          body.textContent = c.answer ?? "";
+        } else {
+          const ol = document.createElement("ol");
+          for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
+            const li = document.createElement("li");
+            li.textContent = item;
+            ol.appendChild(li);
+          }
+          body.appendChild(ol);
+          const pts = document.createElement("div");
+          pts.className = "resp-points";
+          pts.textContent = (c.talking_points ?? []).join(" · ");
+          body.appendChild(pts);
         }
-        $("points").textContent = (c.talking_points ?? []).join(" · ") || "—";
+        card.appendChild(body);
+        stack.prepend(card);
+        while (stack.childElementCount > 3) stack.removeChild(stack.lastElementChild);
         lastInsight = c;
-        setConfidence(typeof c.confidence === "number" ? c.confidence : null);
         pulseTiming();
         setWave(false);
       });
 
       let lastInsight = null;
       let speakText = "";
+      // Speak reads the newest card aloud: question, then the answer/points.
       $("speakBtn").addEventListener("click", async () => {
         if (!lastInsight) return;
         const parts = [];
