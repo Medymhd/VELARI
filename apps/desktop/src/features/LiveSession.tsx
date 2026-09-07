@@ -175,7 +175,7 @@ function useRealtime(sessionId: string | null) {
 }
 
 export default function LiveSession() {
-  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, setSession, stealth, setStealth, consentConfirmed, setConsent, notify } = useStore();
+  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, pushInsight, setSession, stealth, setStealth, consentConfirmed, setConsent, notify } = useStore();
   const [busy, setBusy] = useState(false);
   const [stealthBusy, setStealthBusy] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
@@ -183,6 +183,34 @@ export default function LiveSession() {
   const wsRef = useRealtime(sessionId);
   // Late-bound hook so effects declared before sendClientFinal can reach it.
   const sendClientFinalRef = useRef<((text: string, confidence: number, source: "cloud_stt" | "imported") => void) | null>(null);
+
+  // Hydration: opening a session loads its persisted transcript + insights
+  // from the API, so reopening (even a completed one) continues in place.
+  // resetLive() from Home guarantees we never append to another session's data.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(false);
+    if (!sessionId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [segs, ins] = await Promise.all([
+          api.transcript(sessionId).catch(() => []),
+          api.insights(sessionId).catch(() => []),
+        ]);
+        if (cancelled) return;
+        for (const s of segs) {
+          pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: true, confidence: s.confidence ?? undefined, speaker: s.speaker === "user" || s.speaker === "interviewer" ? (s.speaker as "user" | "interviewer") : undefined });
+        }
+        for (const i of ins) {
+          pushInsight({ id: i.id, type: i.type, contentJson: i.contentJson, createdAt: String(i.createdAt ?? new Date().toISOString()) });
+        }
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId, pushTranscript, pushInsight]);
 
   // Browser-companion capture (rival Ctrl+Y parity): poll for web contexts
   // captured via the extension and drop them into the transcript as notes.
@@ -793,10 +821,10 @@ const [overlayOn, setOverlayOn] = useState(false);
             {!consentConfirmed && <span className="badge warn">consent required</span>}
           </div>
           <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
-            <button disabled={busy || !consentConfirmed || !(sessionStatus === "draft" || sessionStatus === "paused")} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : "Start"}</button>
+            <button disabled={busy || !consentConfirmed || !(sessionStatus === "draft" || sessionStatus === "paused" || sessionStatus === "completed")} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : sessionStatus === "completed" ? "Reopen session" : "Start"}</button>
             <button disabled={busy || sessionStatus !== "live"} onClick={() => void act("pause")}>Pause</button>
             <button disabled={busy || !(sessionStatus === "live" || sessionStatus === "paused")} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completing…" : "Complete"}</button>
-            {sessionStatus === "completed" && <span className="small muted" style={{ alignSelf: "center" }}>Session completed — start a new one from Home.</span>}
+            {sessionStatus === "completed" && <span className="small muted" style={{ alignSelf: "center" }}>Completed — transcript below. Reopen to continue capture and coaching.</span>}
           </div>
         </div>
 
@@ -857,13 +885,23 @@ const [overlayOn, setOverlayOn] = useState(false);
             </span>
           </div>
           {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
-          {insights.slice(-6).reverse().map((ins) => (
-            ins.type === "prepared_answer" ? (
-              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)", borderColor: "var(--success)" }}>
+          {/* Ring system: green = newest response, yellow = low STT confidence
+              (question may be misheard), blue = everything else. */}
+          {insights.slice(-6).reverse().map((ins, idx) => {
+            const isNewest = idx === 0;
+            const lowConf = typeof ins.contentJson.stt_confidence === "number" && (ins.contentJson.stt_confidence as number) < 0.7;
+            const ring = isNewest ? "var(--success)" : lowConf ? "#fbbf24" : "var(--accent)";
+            const cardStyle = { background: "var(--surface-2)", borderColor: ring, borderWidth: 2 };
+            return ins.type === "prepared_answer" ? (
+              <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div className="small muted" style={{ marginBottom: 4 }}>
                   Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) — {String(ins.contentJson.title ?? "")}
+                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>}
                 </div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {ins.contentJson.cached === true && typeof ins.contentJson.cached_question === "string" && ins.contentJson.cached_question !== ins.contentJson.answer && (
+                  <div className="small muted" style={{ marginTop: 4 }}>answered as: {String(ins.contentJson.cached_question)}</div>
+                )}
                 {overlayOn && (
                   <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { contentJson: { talking_points: [String(ins.contentJson.answer ?? "")] } })}>
                     Send to overlay
@@ -871,8 +909,10 @@ const [overlayOn, setOverlayOn] = useState(false);
                 )}
               </div>
             ) : ins.type === "auto_answer" ? (
-              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)", borderColor: "var(--accent)" }}>
-                <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer — {String(ins.contentJson.question ?? "").slice(0, 120)}</div>
+              <div key={ins.id} className="card insight-arrive" style={cardStyle}>
+                <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer — {String(ins.contentJson.question ?? "").slice(0, 120)}
+                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>}
+                </div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
                 {overlayOn && (
                   <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { contentJson: { talking_points: [String(ins.contentJson.answer ?? "")] } })}>
@@ -881,13 +921,16 @@ const [overlayOn, setOverlayOn] = useState(false);
                 )}
               </div>
             ) : (
-              <div key={ins.id} className="card insight-arrive" style={{ background: "var(--surface-2)" }}>
+              <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>
                   {String(ins.contentJson.detected_question ?? "—")}
-                  {typeof ins.contentJson.stt_confidence === "number" && (ins.contentJson.stt_confidence as number) < 0.7 && (
-                    <span className="badge" style={{ marginLeft: 8, color: "var(--warning, #fbbf24)", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence — it may be misheard. Verify before speaking.">
+                  {lowConf && (
+                    <span className="badge" style={{ marginLeft: 8, color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence — it may be misheard. Verify before speaking.">
                       low confidence — verify
                     </span>
+                  )}
+                  {ins.contentJson.cached === true && (
+                    <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>
                   )}
                   {ins.contentJson.offline === true && (
                     <span className="badge" style={{ marginLeft: 8 }} title="LLM output was unusable — showing a structural scaffold instead.">
@@ -895,13 +938,16 @@ const [overlayOn, setOverlayOn] = useState(false);
                     </span>
                   )}
                 </div>
+                {ins.contentJson.cached === true && typeof ins.contentJson.cached_question === "string" && (
+                  <div className="small muted" style={{ marginTop: 2 }}>answered as: {String(ins.contentJson.cached_question)}</div>
+                )}
                 <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
                   {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
                 </ul>
                 <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
               </div>
-            )
-          ))}
+            );
+          })}
         </div>
 
         <div className="card grid">

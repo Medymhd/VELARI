@@ -57,8 +57,8 @@ export const api = {
   sessionAction: (id: string, action: "start" | "pause" | "complete") =>
     req(`/interview-sessions/${id}/${action}`, { method: "POST" }),
   deleteSession: (id: string) => req(`/interview-sessions/${id}`, { method: "DELETE" }),
-  transcript: (id: string) => req<{ id: string; text: string; sequenceNo: number }[]>(`/interview-sessions/${id}/transcript`),
-  insights: (id: string) => req<{ id: string; type: string; contentJson: Record<string, unknown> }[]>(`/interview-sessions/${id}/insights`),
+  transcript: (id: string) => req<{ id: string; text: string; sequenceNo: number; confidence?: number | null; speaker?: string | null }[]>(`/interview-sessions/${id}/transcript`),
+  insights: (id: string) => req<{ id: string; type: string; contentJson: Record<string, unknown>; createdAt?: string }[]>(`/interview-sessions/${id}/insights`),
   exportSession: (id: string) => req<Record<string, unknown>>(`/interview-sessions/${id}/export`, { method: "POST" }),
   visionSolve: (body: { sessionId?: string; prompt: string; images: { base64: string; mimeType: string }[] }) =>
     req<{ ok: boolean; text: string }>("/ai/vision", { method: "POST", body: JSON.stringify(body) }),
