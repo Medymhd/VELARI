@@ -62,8 +62,24 @@ export class OpenAICompatibleProvider extends AIProvider {
     }
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), request.maxLatencyMs ?? 20_000);
+    // 2048: reasoning models (gpt-oss) burn completion tokens on analysis
+    // before the JSON payload — 300-class budgets trip "max completion tokens
+    // reached" and the strict schema never validates.
+    const body = {
+      model: this.modelFor(request),
+      messages: request.messages ?? [],
+      max_tokens: 2048,
+      ...(request.responseSchema
+        ? {
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "app_output", schema: request.responseSchema, strict: true },
+            },
+          }
+        : {}),
+    };
     try {
-      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      let res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         signal: controller.signal,
         headers: {
@@ -71,35 +87,51 @@ export class OpenAICompatibleProvider extends AIProvider {
           ...(ctx.secret ? { authorization: `Bearer ${ctx.secret}` } : {}),
           "x-request-id": ctx.requestId,
         },
-        body: JSON.stringify({
-          model: this.modelFor(request),
-          messages: request.messages ?? [],
-          ...(request.responseSchema
-            ? {
-                response_format: {
-                  type: "json_schema",
-                  json_schema: { name: "app_output", schema: request.responseSchema, strict: true },
-                },
-              }
-            : {}),
-        }),
+        body: JSON.stringify(body),
       });
-      const body = (await res.json()) as ChatCompletionResponse;
-      if (!res.ok || body.error) {
-        throw classifyHttp(res.status, body.error?.message ?? res.statusText);
+      // Strict json_schema rejected by the provider/model (HTTP 400) — retry
+      // once without it and parse the plain text leniently.
+      if (!res.ok && request.responseSchema && res.status === 400) {
+        const { response_format: _dropped, ...plain } = body as Record<string, unknown>;
+        res = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "content-type": "application/json",
+            ...(ctx.secret ? { authorization: `Bearer ${ctx.secret}` } : {}),
+            "x-request-id": ctx.requestId,
+          },
+          body: JSON.stringify(plain),
+        });
       }
-      const text = body.choices?.[0]?.message?.content ?? "";
+      const payload = (await res.json()) as ChatCompletionResponse;
+      if (!res.ok || payload.error) {
+        throw classifyHttp(res.status, payload.error?.message ?? res.statusText);
+      }
+      let text = payload.choices?.[0]?.message?.content ?? "";
       let structured: Record<string, unknown> | null = null;
       if (request.responseSchema) {
         try {
           structured = JSON.parse(text) as Record<string, unknown>;
         } catch {
-          throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+          // Lenient retry (no-schema fallback path): strip code fences and
+          // take the outermost {...} before giving up.
+          const m = /\{[\s\S]*\}/.exec(text.replace(/```(?:json)?/g, ""));
+          if (m) {
+            try {
+              structured = JSON.parse(m[0]) as Record<string, unknown>;
+              text = m[0];
+            } catch {
+              throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+            }
+          } else {
+            throw new ProviderError("invalid_output", "Model returned non-JSON for structured request");
+          }
         }
       }
       this.healthScore = Math.min(1, this.healthScore + 0.05);
       this.lastError = null;
-      return ok(text, structured, Date.now() - started, body.usage);
+      return ok(text, structured, Date.now() - started, payload.usage);
     } catch (e) {
       const pe = e instanceof ProviderError ? e : new ProviderError("connection", String(e));
       this.lastError = pe.message;

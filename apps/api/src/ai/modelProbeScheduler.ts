@@ -61,15 +61,19 @@ async function resolveSchedule(db: PrismaClient): Promise<{ boot: boolean; inter
   const workspaces = await db.workspace.findMany({ select: { policyJson: true } });
   let boot = false;
   let shortest: number | null = null;
+  let explicit = false;
   for (const w of workspaces) {
     const s = (w.policyJson as { benchSchedule?: string } | null)?.benchSchedule;
     if (!SCHEDULES.includes(s as Schedule)) continue;
+    explicit = true;
     if (s === "at_launch") boot = true;
     else if (s !== "off") {
       const ms = INTERVAL_MS[s as Exclude<Schedule, "at_launch" | "off">];
       if (shortest === null || ms < shortest) shortest = ms;
     }
   }
+  // No explicit schedule anywhere = the documented default: at launch.
+  if (!explicit) return { boot: true, intervalMs: null };
   return { boot, intervalMs: shortest };
 }
 

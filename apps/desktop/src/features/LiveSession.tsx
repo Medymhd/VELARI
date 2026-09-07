@@ -602,7 +602,9 @@ export default function LiveSession() {
       const next = action === "start" ? "live" : action === "pause" ? "paused" : "completed";
       setSession(sessionId, next);
       if (action === "start") {
-        void startCapture();
+        // Browser mic only when the native mic isn't handling it — running
+        // both double-captures the same input (unlabeled duplicates).
+        if (!(nativeAvailable && nativeMic)) void startCapture();
         // Reconcile: any checked native channel starts live here too.
         if (nativeAvailable) {
           if (nativeMic) void startNativeChannel("mic").catch((e) => notify("error", `Mic capture failed: ${errText(e)}`));
