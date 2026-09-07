@@ -12,7 +12,19 @@ export interface CoachContextInput {
   mode?: string | undefined;
   /** Session prep materials (JD/CV/notes) — quote them, never invent. */
   prepContext?: string | undefined;
+  /** Response length: short (1-2 sentences) | medium (default) | long. */
+  length?: "short" | "medium" | "long" | undefined;
 }
+
+/** Rival SPOKEN_ANSWER_CONTRACT budgets per length setting. */
+const LENGTH_CONTRACT: Record<"short" | "medium" | "long", string> = {
+  short:
+    "RESPONSE LENGTH: SHORT — talking_points are ONE crisp line each (max 2 points, 8-15 words total); the user reads it in under 10 seconds. No preamble.",
+  medium:
+    "RESPONSE LENGTH: MEDIUM — talking_points 40-90 words total across max 3 points; the user speaks it in 15-30 seconds.",
+  long:
+    "RESPONSE LENGTH: LONG — talking_points up to 4 points, 100-180 words total with sub-structure (situation, decision, outcome, lesson); the user speaks it in 45-90 seconds.",
+};
 
 export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
   const system = [
@@ -39,13 +51,15 @@ export function buildCoachMessages(input: CoachContextInput): ChatMessage[] {
     "Respond ONLY with JSON matching:",
     '{"detected_question":string,"suggested_outline":string[],"talking_points":string[],"confidence":number,"requires_user_review":boolean}',
     "",
+    LENGTH_CONTRACT[input.length ?? "medium"],
+    "",
     modePersona(input.mode),
   ].join("\n");
   const context = [
+    input.prepContext ? `SESSION PREP MATERIALS (HIGHEST PRIORITY — the user uploaded these; craft answers FROM these materials FIRST. Quote the JD's own requirements, cite the CV's real projects, and reuse drilled Q&A phrasing where relevant. Only fall back to general coaching when the materials genuinely lack the answer):\n${input.prepContext}` : "",
     input.rollingSummary ? `Earlier session summary (context only):\n${input.rollingSummary}` : "",
     `Recent verbatim transcript:\n${input.verbatimTranscript}`,
     input.roleDescription ? `Candidate role/context:\n${input.roleDescription}` : "",
-    input.prepContext ? `SESSION PREP MATERIALS (the user prepared these — ground the outline and talking points in them; quote the JD's own requirements where relevant):\n${input.prepContext}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -91,13 +105,18 @@ export function buildAnswerMessages(input: {
   transcriptTail: string;
   rollingSummary?: string | undefined;
   mode?: string | undefined;
+  length?: "short" | "medium" | "long" | undefined;
 }): ChatMessage[] {
   const system = [
     "You ARE the user — speak as them in first person. The interviewer just asked the question below.",
     "Output ONLY the exact words the user should say out loud. No preamble, no quotes, no markdown, no labels.",
     "",
     "ANSWER CONTRACT:",
-    "- 2-4 sentences, 40-90 words total (reference SPOKEN_SHORT budget). Lead with the direct answer, then the one proof point.",
+    input.length === "short"
+      ? "- 1-2 sentences, 15-30 words total. Lead with the answer plus one proof fragment. Readable in under 10 seconds."
+      : input.length === "long"
+        ? "- 5-8 sentences, 100-180 words: situation, decision owned, measurable outcome, lesson."
+        : "- 2-4 sentences, 40-90 words total. Lead with the direct answer, then the one proof point.",
     "- Behavioral: one concrete STAR moment — situation, decision owned, measurable outcome. Pick the story yourself; do not offer options.",
     "- Technical: approach in one sentence, then the steps that prove depth, then the tradeoff. Complexity concrete.",
     "- Honesty: if the transcript gives no matching background, answer generically but honestly ('From a comparable project…') — never invent employers, names, dates, or metrics.",

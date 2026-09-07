@@ -236,6 +236,14 @@ export default function LiveSession() {
     }
   }, [mode, connected]);
 
+  // Response length — short/medium/long budget, pushed to the server on change.
+  const [length, setLength] = useState<"short" | "medium" | "long">("medium");
+  useEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "session.length", eventId: Math.random().toString(36).slice(2), length }));
+    }
+  }, [length, connected]);
+
   // Audio watchdog — reference "0 chunks in 12s" banner parity: a capture toggle
   // that is ON but receives no audio for 12s means a dead/busy device.
   const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
@@ -847,14 +855,26 @@ export default function LiveSession() {
         <div className="card grid">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="kicker">Coaching</span>
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value)}
-              style={{ maxWidth: 170, fontSize: 12 }}
-              title="Mode persona — reshapes coaching and answer style"
-            >
-              {MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+            <span className="row" style={{ gap: 6 }}>
+              <select
+                value={length}
+                onChange={(e) => setLength(e.target.value as "short" | "medium" | "long")}
+                style={{ maxWidth: 110, fontSize: 12 }}
+                title="Response length budget — how long spoken answers should be"
+              >
+                <option value="short">Short</option>
+                <option value="medium">Medium</option>
+                <option value="long">Long</option>
+              </select>
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                style={{ maxWidth: 170, fontSize: 12 }}
+                title="Mode persona — reshapes coaching and answer style"
+              >
+                {MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </span>
           </div>
           {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
           {insights.slice(-6).reverse().map((ins) => (

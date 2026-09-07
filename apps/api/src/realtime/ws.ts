@@ -77,6 +77,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
     /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
+    /** Response length preference (rival length modes): short | medium | long. */
+    let sessionLength: "short" | "medium" | "long" = "medium";
     /** Profile Intelligence persona — coach answers cite real background. */
     let personaContext: string | undefined;
     /** Session prep materials: CV/JD/notes text for the coach prompt, and the
@@ -296,7 +298,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         void summarizeChunk();
       }
 
-      scheduleCoaching();
+      // Rival semantic (Cluely/LockedIn parity): the coach NEVER responds to
+      // the user's own voice — only interviewer speech (loopback) triggers
+      // coaching. Channel-less (browser mic) finals count as interviewer.
+      if (speaker !== "user") scheduleCoaching();
     }
 
     /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
@@ -391,6 +396,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           mode: sessionMode,
           roleDescription: personaContext,
           prepContext,
+          length: sessionLength,
         });
         if (styleProfile) {
           messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
@@ -507,7 +513,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             message: String(e),
           });
         }
-      }, 900);
+      }, 400);
     }
 
     /** Question dedup for auto-answer — one draft per question text. */
@@ -533,6 +539,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               transcriptTail,
               rollingSummary,
               mode: sessionMode,
+              length: sessionLength,
             }),
           } as never,
         );
@@ -605,6 +612,14 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         if (isInterviewMode(frame.mode)) {
           sessionMode = frame.mode;
           log.info("session mode set", { mode: sessionMode, sessionId: session!.id });
+        }
+        return;
+      }
+
+      if (frame.type === "session.length") {
+        if (["short", "medium", "long"].includes(frame.length)) {
+          sessionLength = frame.length as "short" | "medium" | "long";
+          log.info("session length set", { length: sessionLength, sessionId: session!.id });
         }
         return;
       }

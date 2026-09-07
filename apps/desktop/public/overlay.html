@@ -46,6 +46,7 @@
       }
       .transcript .line { margin-bottom: 4px; }
       .transcript .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
+      .transcript .who.you { color: var(--success); }
       .transcript .partial { opacity: 0.55; }
       .notes {
         min-height: 44px; max-height: 72px; overflow-y: auto; font-size: 12px; line-height: 1.5;
@@ -207,20 +208,23 @@
 
       event.listen("overlay://transcript", (e) => {
         const { speaker, text, isFinal } = e.payload;
-        if (speaker !== "interviewer") return; // the panel tracks the interviewer
+        // Both sides flow — interviewer prominent, the user's own voice muted
+        // so the panel reads like a live conversation, never blank.
         setWave(!isFinal);
         const el = $("transcript");
         const line = document.createElement("div");
         line.className = "line" + (isFinal ? "" : " partial");
+        line.dataset.final = String(isFinal);
         const who = document.createElement("span");
-        who.className = "who";
-        who.textContent = "IV";
+        who.className = "who" + (speaker === "user" ? " you" : "");
+        who.textContent = speaker === "user" ? "YOU" : "IV";
+        if (speaker === "user") line.style.opacity = "0.6";
         line.appendChild(who);
         line.appendChild(document.createTextNode(text));
         const last = el.lastElementChild;
-        if (last && last.dataset.final === "false" && !isFinal) el.replaceChild(line, last);
+        if (last && last.dataset.final === "false" && !isFinal && last.querySelector(".who").textContent === who.textContent) el.replaceChild(line, last);
         else el.appendChild(line);
-        while (el.childElementCount > 6) el.removeChild(el.firstElementChild);
+        while (el.childElementCount > 8) el.removeChild(el.firstElementChild);
         el.scrollTop = el.scrollHeight;
         if (isFinal) setTimeout(() => setWave(false), 800);
       });

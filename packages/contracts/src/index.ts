@@ -265,6 +265,12 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
     type: z.literal("session.reload_contexts"),
     eventId: z.string(),
   }),
+  z.object({
+    type: z.literal("session.length"),
+    eventId: z.string(),
+    /** Response length preference: short (1-2 sentences) | medium (default) | long. */
+    length: z.enum(["short", "medium", "long"]),
+  }),
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;
 
