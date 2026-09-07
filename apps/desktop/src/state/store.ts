@@ -97,7 +97,19 @@ export const useStore = create<State>((set) => ({
   },
   setSession: (sessionId, sessionStatus) => set({ sessionId, ...(sessionStatus ? { sessionStatus } : {}) }),
   setConsent: (consentConfirmed) => set({ consentConfirmed }),
-  pushTranscript: (item) => set((s) => ({ transcript: [...s.transcript, item].slice(-300) })),
+  pushTranscript: (item) =>
+    set((s) => {
+      // Dictation UX: a partial updates its existing line in place (stable
+      // per-utterance id from the server); a final commits it. No row churn —
+      // one line per utterance, like a voice-typing keyboard.
+      const idx = s.transcript.findIndex((t) => t.id === item.id);
+      if (idx >= 0) {
+        const next = s.transcript.slice();
+        next[idx] = item;
+        return { transcript: next };
+      }
+      return { transcript: [...s.transcript, item].slice(-300) };
+    }),
   pushInsight: (item) => set((s) => ({ insights: [...s.insights, item].slice(-50) })),
   setStealth: (stealth) => set({ stealth }),
   setConnected: (connected) => set({ connected }),
