@@ -56,11 +56,15 @@ if (env.OPENROUTER_API_KEY) {
 }
 if (env.OPENAI_COMPAT_BASE_URL && env.OPENAI_COMPAT_API_KEY) {
   gateways.push({
-    id: "openai-compat",
+    // Must match the runtime provider id (apps/api/src/ai/runtime.ts) — the
+    // COACH_MODEL_<ID> env line is read per provider id at call time.
+    id: env.OPENAI_COMPAT_ID ?? "openai-compat",
     base: env.OPENAI_COMPAT_BASE_URL.replace(/\/+$/, ""),
     key: env.OPENAI_COMPAT_API_KEY,
     keyEnv: "OPENAI_COMPAT_API_KEY",
     envPrefix: "OPENAI_COMPAT",
+    // Explicit model list (env) probes first; discovery fills the rest.
+    models: (env.OPENAI_COMPAT_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   });
 }
 
@@ -72,6 +76,8 @@ const COACH_USER = "Interviewer: Tell me about your experience as an AI training
 const BAD_NAME = /guard|whisper|tts|embed|safeguard|lyria|preview|image|video|omni/i;
 
 async function discover(gw) {
+  // Explicit list short-circuits discovery (env-named models always probe).
+  if (gw.models?.length) return gw.models.map((id) => ({ id, ctx: 0, img: false }));
   const res = await fetch(`${gw.base}/models`, {
     headers: { authorization: `Bearer ${gw.key}` },
     signal: AbortSignal.timeout(15_000),
@@ -87,8 +93,9 @@ async function discover(gw) {
     const bonus = /120b|70b|ultra|super|pro|large/i.test(id) ? 200 : /mini|nano|small|flash|lightning/i.test(id) ? -100 : 0;
     return b + bonus;
   };
+  // ctx 0 = gateway doesn't report context length — probe anyway, don't exclude.
   return rows
-    .filter((r) => !BAD_NAME.test(r.id) && r.ctx >= 32_768)
+    .filter((r) => !BAD_NAME.test(r.id) && (r.ctx === 0 || r.ctx >= 32_768))
     .sort((a, b2) => size(b2.id) - size(a.id))
     .slice(0, 6);
 }

@@ -726,7 +726,6 @@ mod dual_loopback {
                                 if packet == 0 {
                                     break;
                                 }
-                                let byte_len = packet as usize * align;
                                 let mut frames_ptr: *mut u8 = std::ptr::null_mut();
                                 let mut written = 0u32;
                                 let mut flags = 0u32;
@@ -736,7 +735,11 @@ mod dual_loopback {
                                 {
                                     break;
                                 }
-                                let sample_count = written as usize / 4; // mixformat is f32
+                                // GetBuffer returns FRAMES; mixformat is f32 interleaved,
+                                // so float samples = frames x channels. (A bytes/4
+                                // conversion here silently discarded 7/8 of every packet —
+                                // the reported "system audio not captured" bug.)
+                                let sample_count = written as usize * channels;
                                 if sample_count > 0 {
                                     let data = std::slice::from_raw_parts(frames_ptr as *const f32, sample_count);
                                     if let Ok(mut p) = producer.lock() {

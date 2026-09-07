@@ -79,6 +79,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let sessionMode = "general";
     /** Response length preference (rival length modes): short | medium | long. */
     let sessionLength: "short" | "medium" | "long" = "medium";
+    /** Phone-call mode: coach also fires on mic speech (interviewer arrives via
+     *  the user's mic on speakerphone/in-person calls — without this the coach
+     *  waits for loopback audio that never comes). */
+    let coachOnUserSpeech = false;
     /** Profile Intelligence persona — coach answers cite real background. */
     let personaContext: string | undefined;
     /** Session prep materials: CV/JD/notes text for the coach prompt, and the
@@ -298,10 +302,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         void summarizeChunk();
       }
 
-      // Rival semantic (Cluely/LockedIn parity): the coach NEVER responds to
-      // the user's own voice — only interviewer speech (loopback) triggers
-      // coaching. Channel-less (browser mic) finals count as interviewer.
-      if (speaker !== "user") scheduleCoaching();
+      // Rival semantic (Cluely/LockedIn parity): the coach responds to the
+      // interviewer's speech (loopback). Channel-less (browser mic) finals
+      // count as interviewer. Phone-call mode opts mic speech in as well —
+      // speakerphone/in-person interviews deliver the interviewer via mic.
+      if (speaker !== "user" || coachOnUserSpeech) scheduleCoaching();
     }
 
     /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
@@ -621,6 +626,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           sessionLength = frame.length as "short" | "medium" | "long";
           log.info("session length set", { length: sessionLength, sessionId: session!.id });
         }
+        return;
+      }
+
+      if (frame.type === "session.coach_user_speech") {
+        coachOnUserSpeech = frame.enabled;
+        log.info("coach user-speech mode set", { enabled: coachOnUserSpeech, sessionId: session!.id });
         return;
       }
 
