@@ -180,8 +180,10 @@ pub fn run() {
             screen::cropper_select,
             overlay::overlay_show,
             overlay::overlay_hide,
+            overlay::overlay_toggle,
             overlay::overlay_set_passthrough,
             overlay::overlay_resize,
+            overlay::overlay_cycle_position,
             tts::tts_piper_available,
             tts::tts_speak,
             audio::list_input_devices,
@@ -231,9 +233,16 @@ pub fn run() {
             tray.build(app)?;
 
             // Global chords registered app-wide (independent of any screen):
-            //   Ctrl+Shift+O — stealth overlay toggle (handled by JS screens)
+            //   Ctrl+Shift+O — overlay show/hide (authoritative Rust toggle)
+            //   Ctrl+Shift+P — cycle overlay position (handled by JS screens)
+            //   Ctrl+Shift+B — overlay mouse passthrough (handled by JS)
             //   Ctrl+Shift+H — main-window show/hide (handled here in Rust so
             //                  it works even when no screen is listening)
+            let _ = stealth::keybind::register_chord(
+                &handle,
+                "Ctrl+Shift+O".into(),
+                "overlay-toggle".into(),
+            );
             let _ = stealth::keybind::register_chord(
                 &handle,
                 "Ctrl+Shift+H".into(),
@@ -248,8 +257,24 @@ pub fn run() {
                         action: String,
                     }
                     if let Ok(p) = serde_json::from_str::<Payload>(ev.payload()) {
-                        if p.action == "app-toggle" {
-                            let _ = app_toggle_main(h.clone());
+                        match p.action.as_str() {
+                            "app-toggle" => {
+                                let _ = app_toggle_main(h.clone());
+                            }
+                            // Authoritative overlay toggle: checks REAL window
+                            // visibility — works on every screen, immune to
+                            // JS state desync ("sometimes doesn't hide" bug).
+                            "overlay-toggle" => {
+                                let h2 = h.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let _ = overlay::overlay_toggle(
+                                        h2,
+                                        "interview-intelligence".into(),
+                                    )
+                                    .await;
+                                });
+                            }
+                            _ => {}
                         }
                     }
                 });

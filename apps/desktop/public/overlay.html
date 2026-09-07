@@ -147,7 +147,13 @@
         $("tapBtn").textContent = "Tap keys";
         $("tapState").textContent = "";
       }
-      $("hideBtn").addEventListener("click", () => invoke("overlay_hide"));
+      $("hideBtn").addEventListener("click", async () => {
+        try {
+          await invoke("overlay_hide", { verticalId: "interview-intelligence" });
+        } catch (e) {
+          console.error("hide failed", e);
+        }
+      });
 
       event.listen("keyboard://captured", (e) => {
         if (!tapState.active) return;

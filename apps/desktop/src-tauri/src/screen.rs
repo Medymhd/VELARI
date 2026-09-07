@@ -8,7 +8,9 @@ use crate::audio::capture::base64_encode;
 /// Capture the primary monitor and return base64 PNG
 /// (reference `ScreenshotHelper.ts` parity).
 #[tauri::command]
-pub fn take_screenshot() -> Result<String, String> {
+/// async: capture is CPU-heavy (full-screen PNG encode) — keep it off the
+/// main thread so the UI never stalls.
+pub async fn take_screenshot() -> Result<String, String> {
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
     let monitor = monitors.first().ok_or_else(|| "no monitor found".to_string())?;
     let image = monitor.capture_image().map_err(|e| e.to_string())?;
@@ -23,7 +25,9 @@ pub fn take_screenshot() -> Result<String, String> {
 /// The window spans the ENTIRE virtual desktop so one drag can cross monitors;
 /// `cropper_select` stitches the per-monitor captures back together.
 #[tauri::command]
-pub fn open_cropper(app: tauri::AppHandle) -> Result<(), String> {
+/// async: open_cropper creates a window — sync window creation deadlocks the
+/// main thread on Windows (same rule as overlay_show).
+pub async fn open_cropper(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window("cropper") {
         let _ = existing.set_focus();
         return Ok(());
@@ -75,7 +79,8 @@ pub fn open_cropper(app: tauri::AppHandle) -> Result<(), String> {
 /// the virtual desktop in primary-monitor DPI space, so the selection is
 /// scaled by the primary scale factor into physical px where xcap operates.
 #[tauri::command]
-pub fn cropper_select(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<String, String> {
+/// async: multi-monitor capture + stitch + PNG encode is CPU-heavy.
+pub async fn cropper_select(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<String, String> {
     if width < 1 || height < 1 {
         return Err("empty selection".into());
     }

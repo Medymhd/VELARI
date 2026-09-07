@@ -67,7 +67,9 @@ fn default_mode() -> String { "stealth".into() }
 fn default_vertical_id() -> String { "interview-intelligence".into() }
 
 #[tauri::command]
-pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String> {
+/// async: creating a window from a sync command deadlocks on Windows —
+/// build() needs the main thread, and sync commands run ON the main thread.
+pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String> {
     let label = format!("overlay:{}", params.vertical_id);
     let mode = OverlayMode::from_str(&params.mode);
 
@@ -80,7 +82,7 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
 
     let width = params.width.unwrap_or(DEFAULT_WIDTH);
     let height = params.height.unwrap_or(DEFAULT_HEIGHT);
-    let (x, y) = placement(&app, width);
+    let (x, y) = placement(&app, width, placement_state::current());
 
     let builder = WebviewWindowBuilder::new(
         &app,
@@ -141,25 +143,98 @@ pub fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), String>
         // Position was applied at build; assert it again post-creation (some
         // platform builds clamp or reset initial position for transparent
         // frameless windows), then make visible + topmost.
-        let (x, y) = placement(&app, width);
+        let (x, y) = placement(&app, width, placement_state::current());
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         let _ = w.show();
         let _ = w.set_focus();
+        let _ = app.emit("overlay://visibility", true);
         if let Ok(pos) = w.outer_position() {
-            println!("[overlay] shown at physical ({}, {}), size {}x{}", pos.x, pos.y, width, height);
+            println!("[overlay] shown at physical ({}, {}), size {}x{}, spot {}", pos.x, pos.y, width, height, placement_state::current().as_str());
         }
     }
     Ok(())
 }
 
+/// Session-persistent overlay placement (not saved to disk — stealth users
+/// usually want a fresh default each launch).
+mod placement_state {
+    use super::OverlayPlacement;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    // 0 = TopCenter (default), 1 = Right, 2 = Left
+    static SPOT: AtomicU8 = AtomicU8::new(0);
+
+    pub fn current() -> OverlayPlacement {
+        match SPOT.load(Ordering::Relaxed) {
+            1 => OverlayPlacement::Right,
+            2 => OverlayPlacement::Left,
+            _ => OverlayPlacement::TopCenter,
+        }
+    }
+
+    pub fn set(spot: OverlayPlacement) {
+        SPOT.store(match spot {
+            OverlayPlacement::TopCenter => 0,
+            OverlayPlacement::Right => 1,
+            OverlayPlacement::Left => 2,
+        }, Ordering::Relaxed);
+    }
+}
+
+/// Cycle the overlay position: top-center → right → left → top-center.
+/// Applies immediately when the overlay is visible; remembered for next show.
 #[tauri::command]
-pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
+pub async fn overlay_cycle_position(app: AppHandle, vertical_id: String, width: Option<f64>) -> Result<String, String> {
+    let next = placement_state::current().next();
+    placement_state::set(next);
+    let label = format!("overlay:{}", vertical_id);
+    if let Some(w) = app.get_webview_window(&label) {
+        let width = width.unwrap_or(DEFAULT_WIDTH);
+        let (x, y) = placement(&app, width, next);
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        let _ = w.show();
+    }
+    Ok(next.as_str().to_string())
+}
+
+#[tauri::command]
+pub async fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.hide();
     }
     let _ = app.emit("overlay://hidden", ());
+    let _ = app.emit("overlay://visibility", false);
     Ok(())
+}
+
+/// Authoritative overlay toggle: checks REAL window visibility, not JS state.
+/// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
+/// the previous JS-side toggle died whenever LiveSession was unmounted.
+#[tauri::command]
+pub async fn overlay_toggle(app: AppHandle, vertical_id: String) -> Result<bool, String> {
+    let label = format!("overlay:{}", vertical_id);
+    let visible = app
+        .get_webview_window(&label)
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if visible {
+        overlay_hide(app.clone(), vertical_id.clone()).await?;
+        Ok(false)
+    } else {
+        overlay_show(
+            app.clone(),
+            OverlayParams {
+                mode: "stealth".into(),
+                vertical_id,
+                width: None,
+                height: None,
+            },
+        )
+        .await?;
+        let _ = app.emit("overlay://visibility", true);
+        Ok(true)
+    }
 }
 
 /// Mouse passthrough (reference `syncOverlayInteractionPolicy` parity): when
@@ -168,7 +243,7 @@ pub fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
 /// the frontend calling this again with `enabled:false` — the tray/Show chord
 /// also disengages it. Ctrl+Shift+B toggles.
 #[tauri::command]
-pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
+pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
@@ -200,7 +275,7 @@ pub fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: boo
 /// its panel size and the window grows/shrinks to fit. Height clamped so the
 /// panel never runs off-screen.
 #[tauri::command]
-pub fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Result<(), String> {
+pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
@@ -216,7 +291,35 @@ pub fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) -> Resul
     Ok(())
 }
 
-fn placement(app: &AppHandle, width: f64) -> (f64, f64) {
+/// Overlay placement modes: TopCenter (default), Right (top-right, where the
+/// overlay originally lived), Left (top-left). Ctrl+Shift+P cycles through
+/// them live; the choice persists for the session.
+#[derive(Clone, Copy, PartialEq)]
+pub enum OverlayPlacement {
+    TopCenter,
+    Right,
+    Left,
+}
+
+impl OverlayPlacement {
+    pub fn next(self) -> Self {
+        match self {
+            OverlayPlacement::TopCenter => OverlayPlacement::Right,
+            OverlayPlacement::Right => OverlayPlacement::Left,
+            OverlayPlacement::Left => OverlayPlacement::TopCenter,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OverlayPlacement::TopCenter => "top-center",
+            OverlayPlacement::Right => "right",
+            OverlayPlacement::Left => "left",
+        }
+    }
+}
+
+fn placement(app: &AppHandle, width: f64, spot: OverlayPlacement) -> (f64, f64) {
     let monitor = app.primary_monitor().ok().flatten();
     match monitor {
         Some(m) => {
@@ -227,9 +330,15 @@ fn placement(app: &AppHandle, width: f64) -> (f64, f64) {
             // metrics are PHYSICAL. Mixing them (the old code) pushes the
             // overlay off-screen on any display scaling != 100%, which reads
             // as "the overlay doesn't show up".
-            let x_logical = (pos.x as f64 + size.width as f64 - width * scale - MARGIN * scale) / scale;
-            let y_logical = (pos.y as f64 + MARGIN * scale) / scale;
-            (x_logical.max(0.0), y_logical.max(0.0))
+            let logical_w = size.width as f64 / scale;
+            let monitor_x = pos.x as f64 / scale;
+            let x_logical = match spot {
+                OverlayPlacement::Right => monitor_x + logical_w - width - MARGIN,
+                OverlayPlacement::Left => monitor_x + MARGIN,
+                OverlayPlacement::TopCenter => monitor_x + (logical_w - width) / 2.0,
+            };
+            let y_logical = pos.y as f64 / scale + MARGIN;
+            (x_logical.max(monitor_x + MARGIN), y_logical.max(0.0))
         }
         None => (100.0, 100.0),
     }
