@@ -238,6 +238,26 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       status: session.status,
     });
 
+    // Connection warm-up: a tiny fire-and-forget request opens the TLS
+    // connection and primes the provider so the first real coach call skips
+    // the handshake cost. Never blocks; failures are free.
+    if (workspaceCfg) {
+      const warmRequest = {
+        taskClass: "live_coach" as const,
+        privacyMode: workspaceCfg.privacyMode,
+        messages: [{ role: "user", content: "ping" }],
+        maxTokens: 1,
+        maxLatencyMs: 5_000,
+      };
+      void executeRouted(
+        { db, breakers },
+        workspaceCfg,
+        session!.workspaceId,
+        session!.id,
+        warmRequest as never,
+      ).catch(() => {});
+    }
+
     /** Per-utterance segment ids: partials and their final share one id so the
      *  client renders ONE evolving line per speech turn that commits in place
      *  (dictation UX). The turn advances when a final is committed — the next
@@ -578,6 +598,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       const sttConfidence = typeof lastIvFinal?.confidence === "number" ? lastIvFinal.confidence : undefined;
 
       try {
+        // Working indicator at first token (~TTFT): the panel and overlay show
+        // "crafting…" instead of dead air for the remaining generation time.
+        let workingEmitted = false;
         const outcome = await executeRouted(
           { db, breakers },
           workspaceCfg,
@@ -589,6 +612,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             messages,
             maxTokens: 512,
             signal: abort.signal,
+            onDelta: () => {
+              if (workingEmitted || abort.signal.aborted) return;
+              workingEmitted = true;
+              emit({
+                type: "coach.working",
+                eventId: randomUUID(),
+                sequenceNo: serverSeq++,
+                occurredAt: new Date().toISOString(),
+                sessionId: session!.id,
+              });
+            },
             responseSchema: {
               type: "object",
               properties: {

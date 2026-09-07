@@ -42,6 +42,8 @@ interface State {
   insights: InsightItem[];
   stealth: StealthState;
   connected: boolean;
+  /** True while the coach LLM is mid-generation (first token received). */
+  coachWorking: boolean;
   error: string | null;
   notices: Notice[];
 
@@ -56,6 +58,7 @@ interface State {
   pushInsight(item: InsightItem): void;
   setStealth(s: StealthState): void;
   setConnected(v: boolean): void;
+  setCoachWorking(v: boolean): void;
   setError(e: string | null): void;
   notify(kind: Notice["kind"], message: string): void;
   dismiss(id: string): void;
@@ -74,6 +77,7 @@ export const useStore = create<State>((set) => ({
   insights: [],
   stealth: { captureExclusion: false, taskbarHidden: false, masquerade: "none", masqueradeTitle: null, enforcedAtMs: 0 },
   connected: false,
+  coachWorking: false,
   error: null,
   notices: [],
 
@@ -112,6 +116,7 @@ export const useStore = create<State>((set) => ({
   pushInsight: (item) => set((s) => ({ insights: [...s.insights, item].slice(-50) })),
   setStealth: (stealth) => set({ stealth }),
   setConnected: (connected) => set({ connected }),
+  setCoachWorking: (coachWorking) => set({ coachWorking }),
   setError: (error) => set({ error }),
   notify: (kind, message) =>
     set((s) => ({

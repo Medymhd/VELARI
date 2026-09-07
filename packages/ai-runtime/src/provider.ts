@@ -29,6 +29,8 @@ export interface InvokeOutcome {
   latencyMs?: number;
   providerId?: string;
   error?: ProviderError;
+  /** Seconds to wait before retrying (from a 429 Retry-After header). */
+  retryAfterMs?: number;
 }
 
 export class ProviderError extends Error {

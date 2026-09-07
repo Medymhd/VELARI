@@ -94,10 +94,13 @@ export const ModelRequest = z.object({
   stream: z.boolean().optional(),
 });
 /** Runtime-only extensions (never serialized): cancellation for superseded
- *  live-coach calls, and a task-scoped completion budget. */
+ *  live-coach calls, a task-scoped completion budget, and streaming deltas
+ *  (onDelta fires per text chunk when the provider streams). AbortSignal is
+ *  structural so this package compiles without DOM lib. */
 export type ModelRequest = z.infer<typeof ModelRequest> & {
-  signal?: AbortSignal;
+  signal?: { aborted: boolean; addEventListener(type: "abort", listener: () => void, opts?: { once?: boolean }): void; removeEventListener(type: "abort", listener: () => void): void };
   maxTokens?: number;
+  onDelta?: (delta: string) => void;
 };
 
 export const ModelResponse = z.object({
@@ -210,6 +213,13 @@ export const RealtimeEvent = z.discriminatedUnion("type", [
     occurredAt: z.string().datetime(),
     sessionId: z.string().uuid(),
     insight: SessionInsightDto,
+  }),
+  z.object({
+    type: z.literal("coach.working"),
+    eventId: z.string(),
+    sequenceNo: z.number().int().nonnegative(),
+    occurredAt: z.string().datetime(),
+    sessionId: z.string().uuid(),
   }),
   z.object({
     type: z.literal("session.status"),

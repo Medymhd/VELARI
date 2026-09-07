@@ -22,7 +22,7 @@ import { StatusPill, Toggle } from "@app/ui";
 
 const nativeAvailable = isTauri();
 
-/** Mode personas — must mirror the server's INTERVIEW_MODES (modes.ts). */
+/** Mode personas â€” must mirror the server's INTERVIEW_MODES (modes.ts). */
 const MODES: { id: string; label: string }[] = [
   { id: "general", label: "General" },
   { id: "job-seeker", label: "Looking for work" },
@@ -44,7 +44,7 @@ const TranscriptRow = memo(function TranscriptRow({ t }: { t: { id: string; sequ
         {t.speaker && <span className="small muted" style={{ marginRight: 6 }}>[{t.speaker === "user" ? "You" : "Interviewer"}]</span>}
         {t.text}
       </div>
-      <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
+      <div className="small muted">#{t.sequenceNo} {t.isFinal ? "final" : "partial"} {t.confidence ? `Â· ${(t.confidence * 100).toFixed(0)}%` : ""}</div>
       {t.confidence != null && <div className={`confidence-meter ${confClass.replace("conf-", "")}`}><div style={{ width: `${Math.round(conf * 100)}%` }} /></div>}
     </div>
   );
@@ -57,7 +57,7 @@ function base64ToPcm(b64: string): Int16Array {
   return new Int16Array(bytes.buffer);
 }
 
-/** Chunked binary→base64 — `String.fromCharCode(...bytes)` on large native
+/** Chunked binaryâ†’base64 â€” `String.fromCharCode(...bytes)` on large native
  *  batches overflows the stack, so spread in 32 KB slices. */
 function pcmToBase64(pcm: Int16Array): string {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
@@ -73,7 +73,7 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** File → base64 (no data: prefix) for server-side extraction. */
+/** File â†’ base64 (no data: prefix) for server-side extraction. */
 function fileToBase64(f: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -87,7 +87,7 @@ function fileToBase64(f: File): Promise<string> {
 }
 
 function useRealtime(sessionId: string | null) {
-  const { pushTranscript, pushInsight, setConnected, setError, notify } = useStore();
+  const { pushTranscript, pushInsight, setConnected, setError, notify, setCoachWorking } = useStore();
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -113,13 +113,17 @@ function useRealtime(sessionId: string | null) {
           pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined, source: s.source });
         } else if (msg.type === "coach.suggestion" && msg.insight) {
           pushInsight({ id: msg.insight.id, type: msg.insight.type, contentJson: msg.insight.contentJson, createdAt: msg.insight.createdAt });
+          setCoachWorking(false);
+        } else if (msg.type === "coach.working") {
+          // First token from the coach â€” replace dead air with a live indicator.
+          setCoachWorking(true);
         } else if (msg.type === "pipeline.warning" && msg.code && msg.code !== "pong" && msg.code !== "session_not_live") {
           // Surface backend trouble instead of swallowing it (throttled per code).
           const now = Date.now();
           if (msg.code !== lastWarnCode || now - lastWarnAt > 10_000) {
             lastWarnCode = msg.code;
             lastWarnAt = now;
-            notify("error", `Realtime: ${msg.code} — ${msg.message ?? "see API logs"}`);
+            notify("error", `Realtime: ${msg.code} â€” ${msg.message ?? "see API logs"}`);
           }
         }
       } catch { /* ignore */ }
@@ -169,13 +173,13 @@ function useRealtime(sessionId: string | null) {
       clearTimers();
       wsRef.current?.close();
     };
-  }, [sessionId, pushInsight, pushTranscript, setConnected, setError, notify]);
+  }, [sessionId, pushInsight, pushTranscript, setConnected, setError, notify, setCoachWorking]);
 
   return wsRef;
 }
 
 export default function LiveSession() {
-  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, pushInsight, setSession, stealth, setStealth, consentConfirmed, setConsent, notify } = useStore();
+  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, pushInsight, setSession, stealth, setStealth, consentConfirmed, setConsent, notify, coachWorking } = useStore();
   const [busy, setBusy] = useState(false);
   const [stealthBusy, setStealthBusy] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
@@ -235,7 +239,7 @@ export default function LiveSession() {
   // Audio capture -> WS audio.chunk (AudioWorklet primary, ScriptProcessor fallback)
   const audioRef = useRef<{ ctx: AudioContext; node: AudioWorkletNode | null; proc: ScriptProcessorNode | null; stream: MediaStream } | null>(null);
 
-  // Native (Rust) capture — per-channel live-apply: toggling a checkbox
+  // Native (Rust) capture â€” per-channel live-apply: toggling a checkbox
   // starts/stops the Rust DSP immediately, no session restart needed.
   const [nativeMic, setNativeMic] = useState(false);
   const [nativeSystem, setNativeSystem] = useState(false);
@@ -244,7 +248,7 @@ export default function LiveSession() {
   const nativeUnlisten = useRef<{ mic?: UnlistenFn; system?: UnlistenFn }>({});
   const nativeStarting = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });
 
-  // Direct relay fallback (Â§5.1.5): native audio â†’ STT relay when the
+  // Direct relay fallback (Ã‚Â§5.1.5): native audio Ã¢â€ â€™ STT relay when the
   // realtime WS is down; finals replay to the session on reconnect.
   const relayRef = useRef<RelayDirectStream | null>(null);
   const [relayActive, setRelayActive] = useState(false);
@@ -255,7 +259,7 @@ export default function LiveSession() {
   // Stealth overlay: forward the live session into the always-on-top panel.
 const [overlayOn, setOverlayOn] = useState(false);
 
-  // Mode persona — pushed to the server on change; overlay-mode state.
+  // Mode persona â€” pushed to the server on change; overlay-mode state.
   const [mode, setMode] = useState("general");
   useEffect(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -263,7 +267,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [mode, connected]);
 
-  // Response length — short/medium/long budget, pushed to the server on change.
+  // Response length â€” short/medium/long budget, pushed to the server on change.
   const [length, setLength] = useState<"short" | "medium" | "long">("medium");
   useEffect(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -271,7 +275,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [length, connected]);
 
-  // Audio watchdog — reference "0 chunks in 12s" banner parity: a capture toggle
+  // Audio watchdog â€” reference "0 chunks in 12s" banner parity: a capture toggle
   // that is ON but receives no audio for 12s means a dead/busy device.
   const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
   const watchdogWarned = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });
@@ -280,11 +284,11 @@ const [overlayOn, setOverlayOn] = useState(false);
       const now = Date.now();
       if (nativeMic && lastNativeBatchAt.current.mic > 0 && now - lastNativeBatchAt.current.mic > 12_000 && !watchdogWarned.current.mic) {
         watchdogWarned.current.mic = true;
-        notify("error", "Microphone capture silent for 12s — check the device or permissions.");
+        notify("error", "Microphone capture silent for 12s â€” check the device or permissions.");
       }
       if (nativeSystem && lastNativeBatchAt.current.system > 0 && now - lastNativeBatchAt.current.system > 12_000 && !watchdogWarned.current.system) {
         watchdogWarned.current.system = true;
-        notify("error", "System audio silent for 12s — is anything playing?");
+        notify("error", "System audio silent for 12s â€” is anything playing?");
       }
     }, 5_000);
     return () => clearInterval(t);
@@ -342,7 +346,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [connected]);
 
-  // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) —
+  // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) â€”
   // it works from every screen and backfills the panel when it opens.
 
   useEffect(() => {
@@ -358,7 +362,7 @@ const [overlayOn, setOverlayOn] = useState(false);
   }, [nativeAvailable, sessionId]);
 
   // Global chords Ctrl+Shift+O (overlay) and Ctrl+Shift+H (app) are handled
-  // authoritatively in Rust — they work on every screen and check real window
+  // authoritatively in Rust â€” they work on every screen and check real window
   // visibility. Here we only register Ctrl+Shift+B (passthrough) and
   // Ctrl+Shift+P (position cycle), and keep the checkbox in sync with the
   // overlay's true visibility.
@@ -403,12 +407,12 @@ const [overlayOn, setOverlayOn] = useState(false);
   async function toggleOverlay(on: boolean) {
     // Route through the same authoritative toggle so the checkbox, the
     // global chord and the X button can never disagree. Backfill on open is
-    // handled by the overlay itself (overlay://ready → app-level forwarder).
+    // handled by the overlay itself (overlay://ready â†’ app-level forwarder).
     try {
       const visible = await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
       if (on !== visible) {
         // Desired state differs from post-toggle reality (e.g. X pressed
-        // between) — force it once more.
+        // between) â€” force it once more.
         await invoke<boolean>("overlay_toggle", { verticalId: "interview-intelligence" });
       }
     } catch (e) {
@@ -475,7 +479,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     try {
       lastNativeBatchAt.current[batch.channel] = Date.now();
       watchdogWarned.current[batch.channel] = false;
-      // Native batch is already 16kHz PCM base64 — forward without decode/re-encode
+      // Native batch is already 16kHz PCM base64 â€” forward without decode/re-encode
       const frame = JSON.stringify({
         type: "audio.chunk",
         eventId: Math.random().toString(36).slice(2),
@@ -590,7 +594,7 @@ const [overlayOn, setOverlayOn] = useState(false);
       };
       audioRef.current = { ctx, node: null, proc, stream };
     } catch (ex) {
-      notify("error", `Microphone capture failed: ${errText(ex)} — check the app's mic permission`);
+      notify("error", `Microphone capture failed: ${errText(ex)} â€” check the app's mic permission`);
     }
   }
 
@@ -618,7 +622,7 @@ const [overlayOn, setOverlayOn] = useState(false);
       const next = action === "start" ? "live" : action === "pause" ? "paused" : "completed";
       setSession(sessionId, next);
       if (action === "start") {
-        // Browser mic only when the native mic isn't handling it — running
+        // Browser mic only when the native mic isn't handling it â€” running
         // both double-captures the same input (unlabeled duplicates).
         if (!(nativeAvailable && nativeMic)) void startCapture();
         // Reconcile: any checked native channel starts live here too.
@@ -728,7 +732,7 @@ const [overlayOn, setOverlayOn] = useState(false);
   }
 
   // STT engine visibility: the transcript frames carry the producing engine's
-  // source — surface it so "demo" vs real transcription is never a mystery.
+  // source â€” surface it so "demo" vs real transcription is never a mystery.
   const badgeSource = (() => {
     for (let i = transcript.length - 1; i >= 0; i--) {
       const s = transcript[i]?.source;
@@ -737,7 +741,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     return undefined;
   })();
 
-  // Session prep (CV / job description / notes / drilled Q&As) — the rival's
+  // Session prep (CV / job description / notes / drilled Q&As) â€” the rival's
   // biggest advantage: answers grounded in materials the user uploaded before
   // the interview. Q&A entries surface instantly via prepared-answer recall.
   type CtxRow = { id: string; kind: string; title: string; content: string };
@@ -760,7 +764,7 @@ const [overlayOn, setOverlayOn] = useState(false);
       await api.addSessionContext(sessionId, { kind: prepKind, title: prepTitle.trim() || undefined, content: prepText.trim() });
       setPrepText("");
       setPrepTitle("");
-      notify("success", `Added ${prepKind.toUpperCase()} — the coach now uses it`);
+      notify("success", `Added ${prepKind.toUpperCase()} â€” the coach now uses it`);
       void refreshContexts();
       wsRef.current?.readyState === WebSocket.OPEN &&
         wsRef.current.send(JSON.stringify({ type: "session.reload_contexts", eventId: Math.random().toString(36).slice(2) }));
@@ -779,7 +783,7 @@ const [overlayOn, setOverlayOn] = useState(false);
         Array.from(files).map(async (f) => ({ name: f.name, base64: await fileToBase64(f) })),
       );
       await api.addSessionContext(sessionId, { kind: prepKind, files: payload });
-      notify("success", `Added ${payload.length} file(s) — text extracted server-side`);
+      notify("success", `Added ${payload.length} file(s) â€” text extracted server-side`);
       void refreshContexts();
       wsRef.current?.readyState === WebSocket.OPEN &&
         wsRef.current.send(JSON.stringify({ type: "session.reload_contexts", eventId: Math.random().toString(36).slice(2) }));
@@ -821,10 +825,10 @@ const [overlayOn, setOverlayOn] = useState(false);
             {!consentConfirmed && <span className="badge warn">consent required</span>}
           </div>
           <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
-            <button disabled={busy || !consentConfirmed || !(sessionStatus === "draft" || sessionStatus === "paused" || sessionStatus === "completed")} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Starting…" : sessionStatus === "completed" ? "Reopen session" : "Start"}</button>
+            <button disabled={busy || !consentConfirmed || !(sessionStatus === "draft" || sessionStatus === "paused" || sessionStatus === "completed")} onClick={() => void act("start")}>{busy && sessionStatus !== "live" ? "Startingâ€¦" : sessionStatus === "completed" ? "Reopen session" : "Start"}</button>
             <button disabled={busy || sessionStatus !== "live"} onClick={() => void act("pause")}>Pause</button>
-            <button disabled={busy || !(sessionStatus === "live" || sessionStatus === "paused")} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completing…" : "Complete"}</button>
-            {sessionStatus === "completed" && <span className="small muted" style={{ alignSelf: "center" }}>Completed — transcript below. Reopen to continue capture and coaching.</span>}
+            <button disabled={busy || !(sessionStatus === "live" || sessionStatus === "paused")} className="primary" onClick={() => void act("complete")}>{busy && sessionStatus === "live" ? "Completingâ€¦" : "Complete"}</button>
+            {sessionStatus === "completed" && <span className="small muted" style={{ alignSelf: "center" }}>Completed â€” transcript below. Reopen to continue capture and coaching.</span>}
           </div>
         </div>
 
@@ -851,7 +855,7 @@ const [overlayOn, setOverlayOn] = useState(false);
         }, [transcript])}
 
         <div className="card stagger">
-          <span className="kicker" style={{ marginBottom: 8, display: "block" }}>Transcript — finals are persisted, partials are ephemeral</span>
+          <span className="kicker" style={{ marginBottom: 8, display: "block" }}>Transcript â€” finals are persisted, partials are ephemeral</span>
           <div className="scroll grid" style={{ gap: 8, contain: "content" }}>
             {transcript.length === 0 && <span className="small muted">No transcript yet. Start the session and speak.</span>}
             {useMemo(() => transcript.slice(-80).map((t) => <TranscriptRow key={t.id} t={t} />), [transcript])}
@@ -868,7 +872,7 @@ const [overlayOn, setOverlayOn] = useState(false);
                 value={length}
                 onChange={(e) => setLength(e.target.value as "short" | "medium" | "long")}
                 style={{ maxWidth: 110, fontSize: 12 }}
-                title="Response length budget — how long spoken answers should be"
+                title="Response length budget â€” how long spoken answers should be"
               >
                 <option value="short">Short</option>
                 <option value="medium">Medium</option>
@@ -878,13 +882,18 @@ const [overlayOn, setOverlayOn] = useState(false);
                 value={mode}
                 onChange={(e) => setMode(e.target.value)}
                 style={{ maxWidth: 170, fontSize: 12 }}
-                title="Mode persona — reshapes coaching and answer style"
+                title="Mode persona â€” reshapes coaching and answer style"
               >
                 {MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
             </span>
           </div>
-          {insights.length === 0 && <span className="small muted">Suggestions appear here after transcript activity.</span>}
+          {coachWorking && (
+            <span className="badge accent" title="The coach heard the question and is crafting the answer.">
+              <span className="spinner" style={{ marginRight: 6 }} /> crafting answer…
+            </span>
+          )}
+          {insights.length === 0 && !coachWorking && <span className="small muted">Suggestions appear here after transcript activity.</span>}
           {/* Ring system: green = newest response, yellow = low STT confidence
               (question may be misheard), blue = everything else. */}
           {insights.slice(-6).reverse().map((ins, idx) => {
@@ -895,8 +904,8 @@ const [overlayOn, setOverlayOn] = useState(false);
             return ins.type === "prepared_answer" ? (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div className="small muted" style={{ marginBottom: 4 }}>
-                  Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) — {String(ins.contentJson.title ?? "")}
-                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>}
+                  Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) â€” {String(ins.contentJson.title ?? "")}
+                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache â€” no LLM call.">cached</span>}
                 </div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
                 {ins.contentJson.cached === true && typeof ins.contentJson.cached_question === "string" && ins.contentJson.cached_question !== ins.contentJson.answer && (
@@ -910,8 +919,8 @@ const [overlayOn, setOverlayOn] = useState(false);
               </div>
             ) : ins.type === "auto_answer" ? (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
-                <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer — {String(ins.contentJson.question ?? "").slice(0, 120)}
-                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>}
+                <div className="small muted" style={{ marginBottom: 4 }}>Drafted answer â€” {String(ins.contentJson.question ?? "").slice(0, 120)}
+                  {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache â€” no LLM call.">cached</span>}
                 </div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
                 {overlayOn && (
@@ -923,17 +932,17 @@ const [overlayOn, setOverlayOn] = useState(false);
             ) : (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>
-                  {String(ins.contentJson.detected_question ?? "—")}
+                  {String(ins.contentJson.detected_question ?? "â€”")}
                   {lowConf && (
-                    <span className="badge" style={{ marginLeft: 8, color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence — it may be misheard. Verify before speaking.">
-                      low confidence — verify
+                    <span className="badge" style={{ marginLeft: 8, color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence â€” it may be misheard. Verify before speaking.">
+                      low confidence â€” verify
                     </span>
                   )}
                   {ins.contentJson.cached === true && (
-                    <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>
+                    <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache â€” no LLM call.">cached</span>
                   )}
                   {ins.contentJson.offline === true && (
-                    <span className="badge" style={{ marginLeft: 8 }} title="LLM output was unusable — showing a structural scaffold instead.">
+                    <span className="badge" style={{ marginLeft: 8 }} title="LLM output was unusable â€” showing a structural scaffold instead.">
                       offline scaffold
                     </span>
                   )}
@@ -944,7 +953,7 @@ const [overlayOn, setOverlayOn] = useState(false);
                 <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
                   {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
                 </ul>
-                <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
+                <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" Â· ")}</div>
               </div>
             );
           })}
@@ -956,26 +965,26 @@ const [overlayOn, setOverlayOn] = useState(false);
             <span className="small muted">{contexts.length} loaded</span>
           </div>
           <span className="small muted" style={{ margin: 0 }}>
-            CV, job description, notes, drilled Q&As — the coach grounds every answer in these. Q&As surface instantly when the interviewer asks a matching question.
+            CV, job description, notes, drilled Q&As â€” the coach grounds every answer in these. Q&As surface instantly when the interviewer asks a matching question.
           </span>
           <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
             <select value={prepKind} onChange={(e) => setPrepKind(e.target.value)} style={{ maxWidth: 120 }}>
               <option value="jd">Job description</option>
               <option value="cv">CV / resume</option>
               <option value="notes">Notes</option>
-              <option value="qa">Q&amp;A (Q: … A: …)</option>
+              <option value="qa">Q&amp;A (Q: â€¦ A: â€¦)</option>
             </select>
             <input placeholder="Title (optional)" value={prepTitle} onChange={(e) => setPrepTitle(e.target.value)} style={{ maxWidth: 140 }} />
           </div>
           <textarea
             rows={3}
-            placeholder={prepKind === "qa" ? "Q: What is your greatest weakness?\nA: I used to over-polish deliverables…" : prepKind === "jd" ? "Paste the job description…" : "Paste text…"}
+            placeholder={prepKind === "qa" ? "Q: What is your greatest weakness?\nA: I used to over-polish deliverablesâ€¦" : prepKind === "jd" ? "Paste the job descriptionâ€¦" : "Paste textâ€¦"}
             value={prepText}
             onChange={(e) => setPrepText(e.target.value)}
           />
           <div className="row" style={{ flexWrap: "wrap", rowGap: 6 }}>
             <button className="primary" disabled={prepBusy || !prepText.trim()} onClick={() => void addPrep()}>
-              {prepBusy ? "Working…" : "Add"}
+              {prepBusy ? "Workingâ€¦" : "Add"}
             </button>
             <label className="ghost" style={{ cursor: "pointer", padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13 }}>
               Upload pdf/docx/xlsx/txt
@@ -991,7 +1000,7 @@ const [overlayOn, setOverlayOn] = useState(false);
                     {c.title}
                     <span className="small muted" style={{ marginLeft: 6 }}>{(c.content.length / 1000).toFixed(1)}k chars</span>
                   </span>
-                  <button className="ghost" onClick={() => void removePrep(c.id)}>✕</button>
+                  <button className="ghost" onClick={() => void removePrep(c.id)}>âœ•</button>
                 </div>
               ))}
             </div>
@@ -1000,7 +1009,7 @@ const [overlayOn, setOverlayOn] = useState(false);
 
         <div className="card grid">
           <span className="kicker">Native audio - Rust DSP</span>
-          <p className="small muted" style={{ margin: 0 }}>16 kHz resample, silence suppression, batched emission. Toggles apply immediately — live.</p>
+          <p className="small muted" style={{ margin: 0 }}>16 kHz resample, silence suppression, batched emission. Toggles apply immediately â€” live.</p>
           <Toggle checked={nativeMic} onChange={(v) => void toggleNativeMic(v)} label="Native microphone" />
           <div className="row">
             <select value={micDeviceId} onChange={(e) => setMicDeviceId(e.target.value)} style={{ flex: 1 }}>
@@ -1050,7 +1059,7 @@ const [overlayOn, setOverlayOn] = useState(false);
           )}
           {visionAnswer?.includes("```") && (
             <button className="ghost" disabled={codeRun === "busy"} onClick={() => void runVisionCode()}>
-              {codeRun === "busy" ? "Running…" : "Run code"}
+              {codeRun === "busy" ? "Runningâ€¦" : "Run code"}
             </button>
           )}
           {codeRun && codeRun !== "busy" && (
@@ -1061,8 +1070,8 @@ const [overlayOn, setOverlayOn] = useState(false);
 
         <div className="card grid">
           <span className="kicker">Stealth controls</span>
-          <Toggle checked={!!stealth.captureExclusion} disabled={stealthBusy === "capture"} onChange={(v) => void toggleCapture(v)} label={stealthBusy === "capture" ? "Applying…" : "Hide from screen capture"} />
-          <Toggle checked={!!stealth.taskbarHidden} disabled={stealthBusy === "taskbar"} onChange={(v) => void toggleTaskbar(v)} label={stealthBusy === "taskbar" ? "Applying…" : "Hide from taskbar"} />
+          <Toggle checked={!!stealth.captureExclusion} disabled={stealthBusy === "capture"} onChange={(v) => void toggleCapture(v)} label={stealthBusy === "capture" ? "Applyingâ€¦" : "Hide from screen capture"} />
+          <Toggle checked={!!stealth.taskbarHidden} disabled={stealthBusy === "taskbar"} onChange={(v) => void toggleTaskbar(v)} label={stealthBusy === "taskbar" ? "Applyingâ€¦" : "Hide from taskbar"} />
           <div className="row">
             <select
               value={stealth.masquerade ?? "none"}
@@ -1081,13 +1090,13 @@ const [overlayOn, setOverlayOn] = useState(false);
             </select>
           </div>
           <button className="primary" disabled={stealthBusy === "universal"} onClick={() => void enableStealthForAllBrowsersAndApps()}>
-            {stealthBusy === "universal" ? "Enforcing…" : "Enable stealth for all browsers & apps (Chrome/Zoom/Meet/Teams)"}
+            {stealthBusy === "universal" ? "Enforcingâ€¦" : "Enable stealth for all browsers & apps (Chrome/Zoom/Meet/Teams)"}
           </button>
-          <span className="small muted">One-click: WDA 0x11 + TOOLWINDOW for every window — works on any share client.</span>
-          <Toggle checked={overlayOn} onChange={(v) => void toggleOverlay(v)} label="Stealth overlay — live answers (Ctrl+Shift+O)" />
-          <div className="small muted">Position: Ctrl+Shift+P cycles top-center → right → left · Passthrough: Ctrl+Shift+B</div>
+          <span className="small muted">One-click: WDA 0x11 + TOOLWINDOW for every window â€” works on any share client.</span>
+          <Toggle checked={overlayOn} onChange={(v) => void toggleOverlay(v)} label="Stealth overlay â€” live answers (Ctrl+Shift+O)" />
+          <div className="small muted">Position: Ctrl+Shift+P cycles top-center â†’ right â†’ left Â· Passthrough: Ctrl+Shift+B</div>
           <div className="small muted">Applied: capture={String(stealth.captureExclusion)} taskbar={String(stealth.taskbarHidden)} masquerade={stealth.masquerade}</div>
-          <div className="small muted">Recovery: Ctrl+Shift+H shows/hides the app · the tray menu always reaches a hidden window.</div>
+          <div className="small muted">Recovery: Ctrl+Shift+H shows/hides the app Â· the tray menu always reaches a hidden window.</div>
         </div>
       </div>
     </div>
