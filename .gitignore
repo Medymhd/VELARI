@@ -41,3 +41,6 @@ coverage/
 # OS noise
 Thumbs.db
 .DS_Store
+
+# Personal prep samples (CV/JD/Q&A docs) — never public
+docs/samples/

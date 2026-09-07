@@ -9,6 +9,7 @@ export {
   type InterviewMode,
 } from "./modes.js";
 export { sanitizeCoachFramework, stripLeakage, speakable } from "./postProcess.js";
+export { matchPreparedQa, type PreparedQa, type PreparedMatch } from "./prepared.js";
 export {
   createJudgeState,
   judgeSuggestion,

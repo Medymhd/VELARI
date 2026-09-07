@@ -102,6 +102,20 @@ export const api = {
       "/code/verify",
       { method: "POST", body: JSON.stringify(body) },
     ),
+  sessionContexts: (sessionId: string) =>
+    req<{ id: string; kind: string; title: string; content: string }[]>(
+      `/interview-sessions/${sessionId}/context`,
+    ),
+  addSessionContext: (
+    sessionId: string,
+    body: { kind: string; title?: string; content?: string; files?: { name: string; base64: string }[] },
+  ) =>
+    req<{ created: { id: string; title: string }[] }>(
+      `/interview-sessions/${sessionId}/context`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  deleteSessionContext: (sessionId: string, ctxId: string) =>
+    req(`/interview-sessions/${sessionId}/context/${ctxId}`, { method: "DELETE" }),
   fetchWebContext: (since?: string) =>
     req<{ id: string; contentJson: { text?: string; url?: string; title?: string }; createdAt: string }[]>(
       `/context/capture${since ? `?since=${encodeURIComponent(since)}` : ""}`,

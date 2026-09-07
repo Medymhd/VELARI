@@ -258,8 +258,12 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.mode"),
     eventId: z.string(),
-    /** Mode persona id (reference ModesManager parity) — validated server-side. */
+    /** Mode persona id (rival ModesManager parity) — validated server-side. */
     mode: z.string().min(1).max(40),
+  }),
+  z.object({
+    type: z.literal("session.reload_contexts"),
+    eventId: z.string(),
   }),
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;

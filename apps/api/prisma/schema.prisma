@@ -299,3 +299,18 @@ model ProfilePersona {
 
   @@map("profile_personas")
 }
+
+/// Per-session prep materials (rival ModesManager reference-files parity):
+/// CV, job description, notes, and drilled Q&As. Q&A entries are matched
+/// against live interviewer questions for instant prepared-answer recall.
+model SessionContext {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  kind      String // cv | jd | notes | qa
+  title     String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([sessionId, kind])
+  @@map("session_contexts")
+}
