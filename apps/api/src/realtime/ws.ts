@@ -172,23 +172,41 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     });
 
     async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer"): Promise<void> {
+      // Echo dedup (rival `ECHO_WINDOW` parity): the mic hears the speaker's
+      // output acoustically — if a user final near-identically repeats the
+      // last interviewer final within 8s, it's echo, drop it.
+      if (speaker === "user" && text.length > 8) {
+        const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
+        const lastIv = assembler.finals.filter((f: { speaker?: string }) => f.speaker === "interviewer").at(-1);
+        if (lastIv) {
+          const a = words(text);
+          const b = words(String(lastIv.text));
+          let shared = 0;
+          for (const w of a) if (b.has(w)) shared += 1;
+          if (a.size > 0 && shared / a.size > 0.8 && Math.abs(Date.now() - (lastIv.endedAtMs ?? 0)) < 8_000) {
+            log.info("echo final dropped", { sessionId: session!.id, chars: text.length });
+            return;
+          }
+        }
+      }
+
       const sequenceNo = assembler.nextSequenceNo;
       const segmentId = randomUUID();
-  const segment = {
-    id: segmentId,
-    sessionId: session!.id,
-    sequenceNo,
-    startedAtMs,
-    endedAtMs,
-    text,
-    confidence,
-    isFinal: true,
-    source,
-    ...(speaker ? { speaker } : {}),
-    createdAt: new Date().toISOString(),
-  };
+      const segment = {
+        id: segmentId,
+        sessionId: session!.id,
+        sequenceNo,
+        startedAtMs,
+        endedAtMs,
+        text,
+        confidence,
+        isFinal: true,
+        source,
+        ...(speaker ? { speaker } : {}),
+        createdAt: new Date().toISOString(),
+      };
 
-  // Persist (speaker rides along — attribution must survive reload/Review)
+      // Persist (speaker rides along — attribution must survive reload/Review)
   try {
     await db.transcriptSegment.create({
       data: {

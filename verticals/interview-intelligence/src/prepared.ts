@@ -80,9 +80,12 @@ function tokens(text: string): Set<string> {
 }
 
 /**
- * Best Q&A match for a live question. Returns null below the relevance floor
- * (0.34 ≈ a third of distinctive tokens shared) — a wrong "prepared" answer is
- * worse than no answer.
+ * Best Q&A match for a live question. Handles both marked banks ("Q: … A: …")
+ * and unmarked docs (question sentence followed by the answer — the common
+ * docx extraction shape): scans sentence windows of the content for the best
+ * token overlap, then the answer is what FOLLOWS the matched span. Returns
+ * null below the relevance floor — a wrong "prepared" answer is worse than
+ * no answer.
  */
 export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.34): PreparedMatch | null {
   const qTokens = tokens(question);
@@ -90,17 +93,49 @@ export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.
 
   let best: PreparedMatch | null = null;
   for (const qa of bank) {
-    // Q&A content format: "Q: <question> A: <answer>" (drilled flashcard style);
-    // fall back to whole content when no marker present.
-    const qIdx = qa.content.toLowerCase().indexOf("a:");
-    const qaQuestion = qIdx >= 0 ? qa.content.slice(0, qIdx).replace(/^\s*q:\s*/i, "") : qa.title;
-    const answer = qIdx >= 0 ? qa.content.slice(qIdx + 2).trim() : qa.content.trim();
-    const overlap = [...tokens(question).values()].filter((t) => tokens(qaQuestion).has(t) || tokens(qa.content).has(t)).length;
-    const denom = Math.max(1, qTokens.size);
-    const score = overlap / denom;
-    if (score >= floor && (!best || score > best.score)) {
-      best = { qa, score, answer: answer.slice(0, 1500) };
+    // Marked format wins when present.
+    const aMatch = /\bA\s*:\s*/i.exec(qa.content);
+    const qMarked = /\bQ\s*:/i.test(qa.content);
+    if (qMarked && aMatch) {
+      const qaQuestion = qa.content.slice(0, aMatch.index).replace(/^\s*Q\s*:\s*/i, "").trim();
+      const answer = qa.content.slice(aMatch.index + aMatch[0].length).trim();
+      const score = overlapScore(question, qaQuestion) > overlapScore(question, qa.content)
+        ? overlapScore(question, qaQuestion)
+        : overlapScore(question, qa.content);
+      if (score >= floor && (!best || score > best.score)) {
+        best = { qa, score, answer: answer.slice(0, 1500) };
+      }
+      continue;
+    }
+
+    // Unmarked: slide a window of up to 3 sentences over the content; the
+    // best-matching window is the "question", the rest is the "answer".
+    const sentences = qa.content.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+    if (sentences.length <= 1) {
+      const score = overlapScore(question, qa.content);
+      if (score >= floor && (!best || score > best.score)) {
+        best = { qa, score, answer: qa.content.trim().slice(0, 1500) };
+      }
+      continue;
+    }
+    for (let i = 0; i < sentences.length; i++) {
+      const window = sentences.slice(i, i + 3).join(" ");
+      const score = overlapScore(question, window);
+      if (score >= floor && (!best || score > best.score)) {
+        const answer = sentences.slice(i + 3).join(" ").trim() || sentences.slice(i, i + 3).join(" ").trim();
+        best = { qa, score, answer: answer.slice(0, 1500) };
+      }
     }
   }
   return best;
+}
+
+/** Token overlap of `question` against `text`, normalized by question size. */
+function overlapScore(question: string, text: string): number {
+  const q = tokens(question);
+  if (q.size === 0) return 0;
+  const t = tokens(text);
+  let hits = 0;
+  for (const tok of q) if (t.has(tok)) hits += 1;
+  return hits / q.size;
 }
