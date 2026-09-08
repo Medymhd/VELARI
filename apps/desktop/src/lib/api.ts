@@ -150,6 +150,7 @@ export const api = {
   verticalGet: <T>(vertical: string, path: string) => req<T>(`/verticals/${vertical}${path}`),
   verticalPost: <T>(vertical: string, path: string, body: unknown) =>
     req<T>(`/verticals/${vertical}${path}`, { method: "POST", body: JSON.stringify(body) }),
+  verticalDelete: (vertical: string, path: string) => req<{ ok: boolean }>(`/verticals/${vertical}${path}`, { method: "DELETE" }),
   wsUrl: (sessionId: string) =>
     `${API_BASE.replace(/^http/, "ws")}/realtime?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token() ?? "")}`,
 };
