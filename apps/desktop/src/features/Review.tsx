@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import { EmptyState, PageHeader, StatusPill } from "@app/ui";
+import SessionMetricsPanel from "./SessionMetricsPanel";
 
 type Bundle = {
   transcript?: { id: string; text: string; sequenceNo: number; confidence?: number; speaker?: string | null }[];
@@ -167,6 +168,8 @@ ${(data.insights ?? []).map((i) => `<div class="insight"><span class="tag">${esc
       )}
       {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}
 
+      <SessionMetricsPanel />
+
       {data && (
         <>
           <div className="card row">
@@ -199,10 +202,95 @@ ${(data.insights ?? []).map((i) => `<div class="insight"><span class="tag">${esc
             </div>
           </div>
 
+          <FollowUpCard />
+
           <details className="card">
             <summary className="small muted" style={{ cursor: "pointer" }}>Raw bundle</summary>
             <pre className="small mono" style={{ overflow: "auto", whiteSpace: "pre-wrap" }}>{JSON.stringify(data, null, 2)}</pre>
           </details>
+        </>
+      )}
+    </div>
+  );
+}
+
+interface FollowUp {
+  subject: string;
+  email: string;
+  whatWentWell: string[];
+  toDrill: string[];
+  metrics?: {
+    wordCount: number;
+    fillerRate: number;
+    wpm: number | null;
+    verbosity: number;
+    starShare: number;
+    segmentCount: number;
+  };
+}
+
+/** Post-interview follow-up — thank-you email + honest debrief from the
+ *  transcript, grounded in the measured speech metrics (see /arena/followup). */
+function FollowUpCard() {
+  const { workspaceId, sessionId, notify } = useStore();
+  const [res, setRes] = useState<FollowUp | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function generate() {
+    if (!workspaceId || !sessionId || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.verticalPost<FollowUp>("interview-intelligence", "/arena/followup", {
+        workspaceId, sessionId,
+      });
+      setRes(r);
+      notify("success", "Follow-up draft ready");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card col" style={{ gap: 10 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span className="kicker">Follow-up & debrief</span>
+        <button className="primary" disabled={busy} onClick={() => void generate()}>
+          {busy ? "Drafting…" : res ? "Regenerate" : "Generate follow-up"}
+        </button>
+      </div>
+
+      {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}
+
+      {res && (
+        <>
+          <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: 10, whiteSpace: "pre-wrap", fontSize: 13 }}>
+            <b>{res.subject}</b>
+            <div style={{ marginTop: 4 }}>{res.email}</div>
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            {res.whatWentWell.map((w, i) => (
+              <span key={`w${i}`} className="badge ok">+ {w}</span>
+            ))}
+            {res.toDrill.map((d, i) => (
+              <span key={`d${i}`} className="badge warn">− {d}</span>
+            ))}
+          </div>
+          {res.metrics && (
+            <span className="small muted">
+              Grounded in {res.metrics.segmentCount} answer{res.metrics.segmentCount === 1 ? "" : "s"} · {res.metrics.fillerRate} fillers/100 words
+              {res.metrics.wpm != null ? ` · ${res.metrics.wpm} wpm` : ""} · {Math.round(res.metrics.starShare * 100)}% STAR
+            </span>
+          )}
+          <button
+            className="ghost"
+            onClick={() => { try { void navigator.clipboard.writeText(`${res!.subject}\n\n${res!.email}`); notify("success", "Email copied to clipboard"); } catch { notify("error", "Clipboard unavailable"); } }}
+          >
+            Copy email
+          </button>
         </>
       )}
     </div>

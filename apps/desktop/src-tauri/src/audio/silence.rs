@@ -1,4 +1,4 @@
-// Silence suppression for streaming STT â€” low latency, exact semantic port
+// Silence suppression for streaming STT — low latency, exact semantic port
 // of reference `silence_suppression.rs`.
 //
 // TWO-STAGE GATING:
@@ -49,7 +49,7 @@ impl Default for SilenceSuppressionConfig {
 }
 
 impl SilenceSuppressionConfig {
-    /// System audio: very permissive, VAD OFF â€” media/game audio is often
+    /// System audio: very permissive, VAD OFF — media/game audio is often
     /// non-human, which the ML VAD rigidly suppresses.
     pub fn for_system_audio() -> Self {
         Self {
@@ -66,7 +66,7 @@ impl SilenceSuppressionConfig {
     }
 
     /// Microphone: PLATFORM SPLIT on stage 2. Windows device DSP routinely
-    /// pulls speech below what the VAD accepts (gate never opens â†’ only zero
+    /// pulls speech below what the VAD accepts (gate never opens → only zero
     /// keepalives emitted), so VAD is OFF there; cloud STT runs its own
     /// speech detection and the adaptive RMS gate still suppresses idle mics.
     /// Non-Windows keeps VAD ON to reject typing/fans/speaker bleed.
@@ -197,7 +197,7 @@ impl SilenceSuppressor {
             false
         };
 
-        // ALWAYS check for speech first â€” immediate response, zero added latency.
+        // ALWAYS check for speech first — immediate response, zero added latency.
         if has_speech {
             self.state = SuppressionState::Active;
             self.last_speech_time = now;
@@ -206,7 +206,7 @@ impl SilenceSuppressor {
             return (FrameAction::Send(frame.to_vec()), edge);
         }
 
-        // No speech â€” check hangover state.
+        // No speech — check hangover state.
         let mut speech_just_ended = false;
         match self.state {
             SuppressionState::Active | SuppressionState::Hangover => {
@@ -217,7 +217,7 @@ impl SilenceSuppressor {
                         self.was_speaking = false;
                     }
                 } else {
-                    // Still in hangover â€” send full frame.
+                    // Still in hangover — send full frame.
                     self.state = SuppressionState::Hangover;
                     return (FrameAction::Send(frame.to_vec()), SpeechEdge::None);
                 }
@@ -266,7 +266,7 @@ impl SilenceSuppressor {
         } else if len >= 160 {
             160
         } else {
-            // Too small for VAD â€” fall back to RMS-only.
+            // Too small for VAD — fall back to RMS-only.
             return true;
         };
 
@@ -287,7 +287,7 @@ impl SilenceSuppressor {
     }
 }
 
-/// RMS of i16 samples (every 4th sample â€” plenty for RMS).
+/// RMS of i16 samples (every 4th sample — plenty for RMS).
 fn calculate_rms(samples: &[i16]) -> f32 {
     if samples.is_empty() {
         return 0.0;

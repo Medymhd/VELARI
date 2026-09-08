@@ -1,18 +1,18 @@
 /**
- * Tolerant answer cache â€” a question asked (nearly) before is answered from
+ * Tolerant answer cache — a question asked (nearly) before is answered from
  * cache in ~0ms instead of an LLM call.
  *
  * Three lookup tiers, cheapest first:
- *   0. Normalized exact  â€” hash(normalize(question)+mode+length+prepHash).
+ *   0. Normalized exact  — hash(normalize(question)+mode+length+prepHash).
  *      Microseconds. Catches trivial diffs (punctuation/case/spacing).
- *   1. Token-overlap fuzzy â€” stem-lite Jaccard against the in-memory index
- *      (workspace's latest ~500 entries). Handles "How would you evaluateâ€¦"
- *      â‰ˆ "How do you evaluateâ€¦". â‰¥0.80 hit, 0.65â€“0.80 fuzzy hit.
- *   2. Vector cosine â€” hashed-bag embeddings (free, local, no keys) with an
+ *   1. Token-overlap fuzzy — stem-lite Jaccard against the in-memory index
+ *      (workspace's latest ~500 entries). Handles "How would you evaluate…"
+ *      ≈ "How do you evaluate…". ≥0.80 hit, 0.65–0.80 fuzzy hit.
+ *   2. Vector cosine — hashed-bag embeddings (free, local, no keys) with an
  *      OpenAI-compatible embedder slotting in when configured. Deep paraphrase
- *      net. â‰¥0.92 hit, 0.85â€“0.92 fuzzy.
+ *      net. ≥0.92 hit, 0.85–0.92 fuzzy.
  *
- * Only judge-accepted, sanitized, confidence â‰¥0.7 outputs are ever cached.
+ * Only judge-accepted, sanitized, confidence ≥0.7 outputs are ever cached.
  * `prepHash` is part of every key and the fuzzy/vector match predicate, so
  * changed prep materials never serve stale answers.
  */
@@ -69,7 +69,7 @@ export function keyHashFor(parts: { question: string; mode: string; length: stri
   return createHash("sha256").update(`${normalizeQuestion(parts.question)}|${parts.mode}|${parts.length}|${parts.prepHash}`).digest("hex");
 }
 
-/** Deterministic hash of the active prep materials â€” cache invalidation. */
+/** Deterministic hash of the active prep materials — cache invalidation. */
 export function prepHashOf(prepContext: string | undefined, qaBank: { id: string; title: string; content: string }[]): string {
   const prep = prepContext ?? "";
   const qa = qaBank.map((q) => `${q.id}:${q.title}:${q.content}`).join("|");
@@ -97,7 +97,7 @@ interface CacheRecord {
   prepHash: string;
 }
 
-/** Cosine similarity (identical math to the shared embeddings util â€” local copy avoids a package import cycle). */
+/** Cosine similarity (identical math to the shared embeddings util — local copy avoids a package import cycle). */
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
@@ -113,7 +113,7 @@ function cosine(a: number[], b: number[]): number {
 }
 
 /**
- * In-memory cache index â€” loaded once per session, mutated on seed.
+ * In-memory cache index — loaded once per session, mutated on seed.
  * Lookup touches memory only; Postgres is hit on load and seed.
  */
 export class AnswerCache {
@@ -168,7 +168,7 @@ export class AnswerCache {
     const qTokens = questionTokens(question);
     const exact = keyHashFor({ question, mode: opts.mode, length: opts.length, prepHash: opts.prepHash });
 
-    // Tier 0 â€” normalized exact.
+    // Tier 0 — normalized exact.
     const exactRec = this.records.find(
       (r) => r.mode === opts.mode && r.length === opts.length && r.prepHash === opts.prepHash && keyHashFor({ question: r.question, mode: r.mode, length: r.length, prepHash: r.prepHash }) === exact,
     );
@@ -176,7 +176,7 @@ export class AnswerCache {
       return { key: "exact", score: 1, matchedQuestion: exactRec.question, frameworkJson: exactRec.frameworkJson, answerText: exactRec.answerText, id: exactRec.id };
     }
 
-    // Tier 1 â€” token-overlap fuzzy (same mode/length/prep only).
+    // Tier 1 — token-overlap fuzzy (same mode/length/prep only).
     let bestFuzzy: { rec: CacheRecord; score: number } | null = null;
     for (const rec of this.records) {
       if (rec.mode !== opts.mode || rec.length !== opts.length || rec.prepHash !== opts.prepHash) continue;
@@ -187,13 +187,13 @@ export class AnswerCache {
       return { key: "fuzzy", score: Math.round(bestFuzzy.score * 100) / 100, matchedQuestion: bestFuzzy.rec.question, frameworkJson: bestFuzzy.rec.frameworkJson, answerText: bestFuzzy.rec.answerText, id: bestFuzzy.rec.id };
     }
 
-    // Tier 2 â€” vector cosine (deep paraphrases; only reached when tiers 0/1 miss).
+    // Tier 2 — vector cosine (deep paraphrases; only reached when tiers 0/1 miss).
     let qVec: number[];
     try {
       const vecs = await this.embed([question]);
       qVec = vecs[0] ?? [];
     } catch {
-      return null; // embedder down â€” cache is best-effort, never blocks the LLM path
+      return null; // embedder down — cache is best-effort, never blocks the LLM path
     }
     let bestVec: { rec: CacheRecord; score: number } | null = null;
     for (const rec of this.records) {
@@ -206,7 +206,7 @@ export class AnswerCache {
       return { key: "vector", score: Math.round(bestVec.score * 100) / 100, matchedQuestion: bestVec.rec.question, frameworkJson: bestVec.rec.frameworkJson, answerText: bestVec.rec.answerText, id: bestVec.rec.id };
     }
 
-    // 0.85â€“0.92 vector similarity = plausible but not certain â€” surface as fuzzy.
+    // 0.85–0.92 vector similarity = plausible but not certain — surface as fuzzy.
     if (bestVec === null) {
       for (const rec of this.records) {
         if (rec.mode !== opts.mode || rec.length !== opts.length || rec.prepHash !== opts.prepHash) continue;

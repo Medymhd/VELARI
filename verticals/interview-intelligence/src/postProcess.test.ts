@@ -49,3 +49,29 @@ test("sanitizeCoachFramework preserves unknown extra fields is not required — 
   assert.ok(fw);
   assert.equal(fw.detected_question, "q."); // unpunctuated input gets a terminal period
 });
+
+test("sanitizeCoachFramework blanks prompt-echo debris in detected_question", () => {
+  // Field regression: the model echoed the prompt header into the question.
+  const fw = sanitizeCoachFramework({
+    detected_question: "aint Recent verbatim transcript: Tell me about yourself. Love I am a computer",
+    suggested_outline: ["Answer directly"],
+    talking_points: ["Lead with the role."],
+    confidence: 0.9,
+    requires_user_review: false,
+  });
+  assert.ok(fw);
+  assert.equal(fw.detected_question, "");
+  assert.ok(fw.talking_points.length > 0); // the rest still survives
+});
+
+test("sanitizeCoachFramework still accepts real questions containing ordinary words", () => {
+  const fw = sanitizeCoachFramework({
+    detected_question: "Tell me about your experience as an AI training specialist?",
+    suggested_outline: ["Role", "Proof"],
+    talking_points: ["I trained evaluation models."],
+    confidence: 0.9,
+    requires_user_review: false,
+  });
+  assert.ok(fw);
+  assert.ok(fw.detected_question.includes("AI training specialist"));
+});

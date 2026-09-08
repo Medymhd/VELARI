@@ -1,6 +1,6 @@
-﻿/**
+﻿﻿/**
  * App observability: structured logging with content-free defaults,
- * redaction, and trace-id propagation. OpenTelemetry export is a seam â€”
+ * redaction, and trace-id propagation. OpenTelemetry export is a seam —
  * swap `spanSink` for an OTLP exporter without touching call sites.
  */
 import { randomUUID } from "node:crypto";
@@ -18,7 +18,7 @@ export interface LogFields {
 const LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 let minLevel: number = LEVELS[process.env.LOG_LEVEL === "debug" ? "debug" : "info"];
 
-/** Content (transcripts, prompts) is never logged by default (doc Â§12). */
+/** Content (transcripts, prompts) is never logged by default (doc §12). */
 export let contentLoggingConsent = false;
 export function setContentLoggingConsent(v: boolean): void {
   contentLoggingConsent = v;
@@ -83,7 +83,7 @@ export async function traced<T>(name: string, traceId: string, fn: () => Promise
   }
 }
 
-/** Metrics registry matching doc Â§12 observable list. */
+/** Metrics registry matching doc §12 observable list. */
 const counters = new Map<string, number>();
 export function increment(metric: string, by = 1): void {
   counters.set(metric, (counters.get(metric) ?? 0) + by);

@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿/**
  * App security primitives.
  * - Envelope encryption for BYOK secrets (AES-256-GCM).
  * - Policy checks enforcing privacy modes before any provider call.
@@ -13,7 +13,7 @@ import {
 } from "node:crypto";
 
 export interface SealedSecret {
-  /** Format: v1.<iv_b64>.<tag_b64>.<ciphertext_b64> â€” stored as secret_ref. */
+  /** Format: v1.<iv_b64>.<tag_b64>.<ciphertext_b64> — stored as secret_ref. */
   sealed: string;
 }
 

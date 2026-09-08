@@ -1,7 +1,7 @@
-﻿import type { ModelRequest } from "@app/contracts";
+﻿﻿import type { ModelRequest } from "@app/contracts";
 
 /**
- * Provider contract (architecture doc Â§5).
+ * Provider contract (architecture doc §5).
  * A provider never sees raw workspace data beyond what the request carries,
  * and receives credentials only at call time via `ctx.secretRef` resolution
  * performed by the caller (API layer), never stored here.
@@ -38,8 +38,8 @@ export class ProviderError extends Error {
     public readonly kind:
       | "timeout"
       | "connection"
-      | "rate_limited" // 429 â†’ failover eligible
-      | "unavailable" // 503/504 â†’ failover eligible
+      | "rate_limited" // 429 → failover eligible
+      | "unavailable" // 503/504 → failover eligible
       | "auth" // not eligible until credentials updated
       | "invalid_input" // not eligible
       | "policy_denied" // not eligible
@@ -52,7 +52,7 @@ export class ProviderError extends Error {
     this.name = "ProviderError";
   }
 
-  /** Failover eligibility rules (architecture doc Â§5). */
+  /** Failover eligibility rules (architecture doc §5). */
   get isFailoverEligible(): boolean {
     switch (this.kind) {
       case "timeout":

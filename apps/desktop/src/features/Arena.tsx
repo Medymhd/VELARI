@@ -27,6 +27,20 @@ interface Round {
   followUp?: string;
 }
 
+interface ArenaTrendEntry {
+  sessionId: string;
+  metrics: {
+    fillerRate: number;
+    wpm: number | null;
+    starShare: number;
+  };
+  verdicts: {
+    filler: "good" | "ok" | "warn";
+    pace: "good" | "ok" | "warn" | null;
+    star: "good" | "ok" | "warn";
+  };
+}
+
 const MODES = [
   { id: "job-seeker", label: "Job interview" },
   { id: "technical", label: "Technical" },
@@ -35,7 +49,7 @@ const MODES = [
   { id: "leadership", label: "Leadership" },
 ];
 
-/** Arena â€” the AI interviews you. Question â†’ typed answer â†’ 0-10 score with a
+/** Arena — the AI interviews you. Question → typed answer → 0-10 score with a
  *  coached rewrite of what a 10 sounds like; weak answers earn follow-up
  *  probes, exactly like a real interviewer. Questions are read aloud. */
 export default function Arena() {
@@ -54,9 +68,18 @@ export default function Arena() {
   const [predictBusy, setPredictBusy] = useState(false);
   const [jd, setJd] = useState("");
   const [stories, setStories] = useState<StoryHit[]>([]);
+  const [trend, setTrend] = useState<ArenaTrendEntry[]>([]);
   const askedRef = useRef<string[]>([]);
 
   useEffect(() => () => { try { speechSynthesis.cancel(); } catch { /* no-op */ } }, []);
+
+  // Progress trend across recent sessions — proof the drills are working.
+  useEffect(() => {
+    if (!workspaceId) return;
+    api.verticalPost<{ trend: ArenaTrendEntry[] }>("interview-intelligence", "/arena/analytics", { workspaceId })
+      .then((res) => setTrend(Array.isArray(res.trend) ? res.trend : []))
+      .catch(() => setTrend([])); // trend is garnish — never block practice on it
+  }, [workspaceId]);
 
   async function recallStories(q: string) {
     if (!workspaceId || !q.trim()) { setStories([]); return; }
@@ -77,7 +100,7 @@ export default function Arena() {
         workspaceId, role, seniority, jd, count: 10,
       });
       setPredictions(res.questions);
-      notify("success", `${res.questions.length} predicted questions â€” drill them before the real thing`);
+      notify("success", `${res.questions.length} predicted questions — drill them before the real thing`);
     } catch (e) {
       notify("error", e instanceof Error ? e.message : String(e));
     } finally { setPredictBusy(false); }
@@ -126,10 +149,10 @@ export default function Arena() {
       setCurrent("");
       setPhase("idle");
       if (earnedFollowUp) {
-        // Weak answer: the interviewer presses â€” with the score card still visible.
+        // Weak answer: the interviewer presses — with the score card still visible.
         void nextQuestion(currentDepth + 1, q, answer);
       } else {
-        notify(res.score >= 8 ? "success" : "info", `Scored ${res.score}/10${res.score >= 8 ? " â€” excellent" : " â€” read the coached rewrite below"}`);
+        notify(res.score >= 8 ? "success" : "info", `Scored ${res.score}/10${res.score >= 8 ? " — excellent" : " — read the coached rewrite below"}`);
       }
     } catch (e) {
       notify("error", e instanceof Error ? e.message : String(e));
@@ -143,7 +166,7 @@ export default function Arena() {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.0;
       speechSynthesis.speak(u);
-    } catch { /* no voices â€” silent text fallback */ }
+    } catch { /* no voices — silent text fallback */ }
   }
 
   const avg = rounds.length > 0
@@ -154,7 +177,7 @@ export default function Arena() {
     <div className="col">
       <PageHeader
         kicker="Interview Intelligence"
-        title="Arena â€” practice mode"
+        title="Arena — practice mode"
         description="The AI interviews you. Every answer is scored 0-10 with a coached rewrite of what a 10 sounds like. Weak answers earn follow-up probes."
       />
 
@@ -163,7 +186,7 @@ export default function Arena() {
           <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ maxWidth: 180 }}>
             {MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
-          <input placeholder="Target role (optional) â€” e.g. AI Training Specialist" value={role} onChange={(e) => setRole(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
+          <input placeholder="Target role (optional) — e.g. AI Training Specialist" value={role} onChange={(e) => setRole(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
           <select value={seniority} onChange={(e) => setSeniority(e.target.value)} style={{ maxWidth: 150 }}>
             <option value="">Any level</option>
             <option value="junior">Junior</option>
@@ -187,26 +210,26 @@ export default function Arena() {
           {avg !== null && (
             <span className="row small" style={{ gap: 6, marginLeft: "auto" }}>
               <span className="muted">Session average</span>
-              <span className="badge" style={{ color: scoreColor(avg), borderColor: "rgba(124,124,255,0.4)" }}>{avg}/10 Â· {rounds.length} answered</span>
+              <span className="badge" style={{ color: scoreColor(avg), borderColor: "rgba(124,124,255,0.4)" }}>{avg}/10 · {rounds.length} answered</span>
             </span>
           )}
         </div>
-        <span className="small muted">Answer out loud, then type what you said (or type directly) â€” the score judges content, not transcription typos.</span>
+        <span className="small muted">Answer out loud, then type what you said (or type directly) — the score judges content, not transcription typos.</span>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <input
-            placeholder="Paste the job description for question prediction (optional)â€¦"
+            placeholder="Paste the job description for question prediction (optional)…"
             value={jd}
             onChange={(e) => setJd(e.target.value)}
             style={{ flex: 1, minWidth: 240 }}
             title="The predictor mixes intro/behavioral, role-specific, and pressure questions from the JD"
           />
           <button className="ghost" disabled={predictBusy || (!role.trim() && !jd.trim())} onClick={() => void predict()}>
-            {predictBusy ? "Predictingâ€¦" : predictions.length > 0 ? `Re-predict (${predictions.length})` : "Predict questions"}
+            {predictBusy ? "Predicting…" : predictions.length > 0 ? `Re-predict (${predictions.length})` : "Predict questions"}
           </button>
         </div>
         {predictions.length > 0 && (
           <div className="col" style={{ gap: 6 }}>
-            <span className="kicker">Question horizon â€” {predictions.length} predicted</span>
+            <span className="kicker">Question horizon — {predictions.length} predicted</span>
             <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
               {predictions.map((q, i) => (
                 <button
@@ -223,7 +246,7 @@ export default function Arena() {
                     if (useVoice) speak(q);
                   }}
                 >
-                  {askedRef.current.includes(q) ? "âœ“ " : ""}{q.slice(0, 90)}{q.length > 90 ? "â€¦" : ""}
+                  {askedRef.current.includes(q) ? "✓ " : ""}{q.slice(0, 90)}{q.length > 90 ? "…" : ""}
                 </button>
               ))}
             </div>
@@ -232,6 +255,22 @@ export default function Arena() {
       </div>
 
       {phase === "asking" && <Skeleton height="90px" />}
+
+      {trend.length > 1 && (
+        <div className="card row" style={{ gap: 24, flexWrap: "wrap", alignItems: "center" }}>
+          <span className="kicker">Progress trend · last {trend.length} sessions</span>
+          {trend.map((t, i) => (
+            <div key={t.sessionId} className="col small" style={{ gap: 2, minWidth: 86 }}>
+              <span className="muted mono">#{i + 1}</span>
+              <span>
+                {t.metrics.fillerRate} fill<span style={{ color: verdictColor(t.verdicts.filler) }}> · </span>
+                {t.metrics.wpm == null ? "—" : t.metrics.wpm} wpm<span style={{ color: verdictColor(t.verdicts.pace) }}> · </span>
+                {Math.round(t.metrics.starShare * 100)}% star
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {rounds.length > 0 && (
         <div className="col" style={{ gap: 10 }}>
@@ -252,7 +291,7 @@ export default function Arena() {
                 <div className="col" style={{ gap: 6, fontSize: 13 }}>
                   <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
                     {r.eval.strengths.map((s, j) => <span key={`s${j}`} className="badge" style={{ color: "var(--success)", borderColor: "rgba(52,211,153,0.4)" }}>+ {s}</span>)}
-                    {r.eval.weaknesses.map((w, j) => <span key={`w${j}`} className="badge" style={{ color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }}>âˆ’ {w}</span>)}
+                    {r.eval.weaknesses.map((w, j) => <span key={`w${j}`} className="badge" style={{ color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }}>− {w}</span>)}
                   </div>
                   <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: 10, whiteSpace: "pre-wrap" }}>
                     <b>What a 10 sounds like</b>
@@ -288,16 +327,16 @@ export default function Arena() {
           )}
           <textarea
             rows={4}
-            placeholder="Type your answer â€” write it the way you would say itâ€¦"
+            placeholder="Type your answer — write it the way you would say it…"
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
           />
           <div className="row" style={{ gap: 8 }}>
             <button className="primary" disabled={!typed.trim() || busy} onClick={() => void submitAnswer()}>
-              {busy ? "Scoringâ€¦" : "Submit answer"}
+              {busy ? "Scoring…" : "Submit answer"}
             </button>
             <button className="ghost" onClick={() => { setCurrent(""); setPhase("idle"); }}>Skip</button>
-            <button className="ghost" title="Re-read the question aloud" onClick={() => speak(current)}>ðŸ”Š Repeat</button>
+            <button className="ghost" title="Re-read the question aloud" onClick={() => speak(current)}>🔊 Repeat</button>
           </div>
         </div>
       )}
@@ -309,4 +348,11 @@ function scoreColor(score: number): string {
   if (score >= 8) return "var(--success)";
   if (score >= 6) return "#fbbf24";
   return "var(--danger)";
+}
+
+function verdictColor(v: "good" | "ok" | "warn" | null): string {
+  if (v === "good") return "var(--success)";
+  if (v === "warn") return "var(--danger)";
+  if (v === "ok") return "var(--warn)";
+  return "var(--muted)";
 }

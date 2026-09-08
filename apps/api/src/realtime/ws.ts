@@ -25,7 +25,7 @@ import { AnswerCache, prepHashOf, questionTokens, keyHashFor } from "../services
 const log = logger({ svc: "realtime" });
 const breakers = new CircuitBreakerRegistry();
 
-/** GET /v1/realtime Ã¢â‚¬â€ WebSocket upgrade. Client auth via ?token=&sessionId= */
+/** GET /v1/realtime ” WebSocket upgrade. Client auth via ?token=&sessionId= */
 export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
   // fastify-websocket registers `app.get` with { websocket: true }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -76,24 +76,24 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
-    /** Mode persona (rival ModesManager parity) â€” client-switchable mid-session. */
+    /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
     /** Response length preference (rival length modes): short | medium | long. */
     let sessionLength: "short" | "medium" | "long" = "medium";
     /** Whether the interviewer channel has produced any final this session.
      *  Mic speech coaches only while it hasn't: speakerphone/in-person calls
      *  deliver the interviewer through the mic (no loopback), so the mic IS
-     *  the conversation until loopback audio appears â€” then it's just the
+     *  the conversation until loopback audio appears — then it's just the
      *  user's own voice and coaching on it stops automatically. No toggle. */
     let sawInterviewer = false;
-    /** Profile Intelligence persona â€” coach answers cite real background. */
+    /** Profile Intelligence persona — coach answers cite real background. */
     let personaContext: string | undefined;
     /** Session prep materials: CV/JD/notes text for the coach prompt, and the
      *  drilled Q&A bank for instant recall (no LLM latency). Reloadable
      *  mid-session via the session.reload_contexts frame. */
     let prepContext: string | undefined;
     let qaBank: { id: string; title: string; content: string }[] = [];
-    /** Last Q&A the recall surfaced â€” one prepared answer per question. */
+    /** Last Q&A the recall surfaced — one prepared answer per question. */
     let lastRecalledQaId = "";
 
     async function loadPrepMaterials(): Promise<void> {
@@ -113,7 +113,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.info("session prep loaded", { contexts: contexts.length, qaBank: qaBank.length });
     }
 
-    // Dual-channel STT: native capture tags chunks mic|system â†’ user|interviewer
+    // Dual-channel STT: native capture tags chunks mic|system → user|interviewer
     // attribution. Browser (channel-less) chunks share the default engine.
     const sttOpts: {
       deepgramKey?: string;
@@ -275,7 +275,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer", segmentId?: string): Promise<void> {
       // Echo dedup (rival `ECHO_WINDOW` parity): the mic hears the speaker's
-      // output acoustically â€” if a user final near-identically repeats the
+      // output acoustically — if a user final near-identically repeats the
       // last interviewer final within 8s, it's echo, drop it.
       if (speaker === "user" && text.length > 8) {
         const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
@@ -310,7 +310,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         createdAt: new Date().toISOString(),
       };
 
-      // Persist (speaker rides along â€” attribution must survive reload/Review)
+      // Persist (speaker rides along — attribution must survive reload/Review)
   try {
     await db.transcriptSegment.create({
       data: {
@@ -333,18 +333,22 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       try {
         ingestSegment(assembler, segment as never, `srv:${finalSegmentId}`);
       } catch {
-        /* assembler ordering edge Ã¢â‚¬â€ non-fatal */
+        /* assembler ordering edge ” non-fatal */
       }
 
       lastFinalIds = [...lastFinalIds.slice(-4), finalSegmentId];
 
       // Instant prepared-answer recall (rival knowledge-packs parity): match
-      // interviewer questions against the drilled Q&A bank â€” ~0ms, ahead of
+      // interviewer questions against the drilled Q&A bank — ~0ms, ahead of
       // the LLM coach. One recall per question text. Mic speech matches too
       // while no interviewer audio exists (phone-mode sessions).
+      // preparedServed suppresses the parallel verbatim draft for this final —
+      // the bank already answered it at 0ms.
+      let preparedServed = false;
       if ((speaker === "interviewer" || (speaker === "user" && !sawInterviewer)) && qaBank.length > 0) {
         const match = matchPreparedQa(text, qaBank);
         if (match && match.qa.id !== lastRecalledQaId) {
+          preparedServed = true;
           lastRecalledQaId = match.qa.id;
           const insightId = randomUUID();
           const contentJson = {
@@ -396,7 +400,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       });
 
       finalsSinceSummary += 1;
-      // Summary runs only when the coach is idle â€” on rate-limited tiers the
+      // Summary runs only when the coach is idle — on rate-limited tiers the
       // two calls would queue behind each other and delay the live answer.
       // The counter persists, so the summary fires on a later quiet final.
       if (finalsSinceSummary >= 8 && !coachBusy) {
@@ -407,13 +411,37 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // Rival semantic (Cluely/LockedIn parity): the coach responds to the
       // interviewer's speech (loopback). Channel-less (browser mic) finals
       // count as interviewer. Until interviewer audio exists at all, mic
-      // speech drives coaching â€” the mic is the only conversation in a
+      // speech drives coaching — the mic is the only conversation in a
       // speakerphone/in-person session. Once loopback interviewer audio
       // appears, mic speech stops coaching (it's the user's own voice).
-      if (speaker !== "user" || !sawInterviewer) scheduleCoaching();
+      if (speaker !== "user" || !sawInterviewer) {
+        scheduleCoaching();
+        // Parallel verbatim draft (answer-first UX): a question-shaped final
+        // fires the spoken-words draft IMMEDIATELY, concurrent with the coach
+        // framework call. The speakable answer lands one LLM round-trip
+        // earlier instead of waiting behind the framework; the coach's own
+        // draft trigger remains as fallback for questions the heuristic
+        // misses. draftAutoAnswer's key dedup stops double drafts.
+        if (looksLikeQuestion(text) && !preparedServed) {
+          lastParallelDraftAt = Date.now();
+          const tail = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n");
+          void draftAutoAnswer(text, tail.slice(-2000));
+        }
+      }
     }
 
-    /** Rolling ~30s chunk summary feeding the coach's context window (Â§7). */
+    /** Heuristic question shape — the fast path for the parallel verbatim
+     *  draft. Mirrors the overlay strip rule: '?' or a leading question word.
+     *  Cheap and deterministic; the coach's normalized detection remains the
+     *  authority for the framework card. */
+    function looksLikeQuestion(t: string): boolean {
+      const s = t.trim();
+      if (!s) return false;
+      if (s.includes("?")) return true;
+      return /^(tell|what|how|why|when|who|where|walk|describe|explain|give|can you|could you|do you|did you|have you|are you|would you)\b/i.test(s);
+    }
+
+    /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
     async function summarizeChunk(): Promise<void> {
       if (!workspaceCfg) return;
       const chunk = assembler.finals.slice(-8).map((s: { text: string }) => s.text).join("\n");
@@ -487,7 +515,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     }
 
     /** Single-flight coach control: a new trigger ABORTS any in-flight call
-     *  (interruption preemption â€” the newest speech is the most urgent
+     *  (interruption preemption — the newest speech is the most urgent
      *  context) and the epoch discards results that finish after being
      *  superseded. This is what keeps provider slots free: no queued,
      *  stale, or duplicate coach calls piling up on rate-limited tiers. */
@@ -501,8 +529,28 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
      *  answer. Wait-for-completion beats raw speed. */
     const COACH_CONFIRM_MS = 900;
 
+    /** Junk-trigger gate state: the last normalized trigger text. */
+    let lastTriggerNorm = "";
+
+    /** Timestamp of the last parallel (heuristic) verbatim draft. The coach's
+     *  own draft trigger defers to it — one draft per question, whichever
+     *  path fires first. */
+    let lastParallelDraftAt = 0;
+
     function scheduleCoaching(): void {
-      // Preempt immediately: whatever the coach is crafting is already stale â€”
+      // Junk-trigger gate: backchannel fragments ("Love", "About yourself.")
+      // and exact consecutive repeats burn provider quota and end as scaffolds
+      // on rate-limited tiers. A subsequent substantive final re-schedules;
+      // an in-flight coach call is left running (its context is still valid).
+      const latest = String(assembler.finals.at(-1)?.text ?? "").trim();
+      if (latest) {
+        const norm = latest.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+        const words = norm.split(" ").filter(Boolean);
+        if (words.length < 3 && !latest.includes("?")) return;
+        if (norm && norm === lastTriggerNorm) return;
+        lastTriggerNorm = norm;
+      }
+      // Preempt immediately: whatever the coach is crafting is already stale —
       // the conversation moved on.
       coachAbort?.abort();
       coachAbort = null;
@@ -637,7 +685,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           } as never,
         );
         // Superseded mid-flight (interruption or newer final): the result is
-        // stale â€” discard silently, no UI noise, no persistence.
+        // stale — discard silently, no UI noise, no persistence.
         if (epoch !== coachEpoch) {
           log.info("coach result discarded (superseded)", { sessionId: session!.id, waitedMs: Date.now() - startedAt });
           return;
@@ -654,20 +702,29 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               contentJson = { raw: outcome.text, confidence: 0.4, requires_user_review: true };
             }
           } else {
-            contentJson = {
-              detected_question: verbatim.slice(-200),
-              suggested_outline: ["Context", "Challenge", "Action", "Result"],
-              talking_points: ["State your role and the stakes", "Name the decision you owned", "Close with a measurable outcome"],
-              confidence: 0.35,
-              requires_user_review: true,
-            };
+            // Every provider rung failed (rate limits, breakers, outage).
+            // Never fabricate a card here — a transcript fragment pasted as a
+            // "question" reads as broken output. Show the honest offline
+            // scaffold and surface WHY, so the user can fix the provider.
+            log.warn("coach unavailable — offline scaffold", { sessionId: session!.id, error: outcome.error ?? "no outcome" });
+            emit({
+              type: "pipeline.warning",
+              eventId: randomUUID(),
+              sequenceNo: serverSeq++,
+              occurredAt: new Date().toISOString(),
+              sessionId: session!.id,
+              code: "coach_unavailable",
+              message: typeof outcome.error === "string" ? outcome.error : "LLM provider unavailable — check keys/quota in Settings",
+            });
+            emitOfflineScaffold(verbatim);
+            return;
           }
 
           // Post-process before judging (reference answerPolish parity): strip
           // JSON-envelope leakage / AI tells, compress to speakable lines.
           const sanitized = sanitizeCoachFramework(contentJson as unknown as CoachFramework);
           if (!sanitized) {
-            log.info("coach suggestion dropped: nothing speakable after sanitize â€” offline scaffold shown");
+            log.info("coach suggestion dropped: nothing speakable after sanitize — offline scaffold shown");
             emitOfflineScaffold(verbatim);
             return;
           }
@@ -683,7 +740,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             if (verdict.reason === "duplicate_question") {
               log.info("coach suggestion filtered", { reason: verdict.reason });
             } else {
-              log.info("coach suggestion filtered â€” offline scaffold shown", { reason: verdict.reason });
+              log.info("coach suggestion filtered — offline scaffold shown", { reason: verdict.reason });
               emitOfflineScaffold(verbatim);
             }
             return;
@@ -768,18 +825,23 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           }
 
           // Auto-answer pass (reference SimpleAutoAnswer parity): strong question
-          // with high confidence â†’ draft the exact spoken words as its own
-          // insight. Fire-and-forget; failure never affects the coach path.
+          // with high confidence → draft the exact spoken words. This is the
+          // FALLBACK path now — the parallel heuristic draft usually fired at
+          // final-commit time (faster: one round-trip total). Skip when that
+          // already ran within the last 15s so a question is never drafted
+          // twice; dedup in draftAutoAnswer still guards exact repeats.
           const q = String(contentJson.detected_question ?? "").trim();
           const conf = Number(contentJson.confidence ?? 0);
           // Draft gate 0.55: STT partial confidence (0.7) and marginal LLM
           // confidence must still draft — the judge and postProcess guard
           // quality; silence is the only unacceptable outcome.
           if (q && conf >= 0.55 && q.includes("?")) {
-            void draftAutoAnswer(q, verbatim.slice(-2000));
+            if (Date.now() - lastParallelDraftAt > 15_000) {
+              void draftAutoAnswer(q, verbatim.slice(-2000));
+            }
           }
         } catch (e) {
-          if (abort.signal.aborted) return; // superseded â€” silent by design
+          if (abort.signal.aborted) return; // superseded — silent by design
           log.warn("coaching pipeline failed", { error: String(e) });
           emit({
             type: "pipeline.warning",
@@ -797,12 +859,30 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     /** Always-answer fallback: when the LLM output is unusable, the user still
      *  gets a structural scaffold for the last heard question instead of a
-     *  silently empty panel. Marked offline so the UI styles it honestly. */
+     *  silently empty panel. Marked offline so the UI styles it honestly.
+     *  Guarded: no scaffold for junk lines, and repeated failures within the
+     *  window collapse into a single card instead of spamming the stack. */
+    let lastScaffoldAt = 0;
     function emitOfflineScaffold(verbatim: string): void {
-      const lastLine = verbatim.split("\n").filter(Boolean).at(-1) ?? "";
+      const lines = verbatim.split("\n").filter(Boolean);
+      // Prefer the last line that actually reads as a question; a bare tail
+      // slice would cut mid-word ("…exp|erience across…") and read as broken.
+      const questionish = [...lines].reverse().find((l) => l.includes("?")) ?? "";
+      const raw = (questionish || lines.at(-1) || "").trim();
+      // Junk gate: a fragment with no question shape isn't worth a scaffold —
+      // stay silent and keep the last good card visible.
+      const wordCount = raw.split(/\s+/).filter(Boolean).length;
+      if (!raw || (wordCount < 4 && !raw.includes("?"))) return;
+      // Throttle: identical failure bursts render one scaffold per 12s.
+      const now = Date.now();
+      if (now - lastScaffoldAt < 12_000) return;
+      lastScaffoldAt = now;
+      // Over-long lines keep only the tail — cut at a word boundary, never
+      // inside a word.
+      const trimmed = raw.length > 300 ? raw.slice(-300).replace(/^\S+\s/, "") : raw;
       const insightId = randomUUID();
       const contentJson = {
-        detected_question: lastLine.slice(-300) || "Question still formingâ€¦",
+        detected_question: trimmed || "Question still forming…",
         suggested_outline: ["Direct answer first", "One concrete proof point", "Close with the outcome"],
         talking_points: ["Name the core answer in one sentence", "Back it with a specific project result"],
         confidence: 0.3,
@@ -837,7 +917,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       });
     }
 
-    /** Question dedup for auto-answer â€” one draft per question text. */
+    /** Question dedup for auto-answer — one draft per question text. */
     let lastAnsweredQuestion = "";
 
     async function draftAutoAnswer(question: string, transcriptTail: string): Promise<void> {
@@ -957,7 +1037,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const engine = engineFor(frame.channel);
         const speaker = frame.channel === "system" ? "interviewer" : frame.channel === "mic" ? "user" : undefined;
         engine.feed(pcm, nowMs, (result) => {
-          // Defer socket writes out of the engine's synchronous decode loop â€”
+          // Defer socket writes out of the engine's synchronous decode loop —
           // sync sends from inside a native (napi) callback stack corrupt the
           // recognizer's decode state.
           queueMicrotask(() => {
@@ -1013,7 +1093,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // when the client stops sending (partial-only sessions otherwise end
       // with zero persisted segments).
       for (const [channel, engine] of sttEngines) {
-        // Close AFTER flush completes â€” async engines (Moonshine) decode the
+        // Close AFTER flush completes — async engines (Moonshine) decode the
         // trailing utterance during flush; closing first kills their pipeline
         // and the final is lost.
         let closed = false;

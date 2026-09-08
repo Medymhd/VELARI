@@ -13,12 +13,21 @@ import Settings from "./features/Settings";
 import Research from "./features/Research";
 import Work from "./features/Work";
 import Arena from "./features/Arena";
+import Prep from "./features/Prep";
 import { useEffect, useRef, useState } from "react";
 
 const CORE_NAV = [
   { id: "home", label: "Home", icon: navIcon("M3 10.5 12 3l9 7.5 M5 9.5V21h14V9.5") },
   { id: "live", label: "Live session", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
   { id: "arena", label: "Arena", icon: navIcon("M6 4v16 M18 4l-6 8 6 8 M4 6h5 M4 12h5 M4 18h5") },
+  { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
+] as const;
+
+/** Interviewer persona swaps the whole nav context — same engine, opposite
+ *  side of the table. Shared screens (live, review) adapt via persona. */
+const INTERVIEWER_NAV = [
+  { id: "prep", label: "Prep", icon: navIcon("M9 3h6v4H9z M9 5H6v16h12V5h-3 M9 11h6 M9 15h6") },
+  { id: "live", label: "Live interview", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
   { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
 ] as const;
 
@@ -33,7 +42,7 @@ function navIcon(d: string) {
 
 const OVERLAY_DOT: Record<string, string> = { stealth: "var(--accent)", assist: "var(--warn)", none: "var(--muted)" };
 
-/** Distinct icon per vertical â€” the collapsed rail is icon-only, so every
+/** Distinct icon per vertical — the collapsed rail is icon-only, so every
  *  destination must be visually unique. */
 function verticalIcon(id: string) {
   const paths: Record<string, string> = {
@@ -59,7 +68,7 @@ interface VerticalInfo {
   overlay?: { mode: string };
 }
 
-/** Per-screen crash isolation â€” a broken screen shows its error inline
+/** Per-screen crash isolation — a broken screen shows its error inline
  *  instead of unmounting the whole shell. */
 class ScreenErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -103,9 +112,11 @@ function NavItem(props: { label: string; icon: () => ReactNode; active: boolean;
 }
 
 export default function App() {
-  const { screen, setScreen, setStealth, clearAuth, setToken, token, notices, dismiss } = useStore();
+  const { screen, setScreen, persona, setPersona, setStealth, clearAuth, setToken, token, notices, dismiss, notify } = useStore();
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
+
+  const nav = persona === "interviewer" ? INTERVIEWER_NAV : CORE_NAV;
 
   // Sidebar: persisted width + collapsed icon rail.
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -148,7 +159,7 @@ export default function App() {
     stealthGetState().then(setStealth).catch(() => {});
     // A stale token (rotated JWT secret, expired) must land on onboarding, not Home.
     // A transient network failure (API still booting, Postgres not up) must NOT
-    // wipe a possibly-valid session â€” that forced re-onboarding on every restart
+    // wipe a possibly-valid session — that forced re-onboarding on every restart
     // whenever the desktop shell won the startup race against the API.
     if (token) {
       api.me().then((me) => {
@@ -156,7 +167,7 @@ export default function App() {
         if (!me.valid) clearAuth();
         setReady(true);
       }).catch(() => {
-        // API unreachable â€” keep the stored session and proceed; the token is
+        // API unreachable — keep the stored session and proceed; the token is
         // re-verified on the first real API call, and a 401 there clears auth.
         setReady(true);
       });
@@ -166,19 +177,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (token && screen === "onboarding" && ready) setScreen("home");
-  }, [token, screen, ready, setScreen]);
+    if (token && screen === "onboarding" && ready) setScreen(persona === "interviewer" ? "prep" : "home");
+  }, [token, screen, ready, persona, setScreen]);
 
   const activeVertical = verticals.find((v) => v.id === screen);
   const activeLabel =
-    screen === "home" || screen === "live" || screen === "review" || screen === "arena"
+    screen === "home" || screen === "live" || screen === "review" || screen === "arena" || screen === "prep"
       ? verticals.find((v) => v.id === "interview-intelligence")?.displayName ?? "Interview Intelligence"
       : screen === "settings"
         ? "Settings"
         : activeVertical?.displayName ?? APP_NAME;
 
   useEffect(() => {
-    document.title = `${APP_NAME} â€” ${activeLabel}`;
+    document.title = `${APP_NAME} — ${activeLabel}`;
   }, [activeLabel]);
 
   if (!ready) return null;
@@ -199,10 +210,11 @@ export default function App() {
             title={rail ? "Expand sidebar" : "Collapse sidebar"}
             onClick={toggleRail}
           >
-            {rail ? "Â»" : "Â«"}
+            {rail ? "»" : "«"}
           </button>
         </div>
-        {CORE_NAV.map((item) => (
+        {nav === INTERVIEWER_NAV && <div className="sidebar-group">Interviewer</div>}
+        {nav.map((item) => (
           <NavItem key={item.id} label={item.label} icon={item.icon} active={screen === item.id} onSelect={() => setScreen(item.id)} />
         ))}
         {verticals.length > 0 && <div className="sidebar-group">Verticals</div>}
@@ -211,16 +223,37 @@ export default function App() {
             key={v.id}
             label={v.displayName}
             icon={verticalIcon(v.id)}
-            active={screen === v.id || (v.id === "interview-intelligence" && ["home", "live", "review"].includes(screen))}
+            active={screen === v.id || (v.id === "interview-intelligence" && ["home", "live", "review", "prep", "arena"].includes(screen))}
             dot={v.overlay?.mode ?? "none"}
-            onSelect={() => setScreen(v.id === "interview-intelligence" ? "home" : v.id)}
+            onSelect={() => setScreen(v.id === "interview-intelligence" ? (persona === "interviewer" ? "prep" : "home") : v.id)}
           />
         ))}
         <div className="foot">
           <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
           {!rail && (
-            <div className="small muted" style={{ padding: "8px 10px 0" }}>
-              v0.1.0 Â· local-first Â· BYOK
+            <div className="row" style={{ gap: 0, padding: "8px 10px 0" }}>
+              {(["candidate", "interviewer"] as const).map((p) => (
+                <button
+                  key={p}
+                  className="ghost"
+                  style={{
+                    flex: 1, padding: "5px 0", fontSize: 12, borderRadius: 0,
+                    ...(persona === p ? { borderColor: "var(--accent)", color: "var(--accent)", fontWeight: 600 } : {}),
+                    ...(p === "interviewer" ? { borderLeft: "none" } : {}),
+                  }}
+                  title={p === "candidate" ? "The app coaches you" : "The app helps you run the interview"}
+                  onClick={() => {
+                    if (!setPersona(p)) notify("info", "End the live session before switching persona");
+                  }}
+                >
+                  {p === "candidate" ? "Candidate" : "Interviewer"}
+                </button>
+              ))}
+            </div>
+          )}
+          {!rail && (
+            <div className="small muted" style={{ padding: "4px 10px 0" }}>
+              v0.1.0 · local-first · BYOK
             </div>
           )}
         </div>
@@ -243,6 +276,7 @@ export default function App() {
             {screen === "live" && <LiveSession />}
             {screen === "arena" && <Arena />}
             {screen === "review" && <Review />}
+            {screen === "prep" && <Prep />}
             {screen === "settings" && <Settings />}
             {screen === "research" && <Research />}
             {screen === "work" && <Work />}
@@ -250,7 +284,7 @@ export default function App() {
               <div className="card col" style={{ marginTop: 16 }}>
                 <span className="kicker">{activeVertical.displayName}</span>
                 <span className="small muted">
-                  Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> â€”
+                  Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> —
                   its dedicated UI lands with the vertical package.
                 </span>
               </div>

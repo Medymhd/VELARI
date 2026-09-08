@@ -1,5 +1,5 @@
 /**
- * Live-coach prompt assembly (doc Â§7). Pure functions â€” no provider calls.
+ * Live-coach prompt assembly (doc §7). Pure functions — no provider calls.
  */
 import type { ChatMessage } from "@app/contracts";
 import { modePersona } from "./modes.js";
@@ -83,7 +83,7 @@ export const QUESTION_BANK = [
   { id: "behavioral.failure", text: "Describe a professional failure and what changed afterward.", theme: "behavioral" },
   { id: "technical.scaling", text: "Walk through scaling a system past its original limits.", theme: "technical" },
   { id: "leadership.influence", text: "How did you drive an outcome without formal authority?", theme: "leadership" },
-  { id: "case.prioritization", text: "Two urgent projects, resources for one â€” how do you decide?", theme: "case" },
+  { id: "case.prioritization", text: "Two urgent projects, resources for one — how do you decide?", theme: "case" },
 ] as const;
 
 

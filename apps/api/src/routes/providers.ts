@@ -292,7 +292,7 @@ export function providerRoutes(app: FastifyInstance, db: PrismaClient): void {
     return reply.send(toJson(saved));
   });
 
-  /** Probe a profile through the real router Ã¢â‚¬â€ proves failover wiring works. */
+  /** Probe a profile through the real router ” proves failover wiring works. */
   app.post("/v1/model-profiles/:id/test", async (req, reply) => {
     const { id } = req.params as { id: string };
     const profile = await db.modelProfile.findUnique({ where: { id } });

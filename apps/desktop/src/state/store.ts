@@ -7,6 +7,16 @@ export type Screen = string;
 // Adding a new vertical alongside the 2 built never edits this union — shell renders whatever
 // the manifest registry returns via `/v1/verticals` (dynamic, see App.tsx + server.ts discoverVerticals).
 
+/** Who is holding the device. Candidate (default) = the app coaches YOU.
+ *  Interviewer = the app helps you run the interview (question sheet, probes,
+ *  talk-time). Swapping is a full context switch: nav + screens + persona. */
+export type Persona = "candidate" | "interviewer";
+const PERSONA_KEY = `${STORAGE_PREFIX}_persona`;
+
+function storedPersona(): Persona {
+  return localStorage.getItem(PERSONA_KEY) === "interviewer" ? "interviewer" : "candidate";
+}
+
 interface TranscriptItem {
   id: string;
   sequenceNo: number;
@@ -32,6 +42,7 @@ export interface Notice {
 
 interface State {
   screen: Screen;
+  persona: Persona;
   token: string | null;
   userId: string | null;
   workspaceId: string | null;
@@ -48,6 +59,9 @@ interface State {
   notices: Notice[];
 
   setScreen(s: Screen): void;
+  /** Context switch candidate ⇄ interviewer. No-op mid-live-session (returns
+   *  false so the switch UI can flash a notice). */
+  setPersona(p: Persona): boolean;
   setAuth(token: string, userId: string, workspaceId: string): void;
   /** Rotate just the token (sliding session renewal) — keeps identity/workspace. */
   setToken(token: string): void;
@@ -65,8 +79,9 @@ interface State {
   resetLive(): void;
 }
 
-export const useStore = create<State>((set) => ({
+export const useStore = create<State>((set, get) => ({
   screen: "onboarding",
+  persona: storedPersona(),
   token: localStorage.getItem(`${STORAGE_PREFIX}_token`),
   userId: localStorage.getItem(`${STORAGE_PREFIX}_userId`),
   workspaceId: localStorage.getItem(`${STORAGE_PREFIX}_workspaceId`),
@@ -82,6 +97,14 @@ export const useStore = create<State>((set) => ({
   notices: [],
 
   setScreen: (screen) => set({ screen }),
+  setPersona: (persona) => {
+    // Never strand a recording: an active live session pins the persona until
+    // it ends. Everything else swaps context immediately.
+    if (get().sessionStatus === "live") return false;
+    localStorage.setItem(PERSONA_KEY, persona);
+    set({ persona, screen: persona === "interviewer" ? "prep" : "home" });
+    return true;
+  },
   setAuth: (token, userId, workspaceId) => {
     localStorage.setItem(`${STORAGE_PREFIX}_token`, token);
     localStorage.setItem(`${STORAGE_PREFIX}_userId`, userId);

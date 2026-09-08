@@ -11,6 +11,23 @@ export {
 export { sanitizeCoachFramework, stripLeakage, speakable } from "./postProcess.js";
 export { matchPreparedQa, type PreparedQa, type PreparedMatch } from "./prepared.js";
 export {
+  buildSheetMessages,
+  offlineSheet,
+  normalizeSheet,
+  type QuestionSheet,
+  type SheetQuestion,
+  type SheetDifficulty,
+} from "./interviewerSheet.js";
+export {
+  analyzeSession,
+  countFillers,
+  starScore,
+  wordCount,
+  metricVerdicts,
+  type AnalyzedSegment,
+  type SessionMetrics,
+} from "./analytics.js";
+export {
   createJudgeState,
   judgeSuggestion,
   buildChunkSummaryMessages,

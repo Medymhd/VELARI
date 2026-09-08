@@ -1,4 +1,4 @@
-﻿import type { ModelRequest } from "@app/contracts";
+﻿﻿import type { ModelRequest } from "@app/contracts";
 import {
   AIProvider,
   InvokeOutcome,
@@ -334,7 +334,7 @@ export class LocalEchoProvider extends AIProvider {
   }
 }
 
-/* â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
 function ok(
   text: string,

@@ -1,7 +1,7 @@
 /**
- * Copilot (research vertical) backend â€” durable perplexity-style chat over the
+ * Copilot (research vertical) backend — durable perplexity-style chat over the
  * platform AI seam. Threads and messages persist in Postgres via the platform
- * db seam (survives API restarts â€” the in-memory Map lost every thread on
+ * db seam (survives API restarts — the in-memory Map lost every thread on
  * redeploy). Answers route through the BYOK router (free local rungs
  * included); when no provider is eligible the route returns 503 so the UI can
  * surface the BYOK notice instead of inventing content.
@@ -9,7 +9,7 @@
 import type { VerticalRegistration, VerticalServices, RouteRegistrar, ReplyLike } from "@app/agent-sdk";
 import { researchManifest } from "./manifest.js";
 
-/** Typed facade over the Prisma client â€” no Prisma import in the vertical. */
+/** Typed facade over the Prisma client — no Prisma import in the vertical. */
 interface PersonaDb {
   researchChat: {
     create(args: { data: { id: string; workspaceId: string; title: string } }): Promise<{ id: string; workspaceId: string; title: string; createdAt: Date }>;
@@ -101,10 +101,10 @@ export const vertical: VerticalRegistration = {
       if (!question.trim()) return status(reply, 400).send({ error: "question required" });
 
       if (!ai) {
-        return status(reply, 503).send({ error: "no_provider", hint: "connect a provider in Settings (BYOK) â€” the free local rung requires the API ai seam" });
+        return status(reply, 503).send({ error: "no_provider", hint: "connect a provider in Settings (BYOK) — the free local rung requires the API ai seam" });
       }
 
-      // History BEFORE this turn (last 10) â€” this turn's messages persist after
+      // History BEFORE this turn (last 10) — this turn's messages persist after
       // the answer succeeds, so a failed call never leaves a dangling user row.
       const prior = await db.researchMessage.findMany({ where: { chatId }, orderBy: { createdAt: "asc" } });
       const history = prior.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
@@ -164,7 +164,7 @@ export const vertical: VerticalRegistration = {
       let chats = 0;
       try {
         chats = db ? (await db.researchChat.findMany({ orderBy: { createdAt: "desc" }, take: 100 })).length : 0;
-      } catch { /* db down â€” health still reports */ }
+      } catch { /* db down — health still reports */ }
       send(reply, { ok: true, vertical: researchManifest.id, chats, durable: Boolean(db) });
     });
   },
