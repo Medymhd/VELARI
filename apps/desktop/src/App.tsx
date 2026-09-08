@@ -12,11 +12,13 @@ import Review from "./features/Review";
 import Settings from "./features/Settings";
 import Research from "./features/Research";
 import Work from "./features/Work";
+import Arena from "./features/Arena";
 import { useEffect, useRef, useState } from "react";
 
 const CORE_NAV = [
   { id: "home", label: "Home", icon: navIcon("M3 10.5 12 3l9 7.5 M5 9.5V21h14V9.5") },
   { id: "live", label: "Live session", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
+  { id: "arena", label: "Arena", icon: navIcon("M6 4v16 M18 4l-6 8 6 8 M4 6h5 M4 12h5 M4 18h5") },
   { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
 ] as const;
 
@@ -31,7 +33,7 @@ function navIcon(d: string) {
 
 const OVERLAY_DOT: Record<string, string> = { stealth: "var(--accent)", assist: "var(--warn)", none: "var(--muted)" };
 
-/** Distinct icon per vertical — the collapsed rail is icon-only, so every
+/** Distinct icon per vertical â€” the collapsed rail is icon-only, so every
  *  destination must be visually unique. */
 function verticalIcon(id: string) {
   const paths: Record<string, string> = {
@@ -57,7 +59,7 @@ interface VerticalInfo {
   overlay?: { mode: string };
 }
 
-/** Per-screen crash isolation — a broken screen shows its error inline
+/** Per-screen crash isolation â€” a broken screen shows its error inline
  *  instead of unmounting the whole shell. */
 class ScreenErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -146,7 +148,7 @@ export default function App() {
     stealthGetState().then(setStealth).catch(() => {});
     // A stale token (rotated JWT secret, expired) must land on onboarding, not Home.
     // A transient network failure (API still booting, Postgres not up) must NOT
-    // wipe a possibly-valid session — that forced re-onboarding on every restart
+    // wipe a possibly-valid session â€” that forced re-onboarding on every restart
     // whenever the desktop shell won the startup race against the API.
     if (token) {
       api.me().then((me) => {
@@ -154,7 +156,7 @@ export default function App() {
         if (!me.valid) clearAuth();
         setReady(true);
       }).catch(() => {
-        // API unreachable — keep the stored session and proceed; the token is
+        // API unreachable â€” keep the stored session and proceed; the token is
         // re-verified on the first real API call, and a 401 there clears auth.
         setReady(true);
       });
@@ -169,14 +171,14 @@ export default function App() {
 
   const activeVertical = verticals.find((v) => v.id === screen);
   const activeLabel =
-    screen === "home" || screen === "live" || screen === "review"
+    screen === "home" || screen === "live" || screen === "review" || screen === "arena"
       ? verticals.find((v) => v.id === "interview-intelligence")?.displayName ?? "Interview Intelligence"
       : screen === "settings"
         ? "Settings"
         : activeVertical?.displayName ?? APP_NAME;
 
   useEffect(() => {
-    document.title = `${APP_NAME} — ${activeLabel}`;
+    document.title = `${APP_NAME} â€” ${activeLabel}`;
   }, [activeLabel]);
 
   if (!ready) return null;
@@ -197,7 +199,7 @@ export default function App() {
             title={rail ? "Expand sidebar" : "Collapse sidebar"}
             onClick={toggleRail}
           >
-            {rail ? "»" : "«"}
+            {rail ? "Â»" : "Â«"}
           </button>
         </div>
         {CORE_NAV.map((item) => (
@@ -218,7 +220,7 @@ export default function App() {
           <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
           {!rail && (
             <div className="small muted" style={{ padding: "8px 10px 0" }}>
-              v0.1.0 · local-first · BYOK
+              v0.1.0 Â· local-first Â· BYOK
             </div>
           )}
         </div>
@@ -239,6 +241,7 @@ export default function App() {
             {screen === "onboarding" && <Onboarding />}
             {screen === "home" && <Home />}
             {screen === "live" && <LiveSession />}
+            {screen === "arena" && <Arena />}
             {screen === "review" && <Review />}
             {screen === "settings" && <Settings />}
             {screen === "research" && <Research />}
@@ -247,7 +250,7 @@ export default function App() {
               <div className="card col" style={{ marginTop: 16 }}>
                 <span className="kicker">{activeVertical.displayName}</span>
                 <span className="small muted">
-                  Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> —
+                  Vertical <span className="mono">{screen}</span> mounted at <span className="mono">/v1/verticals/{screen}</span> â€”
                   its dedicated UI lands with the vertical package.
                 </span>
               </div>
