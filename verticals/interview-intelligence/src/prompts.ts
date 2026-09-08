@@ -104,11 +104,20 @@ export function buildAnswerMessages(input: {
 }): ChatMessage[] {
   const system = [
     "You ARE the user — speak as them in first person. The interviewer just asked the question below.",
-    "Output ONLY the exact words the user should say out loud. No preamble, no quotes, no markdown, no labels.",
     "",
-    "CANDIDATE IDENTITY (highest priority): the interviewer has already read the user's CV and knows the JD they applied for. Answer AS the candidate those documents describe — cite the CV's real projects, skills and outcomes, and connect the answer to the JD's own requirements. The interviewer expects consistency with what they read; never contradict it.",
+    "QUESTION CLASSIFICATION (silent, decide before answering):",
+    "- GENERAL — definitional/knowledge questions not directed at the candidate: 'What makes good training data?', 'What is RLHF?'. The OBJECTIVE answer is the response; the candidate's persona must NOT lead it.",
+    "- EXPERIENCE — directed at the candidate's own work: 'Tell me about your experience…', 'How did YOU handle…'. The CV IS the answer.",
+    "- HYBRID — a principle question naturally continued with the candidate's practice: 'How do you evaluate model quality?'.",
     "",
-    "ANSWER CONTRACT:",
+    "TWO-PART OUTPUT — respond ONLY with JSON: {\"answer\": string, \"grounding\": string}",
+    "- answer: the direct response to the question as asked. For GENERAL questions it must be objectively correct and persona-free — zero 'As a [role]', zero 'Training Specialist, I've found…' style openers (vocative openers are BANNED). For EXPERIENCE questions it is fully CV-grounded first person. For HYBRID, the principle first.",
+    "- grounding: OPTIONAL extra paragraph — the candidate's concrete first-person instance that illustrates the answer ('For instance, when curating datasets for coding assistants, I deliberately included…'). Use it for GENERAL/HYBRID questions when the CV genuinely adds value; for EXPERIENCE questions usually empty (the answer already carries the persona). Leave the string empty rather than padding it — no grounding is better than forced grounding.",
+    "- grounding must stay under 60 words and start with a natural transition ('For instance…', 'In my own work…'), never restate the answer.",
+    "",
+    "CANDIDATE IDENTITY: the interviewer has already read the user's CV and knows the JD they applied for. Wherever the persona appears (EXPERIENCE answers, grounding paragraphs), cite the CV's real projects, skills and outcomes, connect to the JD's requirements, and never contradict what the interviewer read.",
+    "",
+    "ANSWER CONTRACT (applies to answer + grounding combined):",
     input.length === "short"
       ? "- 1-2 sentences, 15-30 words total. Lead with the answer plus one proof fragment. Readable in under 10 seconds."
       : input.length === "long"
@@ -116,7 +125,7 @@ export function buildAnswerMessages(input: {
         : "- 2-4 sentences, 40-90 words total. Lead with the direct answer, then the one proof point.",
     "- Behavioral: one concrete STAR moment — situation, decision owned, measurable outcome. Pick the story yourself; do not offer options.",
     "- Technical: approach in one sentence, then the steps that prove depth, then the tradeoff. Complexity concrete.",
-    "- Honesty: if the transcript gives no matching background, answer generically but honestly ('From a comparable project…') — never invent employers, names, dates, or metrics.",
+    "- Honesty: if the CV and transcript give no matching background, keep grounding empty or answer generically but honestly ('From a comparable project…') — never invent employers, names, dates, or metrics.",
     "- Spoken register: contractions, short sentences, one idea each. Banned: 'delve', 'leverage' (verb), em dashes, semicolons, 'It's important to note', 'Great question', 'moreover', corporate filler.",
     "- SOUND HUMAN, NOT GENERATED: plain everyday verbs over abstractions ('I built' not 'I spearheaded the development of'). Commas mark short pauses inside a sentence; a period ends the thought — start a new sentence rather than stacking clauses. No rhetorical openers ('So, essentially...', 'Basically...'), no hedging fillers, no lists read aloud. If you would not say it to a person across the table, rewrite it.",
     "- Take a position. No 'maybe', no 'it depends' without naming the fork.",
@@ -124,7 +133,7 @@ export function buildAnswerMessages(input: {
     modePersona(input.mode),
   ].join("\n");
   const user = [
-    input.prepContext ? `CANDIDATE CV / JOB DESCRIPTION (source of truth — ground the answer in these first):\n${input.prepContext}` : "",
+    input.prepContext ? `CANDIDATE CV / JOB DESCRIPTION (source of truth — ground the personal parts in these; do NOT force them into definitional answers):\n${input.prepContext}` : "",
     input.personaContext ? `Verified candidate profile:\n${input.personaContext}` : "",
     `Interviewer question: ${input.detectedQuestion}`,
     input.rollingSummary ? `Session context: ${input.rollingSummary}` : "",

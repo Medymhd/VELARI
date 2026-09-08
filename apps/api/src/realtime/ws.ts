@@ -1021,15 +1021,50 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               prepContext,
               personaContext,
             }),
+            // Two-part output: answer + optional grounding (extra CV example
+            // the UI tints crimson). Fallbacks cover models that ignore JSON.
+            responseSchema: {
+              type: "object",
+              properties: {
+                answer: { type: "string" },
+                grounding: { type: "string" },
+              },
+              required: ["answer", "grounding"],
+            },
           } as never,
         );
-        const answer = outcome.ok ? stripLeakage(outcome.text ?? "").trim() : "";
+        // Answer + grounding: structured first, then JSON.parse, then the
+        // whole text as the answer (no grounding) — providers on free tiers
+        // can be sloppy with the schema and silence is never acceptable.
+        let rawAnswer = "";
+        let grounding = "";
+        if (outcome.ok && outcome.structured) {
+          const s = outcome.structured as { answer?: unknown; grounding?: unknown };
+          rawAnswer = typeof s.answer === "string" ? s.answer : "";
+          grounding = typeof s.grounding === "string" ? s.grounding : "";
+          if (!rawAnswer && typeof outcome.text === "string") rawAnswer = outcome.text;
+        } else if (outcome.ok && outcome.text) {
+          try {
+            const parsed = JSON.parse(outcome.text) as { answer?: unknown; grounding?: unknown };
+            if (typeof parsed.answer === "string") {
+              rawAnswer = parsed.answer;
+              grounding = typeof parsed.grounding === "string" ? parsed.grounding : "";
+            } else {
+              rawAnswer = outcome.text;
+            }
+          } catch {
+            rawAnswer = outcome.text;
+          }
+        }
+        const answer = outcome.ok ? stripLeakage(rawAnswer).trim() : "";
+        grounding = grounding ? stripLeakage(grounding).trim() : "";
         if (answer.split(/\s+/).length < 4) {
           log.info("auto-answer dropped: too short or failed");
           return;
         }
         const insightId = randomUUID();
-        const contentJson = { question, answer, mode: sessionMode };
+        const contentJson: Record<string, unknown> = { question, answer, mode: sessionMode };
+        if (grounding && grounding.split(/\s+/).length >= 4) contentJson.grounding = grounding.slice(0, 600);
         try {
           await db.sessionInsight.create({
             data: {

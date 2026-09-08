@@ -49,6 +49,13 @@
       .resp-body { font-size: 14.5px; line-height: 1.5; color: var(--text); margin-top: 5px; }
       .resp-body ol { margin: 0; padding-left: 18px; }
       .resp-points { color: var(--muted); margin-top: 4px; font-size: 13.5px; }
+      /* Crimson-tinted "extra info" block: CV-grounded instance the user may
+         or may not need — clearly secondary to the direct answer above. */
+      .grounding {
+        margin-top: 8px; padding: 7px 10px; border-radius: 8px;
+        background: rgba(220, 20, 60, 0.08); border-left: 2px solid rgba(220, 20, 60, 0.45);
+        font-size: 12.5px; line-height: 1.5; color: #b5566a;
+      }
       .resp-empty { color: var(--muted); font-size: 12.5px; padding: 6px 2px; }
       /* Single-line interviewer strip — the current question, full width.
          The old 8-line transcript churned truncated fragments ("IVWhat"). */
@@ -225,6 +232,14 @@
         body.className = "resp-body";
         if (isAnswer || isPrepared) {
           body.textContent = c.answer ?? "";
+          // Crimson "extra info" block: optional CV-grounded instance —
+          // annotation, not part of the rehearsed answer.
+          if (typeof c.grounding === "string" && c.grounding.trim()) {
+            const g = document.createElement("div");
+            g.className = "grounding";
+            g.textContent = c.grounding;
+            body.appendChild(g);
+          }
         } else {
           const ol = document.createElement("ol");
           for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
@@ -321,15 +336,22 @@
       }
 
       // Speak reads the newest card aloud: question, then the answer/points.
+      // Drafted answers speak the direct answer ONLY — the crimson grounding
+      // block is optional extra, not something to rehearse.
       // Guarded — the button is optional chrome; a missing element must never
       // kill this script (that class of crash left the overlay deaf once).
       let speakText = "";
       $("speakBtn")?.addEventListener("click", async () => {
         if (!lastInsight) return;
         const parts = [];
-        if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
-        if (lastInsight.suggested_outline?.length) parts.push(lastInsight.suggested_outline.join(". "));
-        if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
+        if (lastInsight.answer) {
+          if (lastInsight.question) parts.push(lastInsight.question);
+          parts.push(lastInsight.answer);
+        } else {
+          if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
+          if (lastInsight.suggested_outline?.length) parts.push(lastInsight.suggested_outline.join(". "));
+          if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
+        }
         speakText = parts.join(". ");
         if (!speakText) return;
 

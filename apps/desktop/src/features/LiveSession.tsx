@@ -937,6 +937,17 @@ const [overlayOn, setOverlayOn] = useState(false);
                   {ins.contentJson.cached === true && <span className="badge" style={{ marginLeft: 8 }} title="Served from the answer cache — no LLM call.">cached</span>}
                 </div>
                 <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {typeof ins.contentJson.grounding === "string" && (ins.contentJson.grounding as string).trim() && (
+                  <div
+                    style={{
+                      marginTop: 8, padding: "7px 10px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.5,
+                      background: "rgba(220, 20, 60, 0.08)", borderLeft: "2px solid rgba(220, 20, 60, 0.45)", color: "#b5566a",
+                    }}
+                    title="Extra CV-grounded example — use if the interviewer wants more"
+                  >
+                    {ins.contentJson.grounding as string}
+                  </div>
+                )}
                 {overlayOn && (
                   <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { contentJson: { talking_points: [String(ins.contentJson.answer ?? "")] } })}>
                     Send to overlay
