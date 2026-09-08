@@ -176,6 +176,7 @@
       });
 
       event.listen("overlay://insight", (e) => {
+        try {
         const c = e.payload.contentJson ?? {};
         // Answer-first stack: the speakable answer (drafted/prepared/cached)
         // ALWAYS lives at the top in green; coach framework cards slot
@@ -266,6 +267,11 @@
         lastInsight = stack.children[0]?.__content ?? c;
         pulseTiming();
         setWave(false);
+        } catch (err) {
+          // One malformed payload must never wedge the stack for the session —
+          // log and keep listening.
+          console.error("insight render failed", err);
+        }
       });
 
       // Announce readiness — the app-level forwarder backfills the current

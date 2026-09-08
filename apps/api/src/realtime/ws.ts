@@ -415,23 +415,38 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // speakerphone/in-person session. Once loopback interviewer audio
       // appears, mic speech stops coaching (it's the user's own voice).
       if (speaker !== "user" || !sawInterviewer) {
-        scheduleCoaching();
-        // Parallel verbatim draft (answer-first UX): a question-shaped final
-        // fires the spoken-words draft IMMEDIATELY, concurrent with the coach
-        // framework call. The speakable answer lands one LLM round-trip
-        // earlier instead of waiting behind the framework; the coach's own
-        // draft trigger remains as fallback for questions the heuristic
-        // misses. draftAutoAnswer's key dedup stops double drafts.
-        if (looksLikeQuestion(text) && !preparedServed) {
-          lastParallelDraftAt = Date.now();
+        // Answer-first sequencing: a question-shaped final drafts the spoken
+        // answer FIRST, then the framework coach runs after it settles. The
+        // speakable answer lands after ONE LLM round-trip (instead of two
+        // sequential ones), and there is never more than ONE concurrent call
+        // — two concurrent calls trip free-tier 429s, which open breakers and
+        // stall the whole pipeline (the regression this replaces).
+        if (looksLikeQuestion(text) && !preparedServed && maybeClaimDraft(text)) {
+          lastTriggerNorm = normalizeTrigger(text); // keep the coach gate in sync
           const tail = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n");
-          void draftAutoAnswer(text, tail.slice(-2000));
+          const draft = draftAutoAnswer(text, tail.slice(-2000))
+            .catch(() => {})
+            .finally(() => { draftInFlight = false; });
+          void Promise.race([draft, sleepMs(7_000)]).then(() => {
+            if (coachBusy) scheduleCoaching(); // another framework is in flight — normal path
+            else void runCoach();
+          });
+        } else {
+          scheduleCoaching();
         }
       }
     }
 
-    /** Heuristic question shape — the fast path for the parallel verbatim
-     *  draft. Mirrors the overlay strip rule: '?' or a leading question word.
+    function sleepMs(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function normalizeTrigger(t: string): string {
+      return t.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    /** Heuristic question shape — the fast path for the verbatim draft.
+     *  Mirrors the overlay strip rule: '?' or a leading question word.
      *  Cheap and deterministic; the coach's normalized detection remains the
      *  authority for the framework card. */
     function looksLikeQuestion(t: string): boolean {
@@ -439,6 +454,25 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (!s) return false;
       if (s.includes("?")) return true;
       return /^(tell|what|how|why|when|who|where|walk|describe|explain|give|can you|could you|do you|did you|have you|are you|would you)\b/i.test(s);
+    }
+
+    /** Draft claim gate — the anti-storm guard for progressive/STT-repeat
+     *  finals ("Tell me…" → "Tell me about…" → …). One draft at a time, one
+     *  draft per normalized question, and a floor between drafts so a burst
+     *  of finals can never fan out into a burst of provider calls. */
+    let draftInFlight = false;
+    let lastDraftKey = "";
+    let lastDraftStartAt = 0;
+    function maybeClaimDraft(text: string): boolean {
+      const key = normalizeTrigger(text).slice(0, 120);
+      if (draftInFlight) return false;
+      if (key && key === lastDraftKey) return false;
+      if (Date.now() - lastDraftStartAt < 4_000) return false;
+      draftInFlight = true;
+      lastDraftKey = key;
+      lastDraftStartAt = Date.now();
+      lastParallelDraftAt = Date.now(); // fallback defers to this draft
+      return true;
     }
 
     /** Rolling ~30s chunk summary feeding the coach's context window (§7). */
@@ -532,9 +566,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     /** Junk-trigger gate state: the last normalized trigger text. */
     let lastTriggerNorm = "";
 
-    /** Timestamp of the last parallel (heuristic) verbatim draft. The coach's
-     *  own draft trigger defers to it — one draft per question, whichever
-     *  path fires first. */
+    /** Timestamp of the last heuristic verbatim draft. The coach's own draft
+     *  trigger defers to it — one draft per question, whichever path fires
+     *  first. */
     let lastParallelDraftAt = 0;
 
     function scheduleCoaching(): void {
@@ -826,8 +860,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
           // Auto-answer pass (reference SimpleAutoAnswer parity): strong question
           // with high confidence → draft the exact spoken words. This is the
-          // FALLBACK path now — the parallel heuristic draft usually fired at
-          // final-commit time (faster: one round-trip total). Skip when that
+          // FALLBACK path — the heuristic draft (answer-first sequencing)
+          // usually fired at final-commit and led the pipeline. Skip when that
           // already ran within the last 15s so a question is never drafted
           // twice; dedup in draftAutoAnswer still guards exact repeats.
           const q = String(contentJson.detected_question ?? "").trim();
@@ -837,6 +871,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           // quality; silence is the only unacceptable outcome.
           if (q && conf >= 0.55 && q.includes("?")) {
             if (Date.now() - lastParallelDraftAt > 15_000) {
+              lastParallelDraftAt = Date.now();
               void draftAutoAnswer(q, verbatim.slice(-2000));
             }
           }
