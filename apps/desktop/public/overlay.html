@@ -245,19 +245,19 @@
           as.textContent = "answered as: " + c.cached_question;
           card.appendChild(as);
         }
-        // Zone insertion: drafted > prepared > coach framework. A drafted
-        // answer (fresh, LLM-crafted for THIS conversation) is always the
-        // topmost green card; a prepared bank hit slots beneath it; framework
-        // cards live at the bottom. Latest insertion wins within a zone.
+        // Zone insertion: drafted > prepared > coach framework. The LATEST
+        // drafted answer always goes to the very top (index 0) — the previous
+        // top card slides down and the green ring follows the new answer.
+        // (insertBefore(card, null) appends — that pinned the first answer on
+        // top forever whenever no prepared/framework card existed yet.)
         const firstFramework = [...stack.children].find((el) => el.dataset?.zone === "framework");
         card.dataset.zone = isPrepared ? "prepared" : isAnswer ? "answer" : "framework";
         card.__content = c;
-        const preparedCards = [...stack.children].filter((el) => el.dataset?.zone === "prepared");
         const frameworkCards = [...stack.children].filter((el) => el.dataset?.zone === "framework");
         if (isAnswer && !isPrepared) {
-          stack.insertBefore(card, preparedCards[0] ?? frameworkCards[0] ?? null); // very top
+          stack.insertBefore(card, stack.firstElementChild); // absolute top — latest answer leads
         } else if (isPrepared) {
-          stack.insertBefore(card, frameworkCards[0] ?? null); // under a drafted answer, above frameworks
+          stack.insertBefore(card, frameworkCards[0] ?? null); // under drafted answers, above frameworks
         } else {
           stack.insertBefore(card, firstFramework ?? null); // head of framework zone
         }

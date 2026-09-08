@@ -75,6 +75,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     const assembler = newAssemblerState();
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
+    let warmTimer: ReturnType<typeof setInterval> | null = null;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
     /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
@@ -277,6 +278,21 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         session!.id,
         warmRequest as never,
       ).catch(() => {});
+
+      // Keep-warm: pooled sockets go stale after a few seconds of idle
+      // (undici keep-alive + provider-side timeouts), so the connect-time
+      // warmup alone is dead by the time the first question lands. Re-warm
+      // every 45s for the life of the socket — 1-token pings are free-tier
+      // noise, and a warm pool means the FIRST answer pays zero handshake.
+      warmTimer = setInterval(() => {
+        void executeRouted(
+          { db, breakers },
+          workspaceCfg,
+          session!.workspaceId,
+          session!.id,
+          warmRequest as never,
+        ).catch(() => {});
+      }, 45_000);
     }
 
     /** Per-utterance segment ids: partials and their final share one id so the
@@ -1145,6 +1161,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     socket.on("close", () => {
       if (coachTimer) clearTimeout(coachTimer);
       if (staleTimer) clearInterval(staleTimer);
+      if (warmTimer) clearInterval(warmTimer);
       // Flush every engine so trailing audio finalizes instead of being lost
       // when the client stops sending (partial-only sessions otherwise end
       // with zero persisted segments).
