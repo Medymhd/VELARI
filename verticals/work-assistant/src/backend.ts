@@ -133,6 +133,34 @@ export const vertical: VerticalRegistration = {
       return reply.send({ task });
     });
 
+    // DELETE /tasks/:id — draft or terminal tasks only; mid-lifecycle tasks
+    // must run their lifecycle to completion (submission provenance stays).
+    register.delete("/tasks/:id", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike;
+      const id = req.params?.id ?? "";
+      const task = await db.workTask.findUnique({ where: { id } });
+      if (!task) return reply.status(404).send({ error: "task not found" });
+      if (!(await canAccess(db, task.workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      if (task.status !== "draft" && task.status !== "completed" && task.status !== "rejected") {
+        return reply.status(409).send({ error: `cannot delete a ${task.status} task — complete or reject it first` });
+      }
+      await db.workTask.delete({ where: { id } });
+      await db.auditEvent.create({
+        data: {
+          workspaceId: task.workspaceId,
+          actorType: "user",
+          actorId: req.user!.userId,
+          eventType: "work.task_deleted",
+          resourceType: "work_task",
+          resourceId: id,
+          metadataJson: { title: task.title, status: task.status } as any,
+        },
+      });
+      return reply.send({ ok: true });
+    });
+
     // POST /tasks/:id/assign — draft → assigned
     register.post("/tasks/:id/assign", async (rawReq: unknown, reply: ReplyLike) => {
       const req = rawReq as RequestLike;
@@ -418,6 +446,23 @@ export const vertical: VerticalRegistration = {
         },
       });
       return reply.status(201).send({ run: completed });
+    });
+
+    // GET /agent-runs?workspaceId= — recent runs for the runs panel (durable:
+    // the UI restores history from the DB instead of holding it in state).
+    register.get("/agent-runs", async (rawReq: unknown, reply: ReplyLike) => {
+      const req = rawReq as RequestLike & { query?: { workspaceId?: string } };
+      const workspaceId = req.query?.workspaceId ?? "";
+      if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+      if (!(await canAccess(db, workspaceId, req.user!.userId))) {
+        return reply.status(403).send({ error: "not a workspace member" });
+      }
+      const runs = await db.agentRun.findMany({
+        where: { workspaceId, verticalId: workManifest.id },
+        orderBy: { startedAt: "desc" },
+        take: 8,
+      });
+      return reply.send({ runs });
     });
 
     // GET /agent-runs/:runId
