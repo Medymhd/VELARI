@@ -156,6 +156,7 @@
       // channel short lines never overwrite a real question.
       let currentQuestion = "";
       event.listen("overlay://transcript", (e) => {
+        try {
         const { speaker, text, isFinal } = e.payload;
         setWave(!isFinal);
         if (!isFinal) return;
@@ -173,6 +174,9 @@
           strip.classList.toggle("empty", false);
         }
         setTimeout(() => setWave(false), 800);
+        } catch (err) {
+          console.error("transcript render failed", err);
+        }
       });
 
       event.listen("overlay://insight", (e) => {
@@ -241,21 +245,27 @@
           as.textContent = "answered as: " + c.cached_question;
           card.appendChild(as);
         }
-        // Zone insertion: answers before the first framework card (top zone),
-        // frameworks after the answer zone (bottom zone). Within a zone the
-        // newest sits first.
-        const firstFramework = [...stack.children].find(
-          (el) => el.classList?.contains("resp-card") && !el.dataset.zone,
-        );
-        card.dataset.zone = isAnswer || isPrepared ? "answer" : "framework";
+        // Zone insertion: drafted > prepared > coach framework. A drafted
+        // answer (fresh, LLM-crafted for THIS conversation) is always the
+        // topmost green card; a prepared bank hit slots beneath it; framework
+        // cards live at the bottom. Latest insertion wins within a zone.
+        const firstFramework = [...stack.children].find((el) => el.dataset?.zone === "framework");
+        card.dataset.zone = isPrepared ? "prepared" : isAnswer ? "answer" : "framework";
         card.__content = c;
+        const preparedCards = [...stack.children].filter((el) => el.dataset?.zone === "prepared");
         const frameworkCards = [...stack.children].filter((el) => el.dataset?.zone === "framework");
-        if (isAnswer || isPrepared) {
-          stack.insertBefore(card, frameworkCards[0] ?? null); // top of answer zone
+        if (isAnswer && !isPrepared) {
+          stack.insertBefore(card, preparedCards[0] ?? frameworkCards[0] ?? null); // very top
+        } else if (isPrepared) {
+          stack.insertBefore(card, frameworkCards[0] ?? null); // under a drafted answer, above frameworks
         } else {
           stack.insertBefore(card, firstFramework ?? null); // head of framework zone
         }
-        while (stack.childElementCount > 3) stack.removeChild(stack.lastElementChild);
+        while (stack.childElementCount > 3) {
+          // Never drop the card we just inserted — trim the oldest sibling.
+          const victim = stack.lastElementChild === card ? card.previousElementSibling : stack.lastElementChild;
+          if (victim) stack.removeChild(victim); else break;
+        }
         // Ring ranking: newest overall card is green, the rest blue/yellow —
         // with answer-first insertion, that is the speakable answer 95% of
         // the time.

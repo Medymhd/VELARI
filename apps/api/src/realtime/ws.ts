@@ -216,6 +216,27 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
       await loadPrepMaterials();
+
+      // Provider warmup: the first real coach call otherwise pays DNS + TLS +
+      // auth handshake (~0.3-1s) on the critical path while the candidate is
+      // already answering. A 1-token ping at session start moves that cost
+      // off the first question. Fire-and-forget; a failed ping is the same
+      // signal the first real call would have hit, just earlier and cheaper.
+      const hasRemote = [...workspaceCfg.providers.keys()].some((p) => p !== "local" && p !== "local-echo");
+      if (hasRemote) {
+        void executeRouted(
+          { db, breakers },
+          workspaceCfg,
+          session!.workspaceId,
+          session!.id,
+          {
+            taskClass: "live_coach",
+            privacyMode: workspaceCfg.privacyMode,
+            messages: [{ role: "user", content: "." }],
+            maxTokens: 1,
+          } as never,
+        ).catch(() => {});
+      }
     } catch (e) {
       log.warn("failed to load workspace AI config, using local fallback", { error: String(e) });
     }
