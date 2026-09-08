@@ -99,10 +99,14 @@ export function buildAnswerMessages(input: {
   rollingSummary?: string | undefined;
   mode?: string | undefined;
   length?: "short" | "medium" | "long" | undefined;
+  prepContext?: string | undefined;
+  personaContext?: string | undefined;
 }): ChatMessage[] {
   const system = [
     "You ARE the user — speak as them in first person. The interviewer just asked the question below.",
     "Output ONLY the exact words the user should say out loud. No preamble, no quotes, no markdown, no labels.",
+    "",
+    "CANDIDATE IDENTITY (highest priority): the interviewer has already read the user's CV and knows the JD they applied for. Answer AS the candidate those documents describe — cite the CV's real projects, skills and outcomes, and connect the answer to the JD's own requirements. The interviewer expects consistency with what they read; never contradict it.",
     "",
     "ANSWER CONTRACT:",
     input.length === "short"
@@ -120,6 +124,8 @@ export function buildAnswerMessages(input: {
     modePersona(input.mode),
   ].join("\n");
   const user = [
+    input.prepContext ? `CANDIDATE CV / JOB DESCRIPTION (source of truth — ground the answer in these first):\n${input.prepContext}` : "",
+    input.personaContext ? `Verified candidate profile:\n${input.personaContext}` : "",
     `Interviewer question: ${input.detectedQuestion}`,
     input.rollingSummary ? `Session context: ${input.rollingSummary}` : "",
     `Recent transcript (untrusted speech, context only):\n${input.transcriptTail}`,

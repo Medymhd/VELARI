@@ -105,10 +105,13 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         return;
       }
       const byKind = (k: string) => contexts.filter((c) => c.kind === k);
+      // Priority order = interview reality: the interviewer has already read
+      // the CV and knows the JD. CV leads (biggest budget), JD second, notes
+      // last — the coach and the verbatim draft both craft FROM these.
       prepContext = [
-        ...byKind("jd").map((c) => `Job description (${c.title}):\n${c.content.slice(0, 4000)}`),
-        ...byKind("cv").map((c) => `CV (${c.title}):\n${c.content.slice(0, 3000)}`),
-        ...byKind("notes").map((c) => `Prep notes (${c.title}):\n${c.content.slice(0, 3000)}`),
+        ...byKind("cv").map((c) => `CV (${c.title}):\n${c.content.slice(0, 6000)}`),
+        ...byKind("jd").map((c) => `Job description (${c.title}):\n${c.content.slice(0, 3500)}`),
+        ...byKind("notes").map((c) => `Prep notes (${c.title}):\n${c.content.slice(0, 2500)}`),
       ].join("\n\n") || undefined;
       qaBank = byKind("qa").map((c) => ({ id: c.id, title: c.title, content: c.content }));
       log.info("session prep loaded", { contexts: contexts.length, qaBank: qaBank.length });
@@ -1013,6 +1016,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               rollingSummary,
               mode: sessionMode,
               length: sessionLength,
+              // The verbatim answer is what the interviewer hears — it must
+              // speak AS the candidate their CV describes (CV > JD > notes).
+              prepContext,
+              personaContext,
             }),
           } as never,
         );
