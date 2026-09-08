@@ -49,7 +49,10 @@ function featureBadges(features?: string[]): string[] {
 }
 
 export default function Settings() {
-  const { workspaceId, stealth, setStealth, token } = useStore();
+  const { workspaceId, stealth, setStealth, token, clearAuth, notify } = useStore();
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [showSecret, setShowSecret] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [provider, setProvider] = useState<string>("groq");
   const [secret, setSecret] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -180,8 +183,8 @@ export default function Settings() {
 
   useEffect(() => { void refresh(); }, [workspaceId]);
 
-  function flash(m: string) { setMsg(m); setErr(null); }
-  function fail(e: unknown) { setErr(e instanceof Error ? e.message : String(e)); setMsg(null); }
+  function flash(m: string) { setMsg(m); setErr(null); notify("success", m); }
+  function fail(e: unknown) { const m = e instanceof Error ? e.message : String(e); setErr(m); setMsg(null); notify("error", m); }
 
   /** Saved connections that can back a routing row (custom compat ones carry baseUrl). */
   function routableConnections(): ProviderRow[] {
@@ -231,7 +234,7 @@ export default function Settings() {
   async function disconnect(id: string, name: string) {
     try {
       await api.deleteProvider(id);
-      flash(`Disconnected ${name}`);
+      flash(`Disconnected ${name} — the vault entry and its sealed key are gone`);
       void refresh();
     } catch (e) { fail(e); }
   }
@@ -386,7 +389,15 @@ function RoutingPicker(props: {
               {isCustom && (
                 <input placeholder="https://gateway.example.com/v1" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
               )}
-              <input type="password" placeholder="sk-…" value={secret} onChange={(e) => setSecret(e.target.value)} style={{ maxWidth: 220 }} />
+              <input type={showSecret ? "text" : "password"} placeholder="sk-…" value={secret} onChange={(e) => setSecret(e.target.value)} style={{ maxWidth: 220 }} />
+              <button
+                className="ghost"
+                title={showSecret ? "Hide key" : "Show key"}
+                onClick={() => setShowSecret((s) => !s)}
+                style={{ padding: "6px 10px" }}
+              >
+                {showSecret ? "🙈" : "👁"}
+              </button>
               {(isCustom || PROVIDER_BASE_URLS[provider]) && (
                 <button className="ghost" disabled={catalogBusy || !effectiveBaseUrl} onClick={() => void loadCatalog()}>
                   {catalogBusy ? "Loading…" : `Load models${catalog.length ? ` (${catalog.length})` : ""}`}
@@ -440,7 +451,16 @@ function RoutingPicker(props: {
                         <button className="ghost" disabled={testing[c.id] === "busy"} onClick={() => void testConnection(c.id)}>
                           {testing[c.id] === "busy" ? "Testing…" : "Test"}
                         </button>
-                        <button className="ghost" onClick={() => void disconnect(c.id, c.provider)}>Disconnect</button>
+                        {confirmDisconnect === c.id ? (
+                          <>
+                            <button className="ghost" style={{ color: "var(--danger)" }} onClick={() => { void disconnect(c.id, c.provider); setConfirmDisconnect(null); }}>Remove?</button>
+                            <button className="ghost" onClick={() => setConfirmDisconnect(null)}>✕</button>
+                          </>
+                        ) : (
+                          <button className="ghost" title="Removes the sealed key — routing rows using this provider will stop resolving" onClick={() => setConfirmDisconnect(c.id)}>
+                            Disconnect
+                          </button>
+                        )}
                       </span>
                     </div>
                     {testing[c.id] && testing[c.id] !== "busy" && (
@@ -581,6 +601,22 @@ function RoutingPicker(props: {
               <button className="ghost" onClick={() => void refresh()}>Refresh</button>
             </div>
             <span className="small muted mono">Enforced at: {stealth.enforcedAtMs ? new Date(stealth.enforcedAtMs).toLocaleTimeString() : "—"}</span>
+          </Section>
+
+          <Section kicker="Account" title="Session">
+            <span className="small muted">
+              Signed in on this workspace. Sign-out clears the local session token — your data, vault, and personas stay on the server and are restored on the next sign-in.
+            </span>
+            <div className="row">
+              {confirmSignOut ? (
+                <>
+                  <button className="primary" style={{ background: "var(--danger)", borderColor: "var(--danger)" }} onClick={() => clearAuth()}>Confirm sign out</button>
+                  <button className="ghost" onClick={() => setConfirmSignOut(false)}>Cancel</button>
+                </>
+              ) : (
+                <button className="ghost" onClick={() => setConfirmSignOut(true)}>Sign out</button>
+              )}
+            </div>
           </Section>
         </>
       )}

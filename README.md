@@ -145,10 +145,10 @@ Capture invisibility (`SetWindowDisplayAffinity WDA_EXCLUDEFROMCAPTURE`), taskba
 Three verticals ship on one binary:
 
 - **Interview Intelligence** — real-time dual-channel live support as described above, plus post-session review with search and export.
-- **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve, annotation service with Krippendorff's alpha agreement metrics, coding review, Studio authoring in the web console, agent runner with kill switch.
-- **Velari Copilot** — conversational research chat with source tracking and pgvector recall (user-facing name; stable `research` id).
+- **Velari Work** — persisted task lifecycle (Prisma), policy-gated browser automation with approval/auto-approve and durable run history, annotation service with Krippendorff's alpha agreement metrics, coding review, Studio authoring in the web console, agent runner with kill switch.
+- **Velari Copilot** — durable conversational research chat (Postgres-backed threads that survive restarts, markdown-rendered answers, workspace-scoped history; user-facing name, stable `research` id).
 
-Infrastructure: multi-rung STT chain, provider router + circuit breakers + task-scoped model profiles + Retry-After-aware rate-limit penalties, tolerant answer cache, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, TTS, integration APIs, signed NSIS installer, 18/18 build, 19 interview-vertical + 12 answer-cache + 35 ai-runtime tests + 24 cargo tests, CI pipeline.
+Infrastructure: multi-rung STT chain, provider router + circuit breakers + task-scoped model profiles + Retry-After-aware rate-limit penalties, tolerant answer cache, BYOK vault (AES-256-GCM), pgvector hybrid recall, vision/OCR, TTS, integration APIs, signed NSIS installer, 18/18 build, 19 interview-vertical + 12 answer-cache + 12 work + 35 ai-runtime tests + 24 cargo tests, CI pipeline.
 
 ## License
 
