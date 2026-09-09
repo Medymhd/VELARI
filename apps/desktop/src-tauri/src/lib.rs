@@ -182,6 +182,7 @@ pub fn run() {
             overlay::overlay_hide,
             overlay::overlay_toggle,
             overlay::overlay_emit,
+            overlay::overlay_set_typing,
             overlay::overlay_set_passthrough,
             overlay::overlay_resize,
             overlay::overlay_cycle_position,

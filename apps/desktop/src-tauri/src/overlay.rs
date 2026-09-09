@@ -223,6 +223,49 @@ pub async fn overlay_emit(app: AppHandle, event: String, payload: serde_json::Va
     app.emit(&event, payload).map_err(|e| e.to_string())
 }
 
+/// Typing mode — the overlay ask box is open. The window must become FULLY
+/// interactive: smart passthrough otherwise holds WS_EX_TRANSPARENT over
+/// everything below the 48px header band, so the ask textarea, its button
+/// AND response scrolling are dead (clicks/wheel go to the app beneath).
+/// Stealth windows also carry WS_EX_NOACTIVATE — without dropping it the
+/// textarea can never take keyboard focus and typing is impossible.
+/// Disabling restores smart passthrough + non-activating stealth.
+#[tauri::command]
+pub async fn overlay_set_typing(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    PASSTHROUGH_MODE.store(
+        if enabled { PASSTHROUGH_OFF } else { PASSTHROUGH_SMART },
+        Ordering::Relaxed,
+    );
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        let raw = windows::Win32::Foundation::HWND(hwnd.0);
+        unsafe {
+            let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
+            let next = if enabled {
+                current & !(WS_EX_NOACTIVATE.0 as isize)
+            } else {
+                current | WS_EX_NOACTIVATE.0 as isize
+            };
+            if next != current {
+                SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
+            }
+        }
+        if enabled {
+            let _ = window.set_focus();
+        }
+    }
+    let _ = app.emit("overlay://typing", enabled);
+    Ok(())
+}
+
 /// Authoritative overlay toggle: checks REAL window visibility, not JS state.
 /// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
 /// the previous JS-side toggle died whenever LiveSession was unmounted.
@@ -345,10 +388,17 @@ fn spawn_smart_passthrough_poller(app: tauri::AppHandle) {
             && cursor.x < pos.x + size.width as i32
             && cursor.y >= pos.y
             && cursor.y < pos.y + size.height as i32;
-        // Header band: top 48 logical px of the panel = buttons + drag region.
-        let header_px = (48.0 * w.scale_factor().unwrap_or(1.0)) as i32;
+        // Interactive regions in Smart mode:
+        //  - Header band: top 48 logical px = buttons + drag.
+        //  - Right-edge strip: ~16 logical px = the response stack's
+        //    scrollbar, so previous answers stay scrollable while the body
+        //    stays click-through (the whole point of Smart mode).
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let header_px = (48.0 * scale) as i32;
+        let edge_px = (16.0 * scale) as i32;
         let over_header = within && (cursor.y - pos.y) < header_px;
-        set_overlay_click_through(raw, !over_header);
+        let over_edge = within && (pos.x + size.width as i32 - cursor.x) < edge_px;
+        set_overlay_click_through(raw, !(over_header || over_edge));
     });
 }
 

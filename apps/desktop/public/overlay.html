@@ -362,6 +362,16 @@
       // session tail (recent transcript + latest response) on open.
       event.emit("overlay://ready", {});
 
+      // Re-assert typing mode on re-show: window re-show resets passthrough to
+      // SMART in Rust, and the ask box may still be open from before — sync
+      // the ex-style with the visible ask-box state on every re-show.
+      event.listen("overlay://visibility", (e) => {
+        if (e.payload === true) {
+          const sec = $("askSec");
+          if (sec && sec.style.display !== "none") toggleAsk(true);
+        }
+      });
+
       $("hideBtn").addEventListener("click", async () => {
         try {
           await invoke("overlay_hide", { verticalId: "interview-intelligence" });
@@ -402,6 +412,11 @@
           e.preventDefault();
           sendAsk();
         }
+        // Escape closes the ask box and restores stealth passthrough.
+        if (e.key === "Escape") {
+          e.preventDefault();
+          toggleAsk(false);
+        }
       });
       // Global shortcut (while overlay focused): Ctrl/Cmd+K toggles the ask box.
       window.addEventListener("keydown", (e) => {
@@ -415,6 +430,14 @@
         if (!sec) return;
         const show = force !== undefined ? force : sec.style.display === "none";
         sec.style.display = show ? "flex" : "none";
+        // Typing mode: lift smart passthrough + WS_EX_NOACTIVATE while the
+        // ask box is open — otherwise the bottom half of the window is
+        // click-through (textarea/buttons dead) and can't take keystrokes.
+        try {
+          const label = window.__TAURI__.window.getCurrentWindow().label;
+          const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+          void invoke("overlay_set_typing", { verticalId, enabled: show });
+        } catch { /* label unavailable */ }
         if (show) {
           setTimeout(() => $("askInput")?.focus(), 30);
         } else {
