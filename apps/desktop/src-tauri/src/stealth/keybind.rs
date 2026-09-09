@@ -8,7 +8,8 @@
 //! owns every registration: commands arrive through a queue drained when the
 //! worker is woken by `WM_APP_CHORD`; a `SetTimer` on the worker fires every
 //! 10 s to re-register chords other apps may have stolen (reference's health
-//! poll). `WM_QUIT` shuts the worker down.
+//! poll — handled as WM_TIMER in the message loop). The worker lives for the
+//! app's lifetime.
 
 #[cfg(windows)]
 mod imp {
@@ -18,7 +19,7 @@ mod imp {
 
     use serde::Serialize;
     use tauri::{AppHandle, Emitter};
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
@@ -26,7 +27,7 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_APP,
-        WM_HOTKEY, WM_QUIT,
+        WM_HOTKEY, WM_TIMER,
     };
 
     pub const EVENT_NAME: &str = "chord://activated";
@@ -45,7 +46,6 @@ mod imp {
     enum ChordCmd {
         Register { chord: String, action: String, mods: HOT_KEY_MODIFIERS, vk: u32, reply: mpsc::Sender<Result<(), String>> },
         Unregister { chord: String, reply: mpsc::Sender<Result<(), String>> },
-        Recheck,
     }
 
     struct Worker {
@@ -102,7 +102,6 @@ mod imp {
                     };
                     let _ = reply.send(result);
                 }
-                ChordCmd::Recheck => re_register_all(worker),
             }
         }
     }
@@ -183,34 +182,12 @@ mod imp {
             .map_err(|_| "unregister timed out".to_string())?
     }
 
-    pub fn health_recheck() {
-        let sh = shared();
-        if sh.thread_id.load(Ordering::Acquire) == 0 {
-            return;
-        }
-        if let Ok(mut queue) = sh.queue.lock() {
-            queue.push_back(ChordCmd::Recheck);
-        }
-        wake();
-    }
-
-    pub fn stop_all() {
-        let sh = shared();
-        let thread_id = sh.thread_id.load(Ordering::Acquire);
-        if thread_id != 0 {
-            unsafe {
-                let _ = PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
-            }
-            sh.thread_id.store(0, Ordering::Release);
-        }
-    }
-
     fn ensure_worker(app: &AppHandle) -> Result<(), String> {
         let sh = shared();
         if sh.thread_id.load(Ordering::Acquire) != 0 {
             return Ok(());
         }
-        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (started_tx, _started_rx) = mpsc::channel::<()>();
         let app = app.clone();
         let worker_thread = std::thread::Builder::new()
             .name("chord-worker".into())
@@ -224,6 +201,11 @@ mod imp {
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     match msg.message {
                         WM_APP_CHORD => drain_commands(&mut worker, sh),
+                        // Health poll made REAL: SetTimer posts WM_TIMER; without
+                        // this arm it was dispatched to nothing and stolen
+                        // hotkeys were never re-registered (chords silently
+                        // died when another app grabbed them).
+                        WM_TIMER if msg.wParam.0 == TIMER_ID as usize => re_register_all(&mut worker),
                         WM_HOTKEY => {
                             if let Some((chord, action)) = worker.by_id.get(&(msg.wParam.0 as i32)) {
                                 let _ = worker.app.emit(
@@ -238,7 +220,7 @@ mod imp {
                         }
                     }
                 }
-                // WM_QUIT
+                // Worker exits only when the process dies.
             })
             .map_err(|e| format!("spawn failed: {e}"))?;
         let _ = worker_thread;
@@ -254,7 +236,7 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{health_recheck, register_chord, stop_all, unregister_chord, EVENT_NAME};
+pub use imp::{register_chord, unregister_chord, EVENT_NAME};
 
 #[cfg(not(windows))]
 pub fn register_chord(_app: &tauri::AppHandle, _chord: String, _action: String) -> Result<(), String> {
@@ -262,10 +244,6 @@ pub fn register_chord(_app: &tauri::AppHandle, _chord: String, _action: String) 
 }
 #[cfg(not(windows))]
 pub fn unregister_chord(_chord: &str) -> Result<(), String> {}
-#[cfg(not(windows))]
-pub fn health_recheck() {}
-#[cfg(not(windows))]
-pub fn stop_all() {}
 
 #[tauri::command]
 pub fn register_global_chord(app: tauri::AppHandle, chord: String, action: Option<String>) -> Result<(), String> {
@@ -277,7 +255,7 @@ pub fn unregister_global_chord(chord: String) -> Result<(), String> {
     unregister_chord(&chord)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 mod tests {
     use super::imp::parse_chord;
     use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT};

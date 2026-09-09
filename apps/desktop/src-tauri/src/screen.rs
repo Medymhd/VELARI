@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use image::{GenericImage, GenericImageView};
+use image::GenericImage;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::audio::capture::base64_encode;

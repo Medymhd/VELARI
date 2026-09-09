@@ -101,11 +101,6 @@ pub fn speak_wav(app: &AppHandle, wav_base64: &str) -> Result<(), String> {
 }
 
 /// Full pipeline: text → Piper WAV → play. Returns error if Piper unavailable.
-pub fn speak(app: &AppHandle, text: &str) -> Result<(), String> {
-    let wav = synthesize_wav(text)?;
-    speak_wav(app, &wav)
-}
-
 #[tauri::command]
 pub fn tts_piper_available() -> bool {
     piper_available()

@@ -743,10 +743,9 @@ mod dual_loopback {
                             .Activate(CLSCTX_ALL, None)
                             .map_err(|e| anyhow::anyhow!("activate: {e}"))?;
                         let mixformat = client.GetMixFormat().map_err(|e| anyhow::anyhow!("mixformat: {e}"))?;
-                        let wfx = unsafe { &*mixformat };
+                        let wfx = &*mixformat;
                         let rate = wfx.nSamplesPerSec;
                         let channels = wfx.nChannels as usize;
-                        let align = wfx.nBlockAlign as usize;
                         client
                             .Initialize(
                                 AUDCLNT_SHAREMODE_SHARED,

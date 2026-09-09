@@ -310,11 +310,31 @@ pub async fn overlay_toggle(app: AppHandle, vertical_id: String) -> Result<bool,
     }
 }
 
+/// Chord-side passthrough toggle — runs in RUST so Ctrl+Shift+B works from
+/// EVERY screen. The old handler lived in the Live session React component:
+/// unmount it (any screen except live) and the chord went dead. No JS
+/// involved anymore; the overlay button syncs via the emitted event.
+pub fn chord_toggle_passthrough(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("overlay:interview-intelligence") else {
+        return;
+    };
+    let enabled = PASSTHROUGH_MODE.load(Ordering::Relaxed) != PASSTHROUGH_SMART;
+    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_SMART } else { PASSTHROUGH_OFF }, Ordering::Relaxed);
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        // Reset the ex-style to interactive; the smart poller re-adds
+        // click-through on its next tick while Smart mode is on.
+        set_overlay_click_through(windows::Win32::Foundation::HWND(hwnd.0), false);
+    }
+    let _ = app.emit("overlay://passthrough", enabled);
+    println!("[overlay] passthrough toggled to: {enabled}");
+}
+
 /// Mouse passthrough (reference `syncOverlayInteractionPolicy` parity): when
 /// enabled the overlay ignores all clicks (WS_EX_TRANSPARENT) so it floats
-/// over a meeting without stealing input; the header 40px band stays live via
-/// the frontend calling this again with `enabled:false` — the tray/Show chord
-/// also disengages it. Ctrl+Shift+B toggles.
+/// over a meeting without stealing input; the header band stays live via the
+/// smart poller. Ctrl+Shift+B toggles (Rust-side); the ● button in the
+/// overlay header mirrors the same state.
 #[tauri::command]
 pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
@@ -376,8 +396,13 @@ fn spawn_smart_passthrough_poller(app: tauri::AppHandle) {
         if PASSTHROUGH_MODE.load(Ordering::Relaxed) != PASSTHROUGH_SMART {
             continue;
         }
+        // NOTE: continue (NOT return) on a missing window — the poller is
+        // spawned once at window creation and must survive transient None
+        // lookups (dev-server reloads, rebuilds). A `return` here killed it
+        // permanently and Smart mode silently stopped enforcing click-through
+        // (the "I can still write when it's green" bug).
         let Some(w) = app.get_webview_window("overlay:interview-intelligence") else {
-            return; // overlay destroyed — poller exits
+            continue;
         };
         if !w.is_visible().unwrap_or(false) {
             continue;

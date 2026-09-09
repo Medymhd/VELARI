@@ -423,9 +423,8 @@ const [overlayOn, setOverlayOn] = useState(false);
   const passthroughRef = useRef(false);
   useEffect(() => {
     if (!nativeAvailable) return;
-    invoke("register_global_chord", { chord: "Ctrl+Shift+B", action: "passthrough-toggle" }).catch((e) =>
-      console.warn("global chord unavailable", e),
-    );
+    // Ctrl+Shift+B is registered and dispatched Rust-side (works on every
+    // screen) — LiveSession only mirrors the state here for the UI.
     invoke("register_global_chord", { chord: "Ctrl+Shift+P", action: "overlay-cycle-position" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
@@ -437,14 +436,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     let un: UnlistenFn | null = null;
     void listen("chord://activated", (e) => {
       const action = (e.payload as { action?: string }).action ?? "";
-      if (action === "passthrough-toggle") {
-        if (!overlayOnRef.current) return; // passthrough only makes sense with the overlay visible
-        const next = !passthroughRef.current;
-        passthroughRef.current = next;
-        void invoke("overlay_set_passthrough", { verticalId: "interview-intelligence", enabled: next })
-          .then(() => notify("info", next ? "Overlay click-through ON (Ctrl+Shift+B to toggle)" : "Overlay click-through OFF"))
-          .catch((err) => notify("error", `Passthrough failed: ${errText(err)}`));
-      } else if (action === "overlay-cycle-position") {
+      if (action === "overlay-cycle-position") {
         if (!overlayOnRef.current) return;
         void invoke<string>("overlay_cycle_position", { verticalId: "interview-intelligence" })
           .then((spot) => notify("info", `Overlay position: ${spot} (Ctrl+Shift+P to cycle)`))
