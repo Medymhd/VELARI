@@ -54,6 +54,10 @@
       }
       .btn:hover { background: rgba(255, 255, 255, 0.12); }
       .btn.on { background: var(--accent); border-color: transparent; color: #fff; }
+      /* Passthrough toggle: green = click-through ON (can't write over the
+         overlay), red = OFF (fully clickable/writable). */
+      .btn.pt-on { background: #14532d; border-color: rgba(52, 211, 153, 0.6); color: #34d399; }
+      .btn.pt-off { background: #7f1d1d; border-color: rgba(248, 113, 113, 0.6); color: #f87171; }
       .sec { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
       .sec label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
       .q { font-size: 15px; font-weight: 600; line-height: 1.35; }
@@ -383,16 +387,6 @@
       // session tail (recent transcript + latest response) on open.
       event.emit("overlay://ready", {});
 
-      // Re-assert typing mode on re-show: window re-show resets passthrough to
-      // SMART in Rust, and the ask box may still be open from before — sync
-      // the ex-style with the visible ask-box state on every re-show.
-      event.listen("overlay://visibility", (e) => {
-        if (e.payload === true) {
-          const sec = $("askSec");
-          if (sec && sec.style.display !== "none") toggleAsk(true);
-        }
-      });
-
       $("hideBtn").addEventListener("click", async () => {
         try {
           await invoke("overlay_hide", { verticalId: "interview-intelligence" });
@@ -482,6 +476,26 @@
           reportHeight();
         }
       }
+      // ── Click-through toggle (●): red = OFF (overlay clickable/writable —
+      // the DEFAULT), green = ON (body passes clicks to apps beneath; the
+      // header band stays interactive so this button can always switch it
+      // back). Ctrl+Shift+B does the same thing from anywhere.
+      let passthroughOn = false;
+      function renderPassthrough() {
+        const b = $("ptBtn");
+        if (!b) return;
+        b.className = "btn " + (passthroughOn ? "pt-on" : "pt-off");
+        b.title = passthroughOn
+          ? "Click-through ON — clicks pass to apps beneath. Click here (or Ctrl+Shift+B) to disable."
+          : "Click-through OFF — the overlay is fully clickable. Click here (or Ctrl+Shift+B) to enable.";
+      }
+      function setPassthrough(enabled) {
+        try {
+          const label = window.__TAURI__.window.getCurrentWindow().label;
+          const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+          void invoke("overlay_set_passthrough", { verticalId, enabled });
+        } catch { /* label unavailable */ }
+      }
       // Start collapsed but let the ✎ button open it. Add the toggle button
       // to the header next to the hide button.
       const askToggle = document.createElement("button");
@@ -491,6 +505,32 @@
       askToggle.textContent = "✎";
       $("hideBtn")?.parentElement?.insertBefore(askToggle, $("hideBtn"));
       askToggle.addEventListener("click", () => toggleAsk());
+      // Click-through toggle sits between ✎ and ✕ — red by default.
+      const ptBtn = document.createElement("button");
+      ptBtn.className = "btn pt-off";
+      ptBtn.id = "ptBtn";
+      ptBtn.textContent = "●";
+      $("hideBtn")?.parentElement?.insertBefore(ptBtn, $("hideBtn"));
+      ptBtn.addEventListener("click", () => {
+        passthroughOn = !passthroughOn;
+        renderPassthrough();
+        setPassthrough(passthroughOn);
+      });
+      renderPassthrough();
+      // Keep the button in sync when Ctrl+Shift+B is pressed from the app
+      // (Rust emits the new state) or when the overlay re-shows (resets OFF).
+      event.listen("overlay://passthrough", (e) => {
+        passthroughOn = e.payload === true;
+        renderPassthrough();
+      });
+      event.listen("overlay://visibility", (e) => {
+        if (e.payload === true) {
+          passthroughOn = false; // re-show resets to fully interactive
+          renderPassthrough();
+          const sec = $("askSec");
+          if (sec && sec.style.display !== "none") toggleAsk(true);
+        }
+      });
       // Height re-report when the ask box opens (ResizeObserver covers content growth).
       new MutationObserver(() => reportHeight()).observe($("askSec") ?? document.body, { attributes: true, attributeFilter: ["style"] });
 

@@ -451,9 +451,17 @@ const [overlayOn, setOverlayOn] = useState(false);
           .catch((err) => notify("error", `Position cycle failed: ${errText(err)}`));
       }
     }).then((u) => (un = u));
+    // The overlay's ● button also toggles passthrough — keep the chord's
+    // state mirror in sync so Ctrl+Shift+B never computes from a stale value
+    // (the "sometimes reversed" feel).
+    let unPt: UnlistenFn | null = null;
+    void listen<boolean>("overlay://passthrough", (e) => {
+      passthroughRef.current = e.payload === true;
+    }).then((u) => (unPt = u));
     return () => {
       un?.();
       unVis?.();
+      unPt?.();
     };
   }, [nativeAvailable]);
 

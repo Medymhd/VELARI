@@ -75,8 +75,13 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
     let mode = OverlayMode::from_str(&params.mode);
 
     if let Some(existing) = app.get_webview_window(&label) {
-        // Re-showing resets passthrough so the panel is interactive by default.
-        let _ = overlay_set_passthrough(app.clone(), params.vertical_id.clone(), false);
+        // Re-show resets to the DEFAULT interaction state: fully interactive
+        // (click-through OFF) until the user explicitly re-enables it. NOTE:
+        // overlay_set_passthrough/typing are async commands — they MUST be
+        // awaited here or the reset silently never runs (the pre-fix bug
+        // that made Ctrl+Shift+B behave inconsistently across re-shows).
+        let _ = overlay_set_passthrough(app.clone(), params.vertical_id.clone(), false).await;
+        let _ = overlay_set_typing(app.clone(), params.vertical_id.clone(), false).await;
         let _ = existing.show();
         return Ok(());
     }
@@ -250,9 +255,14 @@ pub async fn overlay_set_typing(app: AppHandle, vertical_id: String, enabled: bo
         unsafe {
             let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
             let next = if enabled {
-                current & !(WS_EX_NOACTIVATE.0 as isize)
+                // Typing mode: interactive + focusable. CRITICALLY also clear
+                // WS_EX_TRANSPARENT — if Smart passthrough had left the body
+                // click-through when the ask box opened, the textarea (and
+                // every click) stayed dead. This was the "can't write on the
+                // overlay" half of the bug.
+                (current & !(WS_EX_NOACTIVATE.0 as isize)) & !PASSTHROUGH_MASK
             } else {
-                current | WS_EX_NOACTIVATE.0 as isize
+                (current | WS_EX_NOACTIVATE.0 as isize) & !PASSTHROUGH_MASK
             };
             if next != current {
                 SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
@@ -265,6 +275,11 @@ pub async fn overlay_set_typing(app: AppHandle, vertical_id: String, enabled: bo
     let _ = app.emit("overlay://typing", enabled);
     Ok(())
 }
+
+/// WS_EX_TRANSPARENT | WS_EX_LAYERED as one bitmask — the click-through pair
+/// the smart poller / passthrough setters manage.
+#[cfg(windows)]
+const PASSTHROUGH_MASK: isize = (0x00000020) | (0x00080000); // WS_EX_TRANSPARENT | WS_EX_LAYERED
 
 /// Authoritative overlay toggle: checks REAL window visibility, not JS state.
 /// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
@@ -306,38 +321,29 @@ pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enable
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
-    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_FULL } else { PASSTHROUGH_SMART }, Ordering::Relaxed);
+    // enabled=false (the DEFAULT) = fully interactive window. enabled=true =
+    // Smart mode: body click-through, header + right-edge strip interactive.
+    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_SMART } else { PASSTHROUGH_OFF }, Ordering::Relaxed);
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
-        };
         let raw = windows::Win32::Foundation::HWND(hwnd.0);
-        unsafe {
-            let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
-            let next = if enabled {
-                current | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize
-            } else {
-                current & !(WS_EX_TRANSPARENT.0 as isize)
-            };
-            if next != current {
-                SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
-            }
-        }
+        set_overlay_click_through(raw, false); // smart poller re-adds it when Smart mode is on
     }
     let _ = app.emit("overlay://passthrough", enabled);
     Ok(())
 }
 
-/// Overlay passthrough mode: Smart (body click-through, header interactive —
-/// the default so the user can scroll/operate apps beneath the overlay),
-/// Full (everything click-through, Ctrl+Shift+B), Off.
+/// Overlay interaction policy (user-facing): **click-through OFF by default**
+/// — the overlay is fully clickable/writable until the user enables
+/// passthrough (Ctrl+Shift+B or the ● button in the overlay header). While
+/// ON, the smart poller keeps the body click-through but the header band and
+/// right-edge strip interactive, so the toggle button stays reachable.
+/// Typing mode (ask box open) always forces full interactivity.
 static PASSTHROUGH_MODE: AtomicU8 = AtomicU8::new(0);
 
 const PASSTHROUGH_OFF: u8 = 0;
 const PASSTHROUGH_SMART: u8 = 1;
-const PASSTHROUGH_FULL: u8 = 2;
 
 #[cfg(windows)]
 fn set_overlay_click_through(hwnd: windows::Win32::Foundation::HWND, transparent: bool) {
