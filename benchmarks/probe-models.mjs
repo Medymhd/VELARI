@@ -85,7 +85,11 @@ if (env.GEMINI_API_KEY) {
     keyEnv: "GEMINI_API_KEY",
     envPrefix: "GEMINI",
     // Explicit list — the full /models catalog is mostly non-chat endpoints.
-    models: (env.GEMINI_MODELS ?? "gemini-2.5-flash-lite,gemini-flash-latest").split(",").map((s) => s.trim()).filter(Boolean),
+    // NOTE (measured 2026-09-08): gemini-2.5-flash-lite now 404s (removed);
+    // gemini-3.5-flash-lite hangs (13-25s) on free tier — excluded by default.
+    // gemini-3.8-flash is capacity-starved (503s) but fails fast, so it stays
+    // in the list for signal when capacity allows.
+    models: (env.GEMINI_MODELS ?? "gemini-flash-lite-latest,gemini-3.1-flash-lite,gemini-3.8-flash").split(",").map((s) => s.trim()).filter(Boolean),
   });
 }
 
