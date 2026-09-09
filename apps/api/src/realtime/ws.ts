@@ -109,12 +109,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       const byKind = (k: string) => contexts.filter((c) => c.kind === k);
       // Priority order = interview reality: the interviewer has already read
-      // the CV and knows the JD. CV leads (biggest budget), JD second, notes
-      // last — the coach and the verbatim draft both craft FROM these.
+      // the CV and knows the JD. CV leads the join (biggest budget — the
+      // draft's head-trim preserves it, and honesty depends on the model
+      // seeing the full CV), but the JD is the objective every answer
+      // optimizes for: JDs are short and dense, so the full text rides along
+      // and the prompt contract frames every answer as proof-of-fit for it.
       prepContext = [
         ...byKind("cv").map((c) => `CV (${c.title}):\n${c.content.slice(0, 6000)}`),
-        ...byKind("jd").map((c) => `Job description (${c.title}):\n${c.content.slice(0, 3500)}`),
-        ...byKind("notes").map((c) => `Prep notes (${c.title}):\n${c.content.slice(0, 2500)}`),
+        ...byKind("jd").map((c) => `Job description — the role to win (${c.title}):\n${c.content.slice(0, 4000)}`),
+        ...byKind("notes").map((c) => `Prep notes (${c.title}):\n${c.content.slice(0, 2000)}`),
       ].join("\n\n") || undefined;
       qaBank = byKind("qa").map((c) => ({ id: c.id, title: c.title, content: c.content }));
       log.info("session prep loaded", { contexts: contexts.length, qaBank: qaBank.length });

@@ -46,3 +46,14 @@ test("answer prompt: grounding contract caps and transitions", () => {
   assert.match(system, /under 60 words/);
   assert.match(system, /no grounding is better than forced grounding/);
 });
+
+test("JD is the objective, CV the constraint — in both builders", () => {
+  const answer = buildAnswerMessages({ detectedQuestion: "How do you evaluate model quality?", transcriptTail: "q" })[0]!.content as string;
+  assert.match(answer, /JD is the objective/);
+  assert.match(answer, /CV is the constraint/);
+  assert.match(answer, /mirror the JD's terminology/);
+  assert.match(answer, /proof-of-fit/);
+  const coach = buildCoachMessages({ verbatimTranscript: "How do you evaluate model quality?" })[0]!.content as string;
+  assert.match(coach, /fits THIS job description/);
+  assert.match(coach, /Never contradict the CV/);
+});
