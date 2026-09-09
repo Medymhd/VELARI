@@ -95,6 +95,9 @@
       }
       .ask-row textarea:focus { border-color: var(--accent); }
       .ask-row .btn { flex: none; padding: 6px 10px; }
+      .ask-mode { display: flex; flex-direction: column; gap: 4px; flex: none; }
+      .ask-mode .mode-btn { padding: 3px 8px; font-size: 10.5px; opacity: 0.75; }
+      .ask-mode .mode-btn.on { background: var(--accent); border-color: transparent; color: #fff; opacity: 1; }
       .muted { color: var(--muted); }
       .small { font-size: 11px; }
       ::-webkit-scrollbar { width: 6px; }
@@ -172,8 +175,12 @@
       </section>
       <section class="sec" id="askSec" style="display:none">
         <div class="ask-row">
-          <textarea id="askInput" rows="2" placeholder="Ask the coach — paste a question or a direction… (Ctrl+Enter to send)"></textarea>
-          <button class="btn" id="askSendBtn" title="Send to coach (Ctrl+Enter)">Ask ↵</button>
+          <div class="ask-mode">
+            <button class="btn mode-btn on" id="askModeBtn" title="Ask = interview coach pipeline (cache, prep, draft). Ctrl+Enter sends.">Ask</button>
+            <button class="btn mode-btn" id="solveModeBtn" title="Solve = send the prompt straight to the LLM — evaluate, analyze, compare, draft. Ctrl+Enter or Enter sends.">Solve</button>
+          </div>
+          <textarea id="askInput" rows="2" placeholder="Ask the coach — paste a question or a direction… (Enter to send, Shift+Enter for a new line)"></textarea>
+          <button class="btn" id="askSendBtn" title="Send (Enter)">Ask ↵</button>
         </div>
         <span class="small muted" id="askStatus" style="display:none"></span>
       </section>
@@ -255,7 +262,8 @@
         const stack = $("responses");
         const empty = stack.querySelector(".resp-empty");
         if (empty) empty.remove();
-        const isAnswer = e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
+        const isSolve = e.payload.type === "solver";
+        const isAnswer = isSolve || e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
         const isPrepared = e.payload.type === "prepared_answer";
         const card = document.createElement("div");
         card.className = "resp-card insight-arrive";
@@ -263,16 +271,24 @@
         if (lowConf) card.classList.add("lowconf");
         const badge = document.createElement("div");
         badge.className = "resp-kind";
-        badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
+        badge.textContent = isSolve ? "Solved" : isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
         card.appendChild(badge);
         const q = document.createElement("div");
         q.className = "resp-q";
-        q.textContent = c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer");
+        q.textContent = isSolve
+          ? (c.question || "Your prompt")
+          : (c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer"));
         card.appendChild(q);
         if (lowConf) {
           const chip = document.createElement("span");
           chip.className = "chip";
           chip.textContent = "low confidence — verify";
+          card.appendChild(chip);
+        }
+        if (c.offline === true) {
+          const chip = document.createElement("span");
+          chip.className = "chip offline";
+          chip.textContent = isSolve ? "LLM unavailable" : "scaffold — LLM unavailable";
           card.appendChild(chip);
         }
         if (c.cached === true) {
@@ -284,12 +300,17 @@
         if (c.offline === true) {
           const chip = document.createElement("span");
           chip.className = "chip offline";
-          chip.textContent = "scaffold — LLM unavailable";
+          chip.textContent = isSolve ? "LLM unavailable" : "scaffold — LLM unavailable";
           card.appendChild(chip);
         }
         const body = document.createElement("div");
         body.className = "resp-body";
-        if (isAnswer || isPrepared) {
+        if (isSolve) {
+          // Solver results keep their line breaks — pasted prompts often ask
+          // for structured output (lists, steps, tables of pros/cons).
+          body.style.whiteSpace = "pre-wrap";
+          body.textContent = c.answer ?? "";
+        } else if (isAnswer || isPrepared) {
           body.textContent = c.answer ?? "";
           // Crimson "extra info" block: optional CV-grounded instance —
           // annotation, not part of the rehearsed answer.
@@ -380,10 +401,23 @@
         }
       });
 
-      // ── Written ask: type/paste a question or a direction for the coach.
-      // Routes through the main window (Rust emit) as coach.ask, so it rides
-      // the SAME pipeline as a spoken question — prepared-QA bank, answer
-      // cache (~0ms on repeats), answer-first draft, framework coach.
+      // ── Written ask: type/paste a question or a direction for the coach,
+      // or flip to SOLVE and send a prompt straight to the LLM (evaluate,
+      // analyze, compare, draft — answered as-is).
+      // Enter sends; Shift+Enter inserts a newline; Escape closes the box.
+      let askMode = "ask"; // "ask" | "solve"
+      function setAskMode(mode) {
+        askMode = mode;
+        const ask = $("askModeBtn"), solve = $("solveModeBtn");
+        if (ask) ask.classList.toggle("on", mode === "ask");
+        if (solve) solve.classList.toggle("on", mode === "solve");
+        const input = $("askInput");
+        if (input) input.placeholder = mode === "solve"
+          ? "Solve — evaluate, analyze, summarize, draft… (Enter to send)"
+          : "Ask the coach — paste a question or a direction… (Enter to send, Shift+Enter for a new line)";
+        const send = $("askSendBtn");
+        if (send) send.textContent = mode === "solve" ? "Solve ↵" : "Ask ↵";
+      }
       function sendAsk() {
         const input = $("askInput");
         const status = $("askStatus");
@@ -391,11 +425,13 @@
         if (!text) return;
         try {
           // overlay://user_ask → main window listener (LiveSession) → WS
-          // coach.ask → handleFinal (persisted + full coach pipeline).
-          event.emit("overlay://user_ask", { text });
+          // coach.ask (full coach pipeline) or coach.solve (direct LLM).
+          event.emit("overlay://user_ask", { text, mode: askMode });
           if (input) input.value = "";
           if (status) {
-            status.textContent = "Sent to coach — answer will appear above.";
+            status.textContent = askMode === "solve"
+              ? "Sent to AI — result will appear above."
+              : "Sent to coach — answer will appear above.";
             status.style.display = "block";
             setTimeout(() => { if (status) status.style.display = "none"; }, 4000);
           }
@@ -408,16 +444,18 @@
       }
       $("askSendBtn")?.addEventListener("click", sendAsk);
       $("askInput")?.addEventListener("keydown", (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        // Enter sends; Shift+Enter is a plain newline (default behavior).
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           sendAsk();
         }
-        // Escape closes the ask box and restores stealth passthrough.
         if (e.key === "Escape") {
           e.preventDefault();
           toggleAsk(false);
         }
       });
+      $("askModeBtn")?.addEventListener("click", () => setAskMode("ask"));
+      $("solveModeBtn")?.addEventListener("click", () => setAskMode("solve"));
       // Global shortcut (while overlay focused): Ctrl/Cmd+K toggles the ask box.
       window.addEventListener("keydown", (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {

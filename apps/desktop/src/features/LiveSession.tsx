@@ -39,7 +39,7 @@ const MODES: { id: string; label: string }[] = [
 /** Speakable-answer insight kinds — these sort above coach frameworks in the
  *  Coaching panel (answer-first, matching the stealth overlay). */
 function isAnswerInsight(i: { type?: string }): boolean {
-  return i.type === "auto_answer" || i.type === "prepared_answer" || i.type === "suggested_answer_cached";
+  return i.type === "auto_answer" || i.type === "prepared_answer" || i.type === "solver" || i.type === "suggested_answer_cached";
 }
 
 const TranscriptRow = memo(function TranscriptRow({ t }: { t: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number | null; speaker?: string } }) {  const conf = t.confidence ?? 0;
@@ -377,18 +377,17 @@ const [overlayOn, setOverlayOn] = useState(false);
   }, [connected]);
 
   // Written asks from the stealth overlay ("Ask" input): a typed/pasted
-  // question or a direction for the coach. Forwarded as coach.ask — the API
-  // persists it as a manual segment and runs the FULL pipeline (prepared-QA
-  // bank, answer cache, answer-first draft, framework coach), so a repeat
-  // question answered here is also cached for the next time it's asked aloud.
+  // question/direction (coach pipeline) or a Solve prompt (direct LLM —
+  // evaluate, analyze, draft, answered as-is).
   useEffect(() => {
     if (!nativeAvailable) return;
     let un: UnlistenFn | null = null;
-    void listen<{ text: string }>("overlay://user_ask", (e) => {
+    void listen<{ text: string; mode?: "ask" | "solve" }>("overlay://user_ask", (e) => {
       const text = (e.payload?.text ?? "").trim();
       if (!text || !sessionId) return;
+      const solve = e.payload?.mode === "solve";
       const frame = {
-        type: "coach.ask",
+        type: solve ? "coach.solve" : "coach.ask",
         eventId: Math.random().toString(36).slice(2),
         sequenceNo: Date.now(),
         occurredAt: new Date().toISOString(),
@@ -963,7 +962,24 @@ const [overlayOn, setOverlayOn] = useState(false);
             const lowConf = typeof ins.contentJson.stt_confidence === "number" && (ins.contentJson.stt_confidence as number) < 0.7;
             const ring = isNewest ? "var(--success)" : lowConf ? "#fbbf24" : "var(--accent)";
             const cardStyle = { background: "var(--surface-2)", borderColor: ring, borderWidth: 2 };
-            return ins.type === "prepared_answer" ? (
+            return ins.type === "solver" ? (
+              <div key={ins.id} className="card insight-arrive" style={cardStyle}>
+                <div className="small muted" style={{ marginBottom: 4 }}>
+                  Solved — {String(ins.contentJson.question ?? "").slice(0, 120)}
+                  {ins.contentJson.offline === true && (
+                    <span className="badge" style={{ marginLeft: 8, color: "#f87171", borderColor: "rgba(248,113,113,0.4)" }} title="The LLM call failed — nothing usable came back.">
+                      LLM unavailable
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {overlayOn && (
+                  <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { type: "solver", contentJson: ins.contentJson })}>
+                    Send to overlay
+                  </button>
+                )}
+              </div>
+            ) : ins.type === "prepared_answer" ? (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div className="small muted" style={{ marginBottom: 4 }}>
                   Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) — {String(ins.contentJson.title ?? "")}

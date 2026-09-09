@@ -1302,6 +1302,77 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer");
         return;
       }
+
+      if (frame.type === "coach.solve") {
+        // Direct LLM prompt from the overlay "Solve" mode: evaluate, analyze,
+        // compare, draft — answered AS-IS (no coach framing, no prep context,
+        // no cache). The user pasted the full prompt; the model just solves.
+        // Result lands as a `solver` insight rendered in the answer zone of
+        // both the overlay and the Live session panel.
+        const text = frame.text.trim();
+        if (!text || !workspaceCfg) return;
+        log.info("coach.solve received", { sessionId: session!.id, chars: text.length });
+        try {
+          const outcome = await executeRouted(
+            { db, breakers },
+            workspaceCfg,
+            session!.workspaceId,
+            session!.id,
+            {
+              taskClass: "solver",
+              privacyMode: workspaceCfg.privacyMode,
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a precise assistant embedded in a live interview copilot. The user sends tasks such as evaluate, analyze, compare, summarize, draft or solve. Answer directly and completely in plain text — short paragraphs or dash lists, no markdown headers. No preamble, no restating the task.",
+                },
+                { role: "user", content: text },
+              ],
+            } as never,
+          );
+          const answer = outcome.ok ? (outcome.text ?? "").trim() : "";
+          const insightId = randomUUID();
+          const contentJson: Record<string, unknown> = {
+            question: text.slice(0, 500),
+            answer,
+            ...(outcome.ok ? {} : { offline: true, error: String(outcome.error ?? "LLM unavailable") }),
+          };
+          try {
+            await db.sessionInsight.create({
+              data: {
+                id: insightId,
+                sessionId: session!.id,
+                type: "solver",
+                sourceSegmentIds: [],
+                contentJson: contentJson as any,
+                modelTraceId: traceId,
+              },
+            });
+          } catch (e) {
+            log.warn("failed to persist solver result", { error: String(e) });
+          }
+          emit({
+            type: "coach.suggestion",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            insight: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "solver",
+              sourceSegmentIds: [],
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        } catch (e) {
+          log.warn("coach.solve failed", { error: String(e) });
+        }
+        return;
+      }
     });
 
     socket.on("close", () => {

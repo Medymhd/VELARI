@@ -279,6 +279,16 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
      *  should fold into its next responses. */
     text: z.string().min(1).max(4000),
   }),
+  z.object({
+    type: z.literal("coach.solve"),
+    eventId: z.string(),
+    sequenceNo: z.number().int().nonnegative(),
+    occurredAt: z.string().datetime(),
+    /** Direct LLM prompt from the overlay "Solve" mode: evaluate, analyze,
+     *  compare, draft — answered as-is, not through the interview coach
+     *  pipeline. */
+    text: z.string().min(1).max(8000),
+  }),
   z.object({ type: z.literal("ping"), eventId: z.string() }),
   z.object({
     type: z.literal("session.mode"),
