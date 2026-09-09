@@ -85,7 +85,18 @@
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
       }
       .qstrip.empty { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+      /* Written ask — type or paste a question / direction for the coach.
+         Collapsed by default (stealth first); ⌘/Ctrl+K or the ✎ button opens. */
+      .ask-row { display: flex; gap: 6px; align-items: flex-start; }
+      .ask-row textarea {
+        flex: 1; font: inherit; font-size: 12.5px; line-height: 1.4; color: var(--text);
+        background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border); border-radius: 8px;
+        padding: 7px 9px; resize: none; outline: none;
+      }
+      .ask-row textarea:focus { border-color: var(--accent); }
+      .ask-row .btn { flex: none; padding: 6px 10px; }
       .muted { color: var(--muted); }
+      .small { font-size: 11px; }
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
       .resp-stack { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 84px; }
@@ -158,6 +169,13 @@
       <section class="sec">
         <label>Interviewer</label>
         <div id="qstrip" class="qstrip empty">Listening for the interviewer…</div>
+      </section>
+      <section class="sec" id="askSec" style="display:none">
+        <div class="ask-row">
+          <textarea id="askInput" rows="2" placeholder="Ask the coach — paste a question or a direction… (Ctrl+Enter to send)"></textarea>
+          <button class="btn" id="askSendBtn" title="Send to coach (Ctrl+Enter)">Ask ↵</button>
+        </div>
+        <span class="small muted" id="askStatus" style="display:none"></span>
       </section>
     </div>
     <script>
@@ -351,6 +369,69 @@
           console.error("hide failed", e);
         }
       });
+
+      // ── Written ask: type/paste a question or a direction for the coach.
+      // Routes through the main window (Rust emit) as coach.ask, so it rides
+      // the SAME pipeline as a spoken question — prepared-QA bank, answer
+      // cache (~0ms on repeats), answer-first draft, framework coach.
+      function sendAsk() {
+        const input = $("askInput");
+        const status = $("askStatus");
+        const text = (input?.value ?? "").trim();
+        if (!text) return;
+        try {
+          // overlay://user_ask → main window listener (LiveSession) → WS
+          // coach.ask → handleFinal (persisted + full coach pipeline).
+          event.emit("overlay://user_ask", { text });
+          if (input) input.value = "";
+          if (status) {
+            status.textContent = "Sent to coach — answer will appear above.";
+            status.style.display = "block";
+            setTimeout(() => { if (status) status.style.display = "none"; }, 4000);
+          }
+        } catch (e) {
+          if (status) {
+            status.textContent = "Send failed — is the app running?";
+            status.style.display = "block";
+          }
+        }
+      }
+      $("askSendBtn")?.addEventListener("click", sendAsk);
+      $("askInput")?.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          sendAsk();
+        }
+      });
+      // Global shortcut (while overlay focused): Ctrl/Cmd+K toggles the ask box.
+      window.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          toggleAsk();
+        }
+      });
+      function toggleAsk(force) {
+        const sec = $("askSec");
+        if (!sec) return;
+        const show = force !== undefined ? force : sec.style.display === "none";
+        sec.style.display = show ? "flex" : "none";
+        if (show) {
+          setTimeout(() => $("askInput")?.focus(), 30);
+        } else {
+          reportHeight();
+        }
+      }
+      // Start collapsed but let the ✎ button open it. Add the toggle button
+      // to the header next to the hide button.
+      const askToggle = document.createElement("button");
+      askToggle.className = "btn";
+      askToggle.id = "askToggleBtn";
+      askToggle.title = "Ask the coach (Ctrl+K)";
+      askToggle.textContent = "✎";
+      $("hideBtn")?.parentElement?.insertBefore(askToggle, $("hideBtn"));
+      askToggle.addEventListener("click", () => toggleAsk());
+      // Height re-report when the ask box opens (ResizeObserver covers content growth).
+      new MutationObserver(() => reportHeight()).observe($("askSec") ?? document.body, { attributes: true, attributeFilter: ["style"] });
 
       // Auto-height (reference parity): report panel height so the window fits content.
       function reportHeight() {

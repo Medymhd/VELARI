@@ -391,7 +391,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         }
       }
 
-      if (speaker === "interviewer") sawInterviewer = true;
+      // Manual (typed overlay) asks count as interviewer-perspective for the
+      // coach pipeline, but are NOT live interviewer audio — flipping
+      // sawInterviewer would silence mic-driven coaching in speakerphone/
+      // in-person sessions after the first typed question.
+      if (speaker === "interviewer" && source !== "manual") sawInterviewer = true;
 
       const sequenceNo = assembler.nextSequenceNo;
       const finalSegmentId = segmentId ?? randomUUID();
@@ -1279,6 +1283,23 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (frame.type === "transcript.client_final") {
         const s = frame.segment;
         await handleFinal(s.text, s.confidence ?? 0.9, s.startedAtMs, s.endedAtMs, s.source, s.speaker);
+        return;
+      }
+
+      if (frame.type === "coach.ask") {
+        // Written ask from the stealth overlay: a typed/pasted question or a
+        // direction for the coach. Persists as a manual interviewer-perspective
+        // segment (so the transcript shows it and the cache keys stay honest),
+        // then rides the SAME pipeline as a spoken question — prepared-QA bank,
+        // answer cache (~0ms on repeats), answer-first draft, framework coach.
+        // handleFinal exempts source "manual" from the sawInterviewer flip —
+        // a typed ask is not live interviewer audio, and flipping it would
+        // silence mic-driven coaching in speakerphone/in-person sessions
+        // after the first typed question.
+        const text = frame.text.trim();
+        if (!text) return;
+        log.info("coach.ask received", { sessionId: session!.id, chars: text.length });
+        await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer");
         return;
       }
     });

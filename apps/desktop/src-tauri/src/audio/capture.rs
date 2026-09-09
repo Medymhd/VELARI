@@ -165,6 +165,9 @@ fn run_dsp_loop(
     // last real sample drained, and last synthetic frame emitted.
     let mut last_real_audio = Instant::now();
     let mut last_synth = Instant::now();
+    // One-time scratch for the synthesized zero frames (see 1b below).
+    let mut zero_frame_scratch: Vec<i16> = vec![0; chunk_size];
+    let zero_frame_bytes: Vec<u8> = vec![0u8; chunk_size * 2];
 
     let mut emitter = {
         let app = app.clone();
@@ -238,12 +241,16 @@ fn run_dsp_loop(
             && last_synth.elapsed() >= Duration::from_millis(20)
         {
             last_synth = Instant::now();
-            let zero_frame = vec![0i16; chunk_size];
-            let (action, edge) = suppressor.process_edges(&zero_frame);
+            // Reusable scratch (allocated once below the loop header) — a
+            // fresh Vec per 20ms tick would churn the allocator for zeros.
+            for s in zero_frame_scratch.iter_mut() {
+                *s = 0;
+            }
+            let (action, edge) = suppressor.process_edges(&zero_frame_scratch);
             if matches!(action, FrameAction::SendSilence | FrameAction::Send(_)) {
                 speech_flag.store(false, Ordering::Relaxed);
                 rms_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
-                emitter.push(&vec![0u8; chunk_size * 2]);
+                emitter.push(&zero_frame_bytes);
             }
             if edge == SpeechEdge::Ended {
                 emitter.flush();

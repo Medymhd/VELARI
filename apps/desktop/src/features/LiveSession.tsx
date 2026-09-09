@@ -376,6 +376,30 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [connected]);
 
+  // Written asks from the stealth overlay ("Ask" input): a typed/pasted
+  // question or a direction for the coach. Forwarded as coach.ask — the API
+  // persists it as a manual segment and runs the FULL pipeline (prepared-QA
+  // bank, answer cache, answer-first draft, framework coach), so a repeat
+  // question answered here is also cached for the next time it's asked aloud.
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let un: UnlistenFn | null = null;
+    void listen<{ text: string }>("overlay://user_ask", (e) => {
+      const text = (e.payload?.text ?? "").trim();
+      if (!text || !sessionId) return;
+      const frame = {
+        type: "coach.ask",
+        eventId: Math.random().toString(36).slice(2),
+        sequenceNo: Date.now(),
+        occurredAt: new Date().toISOString(),
+        text,
+      };
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(frame));
+      else notify("error", "Realtime not connected — cannot send the ask");
+    }).then((u) => (un = u));
+    return () => un?.();
+  }, [nativeAvailable, sessionId, notify]);
+
   // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) —
   // it works from every screen and backfills the panel when it opens.
 
