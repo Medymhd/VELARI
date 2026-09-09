@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -161,6 +161,7 @@ fn run_dsp_loop(
     // Speech/rms snapshot read by the emitter at flush time.
     let speech_flag = Arc::new(AtomicBool::new(false));
     let rms_bits = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    let mut last_real_audio = Instant::now();
 
     let mut emitter = {
         let app = app.clone();
@@ -201,8 +202,36 @@ fn run_dsp_loop(
         }
 
         // 1. Drain ALL available samples (lock-free).
+        let mut drained = false;
         while let Some(sample) = consumer.try_pop() {
             raw_batch.push(sample);
+            drained = true;
+        }
+        if drained {
+            last_real_audio = Instant::now();
+        }
+
+        // 1b. Loopback starvation keepalives — WASAPI loopback emits NO
+        // packets during silence, so after speech ends this loop sees no
+        // samples: the gate never runs again, no keepalives and no
+        // SpeechEdge::Ended reach the server, and the server's endpointing
+        // (which keys off incoming chunks) can't fire. Partials then hang at
+        // ~70% confidence until the API's 10s stale watchdog force-flushes —
+        // the reported "partial takes forever to go green, coach responds
+        // late". Synthesize zero frames while the channel is quiet so the
+        // suppressor's own keepalive/edge logic keeps running; its hangover
+        // expiry emits the Ended edge and the pending batch flushes.
+        if !drained && frame_buffer.len() < chunk_size {
+            let zero_frame = vec![0i16; chunk_size];
+            let (action, edge) = suppressor.process_edges(&zero_frame);
+            if matches!(action, FrameAction::SendSilence) {
+                speech_flag.store(false, Ordering::Relaxed);
+                rms_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
+                emitter.push(&vec![0u8; chunk_size * 2]);
+            }
+            if edge == SpeechEdge::Ended {
+                emitter.flush();
+            }
         }
 
         // 2. Resample (anti-aliased) to 16kHz i16, or f32 -> i16 passthrough.

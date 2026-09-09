@@ -155,7 +155,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     } = {};
     const sttEngines = new Map<string, SttEngine>();
     /** Per-channel partial/final recency — drives the staleness watchdog. */
-    const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number }>();
+    const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number; lastChunkAtMs: number }>();
     const engineFor = (channel?: string): SttEngine => {
       const key = channel ?? "default";
       let engine = sttEngines.get(key);
@@ -200,30 +200,48 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.warn("answer cache load failed (cache disabled this session)", { error: String(e) });
     }
 
-    /** Staleness watchdog: a partial hanging with no final (engine wedged,
-     *  gate never closed) force-finalizes after 10s by flushing the engine —
-     *  "70% partials get stuck" is a dead-end otherwise. */
+    /** Endpoint watchdog — turns "partial stuck at 70%" into fast finals.
+     *
+     *  1. Chunk starvation (~1.2s): WASAPI loopback delivers NO packets
+     *     during silence, so after the interviewer stops talking no
+     *     audio.chunk reaches the engine — its feed()-based endpointing
+     *     (800ms quiet tail) never gets a chunk to run on, and the partial
+     *     hangs until the 10s stale flush. Flush as soon as the stream goes
+     *     quiet with a partial outstanding: same semantics as endpointing,
+     *     just enforced where the time information lives.
+     *  2. Wedged decoder (10s): audio still flowing but no final — engine
+     *     stall, force-finalize as before. */
     const staleTimer = setInterval(() => {
       const now = Date.now();
       for (const [channel, rec] of channelAudio) {
-        if (rec.lastPartialAt > rec.lastFinalAt && now - rec.lastPartialAt > 10_000) {
-          rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
-          const engine = sttEngines.get(channel);
-          if (engine) {
-            log.info("stale partial — forcing flush", { sessionId: session!.id, channel });
-            try {
-              engine.flush((r) => {
-                if (r.isFinal && r.text.trim()) {
-                  const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
-                  void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
-                  advanceTurn(channel);
-                }
-              });
-            } catch { /* engine already gone */ }
-          }
+        if (rec.lastPartialAt <= rec.lastFinalAt) continue;
+        const sinceChunk = now - rec.lastChunkAtMs;
+        const sincePartial = now - rec.lastPartialAt;
+        // Starvation: no chunk for 1.2s with a partial outstanding — the
+        // engine can't endpoint without chunks, flush now. (After the flush
+        // lastFinalAt > lastPartialAt, so this fires once per utterance.)
+        // Wedged: chunks still flowing but no final for 10s.
+        const starving = rec.lastChunkAtMs > 0 && sinceChunk > 1_200;
+        if (!starving && sincePartial <= 10_000) continue;
+        rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
+        const engine = sttEngines.get(channel);
+        if (engine) {
+          log.info(
+            starving ? "endpoint flush (chunk starvation)" : "stale partial — forcing flush",
+            { sessionId: session!.id, channel, sincePartialMs: sincePartial, sinceChunkMs: sinceChunk },
+          );
+          try {
+            engine.flush((r) => {
+              if (r.isFinal && r.text.trim()) {
+                const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
+                advanceTurn(channel);
+              }
+            });
+          } catch { /* engine already gone */ }
         }
       }
-    }, 5_000);
+    }, 1_000);
 
     try {
       // STT engine warmup FIRST — before config/DB awaits, so model loading
@@ -1210,12 +1228,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const nowMs = Date.now();
         const engine = engineFor(frame.channel);
         const speaker = frame.channel === "system" ? "interviewer" : frame.channel === "mic" ? "user" : undefined;
+        // Chunk recency — the endpoint watchdog keys off this to distinguish
+        // "engine wedged" from "loopback delivered nothing to endpoint on".
+        const rec0 = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0, lastChunkAtMs: 0 };
+        rec0.lastChunkAtMs = nowMs;
+        channelAudio.set(frame.channel ?? "default", rec0);
         engine.feed(pcm, nowMs, (result) => {
           // Defer socket writes out of the engine's synchronous decode loop —
           // sync sends from inside a native (napi) callback stack corrupt the
           // recognizer's decode state.
           queueMicrotask(() => {
-            const rec = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0 };
+            const rec = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0, lastChunkAtMs: 0 };
             channelAudio.set(frame.channel ?? "default", rec);
             if (!result.isFinal) {
               rec.lastPartialAt = nowMs;
