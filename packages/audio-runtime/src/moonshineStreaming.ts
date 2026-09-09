@@ -39,6 +39,37 @@ export function defaultMoonshineFactory(model: string, dtype: string): Moonshine
   };
 }
 
+/** Process-level weight cache: the loaded pipeline is keyed by model+dtype and
+ *  shared across engine instances. Engines stay per-connection (audio buffers
+ *  are session state) but the WEIGHTS load once per API process — every
+ *  session after the first opens hot. ~150-250MB resident, trivial for a
+ *  desktop app. Only the default (network-loading) factory participates:
+ *  test-injected factories stay per-engine so tests can't leak state. */
+const pipelineCache = new Map<string, Promise<MoonshinePipeline>>();
+export function cachedMoonshineFactory(model: string, dtype: string): MoonshineFactory {
+  const key = `${model}:${dtype}`;
+  return () => {
+    let p = pipelineCache.get(key);
+    if (!p) {
+      p = defaultMoonshineFactory(model, dtype)();
+      pipelineCache.set(key, p);
+      p.catch(() => pipelineCache.delete(key)); // failed loads may retry later
+    }
+    return p;
+  };
+}
+
+/** Boot-time warm hook: kicks the weight load without any engine/session.
+ *  Fire-and-forget; safe to call before any session exists. */
+export function warmMoonshine(model?: string, dtype?: string): void {
+  try {
+    void cachedMoonshineFactory(
+      model ?? process.env.MOONSHINE_MODEL ?? DEFAULT_MOONSHINE_MODEL,
+      dtype ?? process.env.MOONSHINE_DTYPE ?? "q8",
+    )().catch(() => {});
+  } catch { /* warmup never throws */ }
+}
+
 export class MoonshineStreamingSttEngine implements SttEngine {
   readonly source = "local_stt" as const;
 
@@ -72,7 +103,9 @@ export class MoonshineStreamingSttEngine implements SttEngine {
   constructor(opts: MoonshineEngineOptions = {}) {
     const model = opts.model ?? process.env.MOONSHINE_MODEL ?? DEFAULT_MOONSHINE_MODEL;
     const dtype = opts.dtype ?? process.env.MOONSHINE_DTYPE ?? "q8";
-    this.factory = opts.factory ?? (() => defaultMoonshineFactory(model, dtype)());
+    // Default path shares the process-level weight cache; injected factories
+    // (tests) stay per-engine so suites can't leak state between tests.
+    this.factory = opts.factory ?? cachedMoonshineFactory(model, dtype);
     this.partialEveryMs = opts.partialEveryMs ?? 400;
     this.sampleRate = opts.sampleRate ?? 16_000;
   }

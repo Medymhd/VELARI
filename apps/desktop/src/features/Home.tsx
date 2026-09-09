@@ -5,6 +5,18 @@ import { EmptyState, MotionCard, PageHeader, Skeleton, Sparkline, StatusPill } f
 
 type SessionRow = { id: string; title: string | null; status: string };
 
+/** Trash icon — stroke style matching the shell nav icons. */
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6 M14 11v6" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const { workspaceId, setSession, setScreen, clearAuth, resetLive, notify } = useStore();
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -33,6 +45,13 @@ export default function Home() {
     void refresh();
   }, [workspaceId]);
 
+  /** Warm STT models the instant the user acts on a session — the ~300ms of
+   *  screen transition becomes model-load time. Fire-and-forget; failures
+   *  are invisible (the WS connect re-warms anyway). */
+  function warmOnNavigate() {
+    void api.sttWarm();
+  }
+
   /** Delete one session: transcripts, insights, artifacts AND prep materials
    *  cascade server-side; story-bank and answer-cache rows stay (workspace
    *  memory). Live sessions can't be deleted — end them first. */
@@ -54,11 +73,12 @@ export default function Home() {
   async function create() {
     if (!workspaceId) return;
     setCreating(true);
+    warmOnNavigate(); // model load starts during the create round-trip
     try {
       const s = await api.createSession({ workspaceId, title: title || null, consentStatus: "confirmed" });
       setTitle("");
       resetLive(); // a new session starts clean — never inherits the previous one's transcript/insights
-      setSession(s.id, "draft");
+      setSession(s.id, "draft", title.trim() || null);
       setScreen("live");
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : String(ex));
@@ -157,8 +177,9 @@ export default function Home() {
                 className="card hoverable row"
                 style={{ justifyContent: "space-between", borderColor: confirming ? "var(--danger)" : undefined }}
                 onClick={() => {
+                  warmOnNavigate();
                   resetLive(); // clear the previous view; LiveSession hydrates from the API
-                  setSession(s.id, s.status);
+                  setSession(s.id, s.status, s.title ?? null);
                   setScreen("live");
                 }}
               >
@@ -184,12 +205,12 @@ export default function Home() {
                   ) : (
                     <button
                       className="ghost"
-                      style={{ color: "var(--danger)", opacity: 0.75 }}
+                      style={{ color: "var(--danger)", opacity: 0.75, padding: "6px 8px" }}
                       title={isLive ? "End the live session before deleting it" : "Delete session"}
                       disabled={isLive}
                       onClick={(e) => { e.stopPropagation(); setConfirmDelete(s.id); }}
                     >
-                      🗑
+                      <TrashIcon />
                     </button>
                   )}
                 </div>

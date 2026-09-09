@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { PrismaClient, Prisma } from "@prisma/client";
 import { newAssemblerState, ingestSegment } from "@app/domain";
 import { RealtimeClientFrame } from "@app/contracts";
-import { CircuitBreakerRegistry, createSttEngine, type SttEngine } from "@app/ai-runtime";
+import { CircuitBreakerRegistry, createSttEngine, warmMoonshine, type SttEngine } from "@app/ai-runtime";
 import { verifyToken } from "../auth.js";
 import { logger } from "@app/observability";
 import {
@@ -25,8 +25,30 @@ import { AnswerCache, prepHashOf, questionTokens, keyHashFor } from "../services
 const log = logger({ svc: "realtime" });
 const breakers = new CircuitBreakerRegistry();
 
+/** Boot-time STT warm: kick the Moonshine weight download/load before any
+ *  session exists, so the FIRST session of the day opens hot too. The
+ *  process-level weight cache makes every later warmup a no-op. Sherpa stays
+ *  out of boot (its ensureSherpaModel download is heavier; it warms at first
+ *  connect instead). */
+let bootWarmDone = false;
+export function bootWarmStt(): void {
+  if (bootWarmDone) return;
+  bootWarmDone = true;
+  warmMoonshine();
+  log.info("boot STT warm kicked (moonshine weights loading)");
+}
+
 /** GET /v1/realtime ” WebSocket upgrade. Client auth via ?token=&sessionId= */
 export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
+  // POST /v1/stt/warm — the client calls this the moment the user clicks
+  // New/Open on Home, BEFORE navigating: warming starts during the screen
+  // transition instead of after WS connect. Idempotent (weight cache); no
+  // session required; auth optional by design (warming is side-effect-free).
+  app.post("/v1/stt/warm", async (_req, reply) => {
+    warmMoonshine();
+    return reply.send({ ok: true, warming: "moonshine" });
+  });
+
   // fastify-websocket registers `app.get` with { websocket: true }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (app as any).get("/v1/realtime", { websocket: true }, async (socket: any, req: any) => {
@@ -204,6 +226,20 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     }, 5_000);
 
     try {
+      // STT engine warmup FIRST — before config/DB awaits. Model loading then
+      // runs in parallel with workspace config, persona and prep loading
+      // instead of after them. Engines are created eagerly here (they were
+      // lazy per-channel before) and the weight/recognizer caches make this
+      // near-instant for every session after the first.
+      for (const ch of ["default", "mic", "system"] as const) {
+        try {
+          engineFor(ch).warmup?.();
+        } catch {
+          /* warmup never blocks connect */
+        }
+      }
+      log.info("STT engines warming", { sessionId: session!.id });
+
       workspaceCfg = await loadWorkspaceAiConfig(db, session!.workspaceId);
       sttOpts.deepgramKey = workspaceCfg.secrets.get("deepgram") ?? process.env.DEEPGRAM_API_KEY;
       sttOpts.localWhisperAvailable = process.env.LOCAL_WHISPER_AVAILABLE === "1";
@@ -226,21 +262,6 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
       await loadPrepMaterials();
-
-      // STT engine warmup: engines are created lazily per channel, and the
-      // local models load on first decode — so the first question's audio
-      // used to sit buffered while weights loaded (user had to repeat the
-      // question). Warm all three channel engines NOW, at connect, while the
-      // user is still settling in. Fire-and-forget; each engine degrades on
-      // its own if its model is missing.
-      for (const ch of ["default", "mic", "system"] as const) {
-        try {
-          engineFor(ch).warmup?.();
-        } catch {
-          /* warmup never blocks connect */
-        }
-      }
-      log.info("STT engines warming", { sessionId: session!.id });
 
       // Provider warmup: the first real coach call otherwise pays DNS + TLS +
       // auth handshake (~0.3-1s) on the critical path while the candidate is

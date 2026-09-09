@@ -154,6 +154,9 @@ export const api = {
   deleteProfile: (workspaceId: string) =>
     req(`/profile?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" }),
   health: () => req<{ ok: boolean; version?: string }>("/health"),
+  /** Fire-and-forget STT warmup: kicks model loading server-side the moment
+   *  the user clicks New/Open, before navigation completes. Never awaited. */
+  sttWarm: () => req<{ ok: boolean }>("/stt/warm", { method: "POST" }).catch(() => ({ ok: false })),
   verticalGet: <T>(vertical: string, path: string) => req<T>(`/verticals/${vertical}${path}`),
   verticalPost: <T>(vertical: string, path: string, body: unknown) =>
     req<T>(`/verticals/${vertical}${path}`, { method: "POST", body: JSON.stringify(body) }),

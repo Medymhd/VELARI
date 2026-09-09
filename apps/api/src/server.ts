@@ -17,7 +17,7 @@ import { recallRoutes } from "./routes/recall.js";
 import { profileRoutes } from "./routes/profile.js";
 import { contextRoutes } from "./routes/contexts.js";
 import { startModelProbeScheduler } from "./ai/modelProbeScheduler.js";
-import { registerRealtime } from "./realtime/ws.js";
+import { registerRealtime, bootWarmStt } from "./realtime/ws.js";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
 import { validateRegistration, type VerticalRegistration } from "@app/agent-sdk";
@@ -211,6 +211,10 @@ async function main(): Promise<void> {
   // controls it: hourly / 4h / daily / off). Keeps COACH_MODEL_* winners in
   // .env fresh without anyone touching a hardcoded model name.
   startModelProbeScheduler(prisma);
+
+  // Boot-time STT warm: Moonshine weights start loading NOW, so the first
+  // session of the day doesn't buffer the first question behind a download.
+  bootWarmStt();
 
   const shutdown = async (signal: string) => {
     log.info(`received ${signal}, shutting down`);
