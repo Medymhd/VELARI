@@ -154,6 +154,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       sherpaModelDir?: string;
     } = {};
     const sttEngines = new Map<string, SttEngine>();
+    /** Standalone Moonshine engine for connect-time warming. It shares the
+     *  process-level weight cache with the chain engines (same model+dtype
+     *  key in cachedMoonshineFactory), so warming this IS warming the chain's
+     *  Moonshine rung — without touching Sherpa (whose eager ONNX init
+     *  crashes the API process; see the warmup comment below). */
+    const warmEngineRef: SttEngine = createSttEngine(sttOpts);
     /** Per-channel partial/final recency — drives the staleness watchdog. */
     const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number }>();
     const engineFor = (channel?: string): SttEngine => {
@@ -226,18 +232,20 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     }, 5_000);
 
     try {
-      // STT engine warmup FIRST — before config/DB awaits. Model loading then
-      // runs in parallel with workspace config, persona and prep loading
-      // instead of after them. Engines are created eagerly here (they were
-      // lazy per-channel before) and the weight/recognizer caches make this
-      // near-instant for every session after the first.
-      for (const ch of ["default", "mic", "system"] as const) {
-        try {
-          engineFor(ch).warmup?.();
-        } catch {
-          /* warmup never blocks connect */
-        }
-      }
+      // STT engine warmup FIRST — before config/DB awaits, so model loading
+      // runs in parallel with workspace config, persona and prep loading.
+      //
+      // MOONSHINE ONLY — deliberately NOT the whole chain. The FallbackSttEngine
+      // warmup forwards through every rung, and eagerly building Sherpa's ONNX
+      // recognizer at connect crashes the API process (ORT 1.24.3 cannot
+      // satisfy the native binding's API-version-27 request; measured in the
+      // field 2026-09-09). Sherpa stays lazy: it only initializes if Moonshine
+      // actually fails mid-session, exactly as before the warming work.
+      // A standalone Moonshine engine shares the process-level weight cache
+      // (cachedMoonshineFactory), so warming it IS warming the chain's
+      // Moonshine rung — the real engines find hot weights when they init.
+      warmEngineRef.warmup?.();
+      log.info("STT engines warming (moonshine only)", { sessionId: session!.id });
       log.info("STT engines warming", { sessionId: session!.id });
 
       workspaceCfg = await loadWorkspaceAiConfig(db, session!.workspaceId);

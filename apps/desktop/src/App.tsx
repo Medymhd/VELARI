@@ -117,6 +117,9 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   const nav = persona === "interviewer" ? INTERVIEWER_NAV : CORE_NAV;
+  /** Screens owned by the interview vertical — the persona switch is visible
+   *  only while one of these is active (candidate/interviewer footer toggle). */
+  const isInterviewScreen = ["home", "live", "arena", "review", "prep"].includes(screen);
 
   // Sidebar: persisted width + collapsed icon rail.
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -230,7 +233,12 @@ export default function App() {
         ))}
         <div className="foot">
           <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
-          {!rail && (
+          {/* Persona switch belongs to the interview vertical only — showing it
+              under Copilot/Work (or any future vertical) is noise. It appears
+              while an interview screen is active, plus one screen of grace
+              after leaving (so a switch to Settings still shows where you
+              were) but never under other verticals. */}
+          {!rail && isInterviewScreen && (
             <div className="row" style={{ gap: 0, padding: "8px 10px 0" }}>
               {(["candidate", "interviewer"] as const).map((p) => (
                 <button
