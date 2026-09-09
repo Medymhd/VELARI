@@ -227,6 +227,21 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
       await loadPrepMaterials();
 
+      // STT engine warmup: engines are created lazily per channel, and the
+      // local models load on first decode — so the first question's audio
+      // used to sit buffered while weights loaded (user had to repeat the
+      // question). Warm all three channel engines NOW, at connect, while the
+      // user is still settling in. Fire-and-forget; each engine degrades on
+      // its own if its model is missing.
+      for (const ch of ["default", "mic", "system"] as const) {
+        try {
+          engineFor(ch).warmup?.();
+        } catch {
+          /* warmup never blocks connect */
+        }
+      }
+      log.info("STT engines warming", { sessionId: session!.id });
+
       // Provider warmup: the first real coach call otherwise pays DNS + TLS +
       // auth handshake (~0.3-1s) on the critical path while the candidate is
       // already answering. A 1-token ping at session start moves that cost

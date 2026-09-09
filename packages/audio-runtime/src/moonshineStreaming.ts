@@ -81,6 +81,15 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     this.unavailableCb = cb;
   }
 
+  /** Kick off model load + warmup decode without audio. Fire-and-forget:
+   *  init() is idempotent (single shared promise), so concurrent warmup and
+   *  first-audio decode collapse into one load. Emits nothing. */
+  warmup(): void {
+    void this.init().catch(() => {
+      // init() already warns + fires unavailable on failure
+    });
+  }
+
   close(): void {
     this.closed = true;
     this.pipeline = null;

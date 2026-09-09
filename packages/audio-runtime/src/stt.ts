@@ -31,6 +31,11 @@ export interface SttEngine {
   onUnavailable?(cb: () => void): void;
   /** Release sockets/timers. Engines without resources may omit it. */
   close?(): void;
+  /** Start model/socket init WITHOUT audio (fire-and-forget). Lets the server
+   *  pay the cold-start cost at session open instead of on the first
+   *  utterance — otherwise the first question sits buffered while weights
+   *  download and the user has to repeat themselves. Must never emit. */
+  warmup?(): void;
 }
 
 /**
@@ -291,6 +296,18 @@ export class FallbackSttEngine implements SttEngine {
 
   feed(pcm: Buffer, atMs: number, onResult: (r: SttPartial | SttFinal) => void): void {
     this.engine.feed(pcm, atMs, onResult);
+  }
+
+  /** Warm the whole chain recursively — a cold fallback rung failing over
+   *  mid-session would stall the utterance the same way a cold primary does
+   *  at session start. */
+  warmup(): void {
+    try {
+      this.engine.warmup?.();
+    } catch { /* warmup never throws */ }
+    try {
+      this.fallbackEngine.warmup?.();
+    } catch { /* warmup never throws */ }
   }
 
   flush(onResult: (r: SttFinal) => void): void {

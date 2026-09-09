@@ -71,6 +71,45 @@ test("backspace-free buffer resets after final — next utterance starts clean",
   engine.close();
 });
 
+test("warmup loads the model without audio and emits nothing", async () => {
+  let factoryCalls = 0;
+  const engine = new MoonshineStreamingSttEngine({
+    factory: async () => {
+      factoryCalls += 1;
+      const pipeline: MoonshinePipeline = async () => ({ text: "should not appear" });
+      return pipeline;
+    },
+  });
+  const results: unknown[] = [];
+  // No feed() at all — warmup alone must trigger the load.
+  engine.warmup?.();
+  await sleep(30);
+  assert.equal(factoryCalls, 1, "model factory invoked once by warmup");
+  assert.equal(results.length, 0, "warmup emits no partials or finals");
+  // A later feed reuses the warm pipeline instead of loading again.
+  engine.feed(nonSilent(3200), 0, (r) => results.push(r));
+  await sleep(30);
+  assert.equal(factoryCalls, 1, "no second load on first audio");
+  engine.close();
+});
+
+test("warmup is idempotent — concurrent warmup and first feed share one load", async () => {
+  let factoryCalls = 0;
+  const engine = new MoonshineStreamingSttEngine({
+    factory: async () => {
+      factoryCalls += 1;
+      await sleep(10);
+      const pipeline: MoonshinePipeline = async () => ({ text: "x" });
+      return pipeline;
+    },
+  });
+  engine.warmup?.();
+  engine.feed(nonSilent(3200), 0, () => {});
+  await sleep(40);
+  assert.equal(factoryCalls, 1, "single shared init promise");
+  engine.close();
+});
+
 test("init failure fires onUnavailable and the engine goes inert", async () => {
   const engine = new MoonshineStreamingSttEngine({
     factory: () => Promise.reject(new Error("model download failed")),

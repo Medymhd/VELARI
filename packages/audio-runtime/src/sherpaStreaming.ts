@@ -159,6 +159,16 @@ export class SherpaStreamingSttEngine implements SttEngine {
     this.unavailableCb = cb;
   }
 
+  /** Build the recognizer now (model must already be on disk) so the first
+   *  utterance doesn't pay ONNX load time. Sync by design; failures mark the
+   *  engine unavailable immediately instead of hanging a session. Model
+   *  download itself stays out-of-band (ensureSherpaModel at boot). */
+  warmup(): void {
+    try {
+      this.init();
+    } catch { /* init() already warns + fires unavailable */ }
+  }
+
   close(): void {
     this.recognizer = null;
     this.stream = null;
