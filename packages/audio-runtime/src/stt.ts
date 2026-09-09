@@ -337,10 +337,17 @@ export function createSttEngine(opts: {
   if (opts.mode !== "rest" || !opts.deepgramKey) {
     // Moonshine first: PROVEN in-server (WASM, no native-thread conflicts),
     // tail-window decode keeps it real-time for hours. Sherpa second: true
-    // streaming, but its native decoder stalls inside the API process
-    // (works standalone — KI-001 residue); watchdog releases the chain.
+    // streaming, but its native decoder is BANNED in the API process — its
+    // bundled onnxruntime.dll is 1.27.1 (C API v27) while onnxruntime-node
+    // 1.24.3 (API v24) loads first (Moonshine), and Windows resolves sherpa's
+    // import to the already-loaded module → "The requested API version [27]
+    // is not available" → hard process crash that takes uploads/sessions with
+    // it. VELARI_DISABLE_SHERPA=1 (set by apps/api at boot) makes the chain
+    // skip the sherpa rung entirely; standalone/desktop runs keep it.
     engines.push(new MoonshineStreamingSttEngine());
-    engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
+    if (process.env.VELARI_DISABLE_SHERPA !== "1") {
+      engines.push(new SherpaStreamingSttEngine({ modelDir: opts.sherpaModelDir }));
+    }
   }
   if (opts.deepgramKey) engines.push(new DeepgramSttEngine(opts.deepgramKey));
   if (opts.localWhisperAvailable || opts.localWhisperUrl) {

@@ -154,12 +154,6 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       sherpaModelDir?: string;
     } = {};
     const sttEngines = new Map<string, SttEngine>();
-    /** Standalone Moonshine engine for connect-time warming. It shares the
-     *  process-level weight cache with the chain engines (same model+dtype
-     *  key in cachedMoonshineFactory), so warming this IS warming the chain's
-     *  Moonshine rung — without touching Sherpa (whose eager ONNX init
-     *  crashes the API process; see the warmup comment below). */
-    const warmEngineRef: SttEngine = createSttEngine(sttOpts);
     /** Per-channel partial/final recency — drives the staleness watchdog. */
     const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number }>();
     const engineFor = (channel?: string): SttEngine => {
@@ -235,18 +229,16 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // STT engine warmup FIRST — before config/DB awaits, so model loading
       // runs in parallel with workspace config, persona and prep loading.
       //
-      // MOONSHINE ONLY — deliberately NOT the whole chain. The FallbackSttEngine
-      // warmup forwards through every rung, and eagerly building Sherpa's ONNX
-      // recognizer at connect crashes the API process (ORT 1.24.3 cannot
-      // satisfy the native binding's API-version-27 request; measured in the
-      // field 2026-09-09). Sherpa stays lazy: it only initializes if Moonshine
-      // actually fails mid-session, exactly as before the warming work.
-      // A standalone Moonshine engine shares the process-level weight cache
-      // (cachedMoonshineFactory), so warming it IS warming the chain's
-      // Moonshine rung — the real engines find hot weights when they init.
-      warmEngineRef.warmup?.();
+      // MOONSHINE ONLY — deliberately NOT the whole chain. FallbackSttEngine
+      // warmup forwards through every rung, and eagerly building Sherpa's
+      // ONNX recognizer in the API process crashes it: sherpa's bundled
+      // onnxruntime.dll is 1.27.1 (C API v27) while Moonshine's
+      // onnxruntime-node 1.24.3 (API v24) loads first, and Windows resolves
+      // sherpa's import to the already-loaded module. Warm Moonshine
+      // directly — a standalone engine shares the process-level weight
+      // cache, so the real chain engines find hot weights when they init.
+      warmMoonshine();
       log.info("STT engines warming (moonshine only)", { sessionId: session!.id });
-      log.info("STT engines warming", { sessionId: session!.id });
 
       workspaceCfg = await loadWorkspaceAiConfig(db, session!.workspaceId);
       sttOpts.deepgramKey = workspaceCfg.secrets.get("deepgram") ?? process.env.DEEPGRAM_API_KEY;

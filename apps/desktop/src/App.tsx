@@ -73,7 +73,16 @@ function gearIcon() {
 
 function PaletteIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 0-5H12a2 2 0 0 1 0-4h6.5A3.5 3.5 0 0 0 22 8.5C22 5.4 17.5 3 12 3z" />
       <circle cx="7.5" cy="10.5" r="0.9" />
       <circle cx="12" cy="7.5" r="0.9" />
@@ -290,8 +299,8 @@ export default function App() {
           ) : (
             <div className="row" style={{ gap: 6, padding: "8px 10px 0", alignItems: "stretch" }}>
               <button
-                className="ghost"
-                style={{ flex: "none", padding: "7px 9px" }}
+                className="icon-btn"
+                style={{ flex: "none" }}
                 title={`Theme: ${THEMES.find((t) => t.id === theme)?.name ?? theme} — click to cycle`}
                 onClick={cycleTheme}
               >

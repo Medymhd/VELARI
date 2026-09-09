@@ -1,10 +1,24 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import { EmptyState, MotionCard, PageHeader, Skeleton, StatusPill } from "@app/ui";
+import { EmptyState, MotionCard, Skeleton, StatusPill } from "@app/ui";
 
 type SessionRow = { id: string; title: string | null; status: string };
 type TrendEntry = { metrics: { fillerRate: number; wpm: number | null; starShare: number } };
+
+function icon(paths: string) {
+  const d = paths.split(" M").map((p, i) => (i === 0 ? p : `M${p}`));
+  return () => (
+    <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {d.map((p) => <path key={p} d={p} />)}
+    </svg>
+  );
+}
+
+const MicIcon = icon("M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 11a7 7 0 0 0 14 0 M12 18v3");
+const ListIcon = icon("M4 5h16v14H4z M8 9h8 M8 13h5");
+const ArenaIcon = icon("M6 4v16 M18 4l-6 8 6 8 M4 6h5 M4 12h5 M4 18h5");
+const ChartIcon = icon("M3 20h18 M6 16v-5 M11 16V7 M16 16v-8");
 
 /** Platform dashboard — the landing surface for the whole product, not any
  *  single vertical. Answers "where was I, what's live, what changed" at a
@@ -73,115 +87,157 @@ export default function Home() {
   const list = sessions ?? [];
   const live = list.find((s) => s.status === "live");
   const draft = list.find((s) => s.status === "draft");
-  const lastCompleted = list.find((s) => s.status === "completed");
   const resume = live ?? draft ?? null;
 
-  const trendChips = trend && trend.length > 0 ? [
-    { label: "filler", value: `${(trend.reduce((a, t) => a + (t.metrics.fillerRate ?? 0), 0) / trend.length).toFixed(1)}` },
-    { label: "wpm", value: trend.some((t) => t.metrics.wpm != null) ? `${Math.round(trend.filter((t) => t.metrics.wpm != null).reduce((a, t) => a + (t.metrics.wpm ?? 0), 0) / trend.filter((t) => t.metrics.wpm != null).length)}` : "—" },
-    { label: "star", value: `${Math.round((trend.reduce((a, t) => a + (t.metrics.starShare ?? 0), 0) / trend.length) * 100)}%` },
-  ] : null;
+  const analyzed = trend ?? [];
+  const avg = (pick: (t: TrendEntry) => number | null) => {
+    const vals = analyzed.map(pick).filter((v): v is number => v != null);
+    return vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : null;
+  };
+  const stats = {
+    sessions: list.length,
+    completed: list.filter((s) => s.status === "completed").length,
+    filler: avg((t) => t.metrics.fillerRate),
+    wpm: avg((t) => t.metrics.wpm),
+    star: avg((t) => t.metrics.starShare),
+  };
+
+  const tiles = [
+    {
+      key: "new",
+      icon: MicIcon,
+      title: "Start a live session",
+      desc: "Capture both sides of the conversation with real-time coaching",
+      cta: creating ? "Creating…" : "Go live",
+      primary: true,
+      onClick: () => void newSession(),
+    },
+    {
+      key: "sessions",
+      icon: ListIcon,
+      title: "Browse sessions",
+      desc: "Every conversation, transcript and insight in one place",
+      cta: "Open",
+      onClick: () => setScreen("sessions"),
+    },
+    {
+      key: "arena",
+      icon: ArenaIcon,
+      title: "Train in the Arena",
+      desc: "Drill predicted questions and sharpen your delivery",
+      cta: "Practice",
+      onClick: () => setScreen("arena"),
+    },
+    {
+      key: "review",
+      icon: ChartIcon,
+      title: "Review performance",
+      desc: "Fillers, pace and STAR coverage scored across sessions",
+      cta: "Analyze",
+      onClick: () => setScreen("review"),
+    },
+  ];
 
   const firstRun = sessions != null && list.length === 0;
 
   return (
-    <div className="col">
-      <PageHeader
-        kicker="Dashboard"
-        title={`${greeting} — ${persona === "interviewer" ? "interviewer mode" : "ready when you are"}`}
-        description="Everything across Velari at a glance. Pick up where you left off, or start something new."
-      />
-
-      {/* Quick actions */}
-      <div className="row stagger" style={{ gap: 10, flexWrap: "wrap" }}>
-        <MotionCard delay={0.02}>
-          <button className="primary" disabled={creating} onClick={() => void newSession()}>
-            {creating ? "Creating…" : "＋ New session"}
-          </button>
-        </MotionCard>
-        <MotionCard delay={0.05}>
-          <button className="ghost" onClick={() => setScreen("sessions")}>Sessions</button>
-        </MotionCard>
-        <MotionCard delay={0.08}>
-          <button className="ghost" onClick={() => setScreen("arena")}>Arena drills</button>
-        </MotionCard>
-        {persona === "interviewer" && (
-          <MotionCard delay={0.11}>
-            <button className="ghost" onClick={() => setScreen("prep")}>Prep</button>
-          </MotionCard>
+    <div className="col dash">
+      {/* ── Hero ─────────────────────────────────────────────────────── */}
+      <section className="hero">
+        <div className="hero-copy">
+          <span className="hero-kicker">{persona === "interviewer" ? "Interviewer mode" : "Candidate mode"}</span>
+          <h1 className="hero-title">
+            {greeting}. <span className="grad-text">Your interview edge</span> starts here.
+          </h1>
+          <p className="hero-sub">
+            {firstRun
+              ? "Capture your first conversation and Velari turns it into grounded answers, scored delivery and a personal question bank."
+              : "Pick up a live session, drill the weak spots, or review what the last conversation taught you."}
+          </p>
+          <div className="hero-actions">
+            <button className="primary hero-cta" disabled={creating} onClick={() => void newSession()}>
+              {creating ? "Creating…" : live ? "Return to live session" : "New live session"}
+            </button>
+            {resume && live == null && (
+              <button className="hero-cta secondary-cta" onClick={() => openSession(resume)}>
+                Resume “{(resume.title ?? "Untitled").slice(0, 28)}”
+              </button>
+            )}
+            <button className="hero-cta secondary-cta" onClick={() => setScreen("prep")}>
+              Prep materials
+            </button>
+          </div>
+        </div>
+        {/* Live pulse card — only when something is actually running */}
+        {live && (
+          <div className="hero-live" onClick={() => openSession(live)} role="button" tabIndex={0}>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="dot" />
+              <b>Live now</b>
+            </div>
+            <div style={{ fontWeight: 600 }}>{live.title ?? "Untitled session"}</div>
+            <span className="small muted">Recording · coaching active · click to return</span>
+          </div>
         )}
+      </section>
+
+      {/* ── Feature tiles ────────────────────────────────────────────── */}
+      <div className="tile-grid stagger">
+        {tiles.map((t, i) => (
+          <MotionCard key={t.key} delay={0.04 * i}>
+            <button className="tile" onClick={t.onClick} disabled={t.key === "new" && creating}>
+              <span className={t.primary ? "tile-icon accent" : "tile-icon"}><t.icon /></span>
+              <span className="tile-body">
+                <span className="tile-title">{t.title}</span>
+                <span className="tile-desc">{t.desc}</span>
+              </span>
+              <span className={`tile-cta ${t.primary ? "accent" : ""}`}>{t.cta} →</span>
+            </button>
+          </MotionCard>
+        ))}
       </div>
 
-      {/* Continue where you left off */}
-      {resume && (
+      {/* ── Metrics band ─────────────────────────────────────────────── */}
+      <div className="metrics-band stagger">
+        <MotionCard delay={0.05}>
+          <div className="metric">
+            <span className="metric-value grad-text">{sessions == null ? "—" : stats.sessions}</span>
+            <span className="metric-label">Sessions</span>
+            <span className="metric-sub">{stats.completed} completed</span>
+          </div>
+        </MotionCard>
         <MotionCard delay={0.1}>
-          <div
-            className="card hoverable row"
-            style={{ justifyContent: "space-between", cursor: "pointer", borderColor: "rgba(var(--accent-rgb), 0.35)" }}
-            onClick={() => openSession(resume)}
-          >
-            <div className="col" style={{ gap: 2 }}>
-              <span className="kicker">Continue</span>
-              <div style={{ fontWeight: 600 }}>{resume.title ?? "Untitled session"}</div>
-              <div className="small muted">
-                {resume.status === "live" ? "This session is live right now — jump back in." : "Started but not finished. Pick up where you stopped."}
-              </div>
-            </div>
-            <div className="row" style={{ gap: 6 }}>
-              <StatusPill status={resume.status} />
-              <button className="ghost">Resume →</button>
-            </div>
-          </div>
-        </MotionCard>
-      )}
-
-      {/* Cross-vertical stats — each card independent, failures degrade to "—" */}
-      <div className="stats stagger">
-        <MotionCard delay={0.06}>
-          <div className="stat premium">
-            <span className="label">Sessions</span>
-            {sessions == null ? <Skeleton height="24px" /> : <span className="value grad">{list.length}</span>}
-            <span className="small muted">
-              {live ? "1 live now" : `${list.filter((s) => s.status === "completed").length} completed`}
-            </span>
-          </div>
-        </MotionCard>
-        <MotionCard delay={0.09}>
-          <div className="stat">
-            <span className="label">Copilot threads</span>
-            <span className="value">{researchCount ?? "—"}</span>
-            <span className="small muted">{researchCount == null ? "unavailable" : "research conversations"}</span>
-          </div>
-        </MotionCard>
-        <MotionCard delay={0.12}>
-          <div className="stat">
-            <span className="label">Work tasks</span>
-            <span className="value">{workOpen ?? "—"}</span>
-            <span className="small muted">{workOpen == null ? "unavailable" : "open items"}</span>
+          <div className="metric">
+            <span className="metric-value">{stats.filler == null ? "—" : stats.filler.toFixed(1)}</span>
+            <span className="metric-label">Fillers / min</span>
+            <span className="metric-sub">{analyzed.length ? "across analyzed sessions" : "no sessions analyzed yet"}</span>
           </div>
         </MotionCard>
         <MotionCard delay={0.15}>
-          <div className="stat">
-            <span className="label">Speaking trend</span>
-            {trend == null ? (
-              <span className="value">—</span>
-            ) : trendChips ? (
-              <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                {trendChips.map((c) => (
-                  <span key={c.label} className="small mono" style={{ color: "var(--accent)" }}>
-                    {c.value} <span className="muted" style={{ color: "var(--muted)" }}>{c.label}</span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="small muted">no sessions analyzed yet</span>
-            )}
+          <div className="metric">
+            <span className="metric-value">{stats.wpm == null ? "—" : Math.round(stats.wpm)}</span>
+            <span className="metric-label">Words / min</span>
+            <span className="metric-sub">{stats.wpm == null ? "pace appears after review" : "speaking pace"}</span>
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.2}>
+          <div className="metric">
+            <span className="metric-value">{stats.star == null ? "—" : `${Math.round(stats.star * 100)}%`}</span>
+            <span className="metric-label">STAR coverage</span>
+            <span className="metric-sub">{stats.star == null ? "drill in Arena to improve" : "structured answers"}</span>
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.25}>
+          <div className="metric">
+            <span className="metric-value">{researchCount ?? "—"}</span>
+            <span className="metric-label">Copilot threads</span>
+            <span className="metric-sub">{workOpen == null ? "unavailable" : `${workOpen} open work tasks`}</span>
           </div>
         </MotionCard>
       </div>
 
-      {/* Interview Intelligence spotlight — recent sessions */}
-      <div className="card col" style={{ gap: 10 }}>
+      {/* ── Spotlight: recent sessions ───────────────────────────────── */}
+      <div className="card col" style={{ gap: 8 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <span className="kicker">Interview intelligence · recent sessions</span>
           <button className="ghost" style={{ padding: "4px 10px" }} onClick={() => setScreen("sessions")}>View all →</button>
@@ -197,8 +253,8 @@ export default function Home() {
           list.slice(0, 4).map((s) => (
             <div
               key={s.id}
-              className="row hoverable"
-              style={{ justifyContent: "space-between", padding: "8px 10px", borderRadius: "var(--radius-sm)", cursor: "pointer" }}
+              className="row hoverable dash-row"
+              style={{ justifyContent: "space-between" }}
               onClick={() => openSession(s)}
             >
               <div style={{ fontWeight: 550 }}>{s.title ?? "Untitled session"}</div>
@@ -211,28 +267,18 @@ export default function Home() {
         )}
       </div>
 
-      {/* First-run getting started */}
+      {/* ── First-run getting started ────────────────────────────────── */}
       {firstRun && (
-        <MotionCard delay={0.2}>
-          <div className="card col" style={{ gap: 8 }}>
+        <MotionCard delay={0.25}>
+          <div className="card col onboard-card" style={{ gap: 10 }}>
             <span className="kicker">Getting started</span>
             <div className="col" style={{ gap: 6 }}>
-              <span className="small"><b>1.</b> Hit <b>New session</b> — capture starts with consent, transcription warms while you talk.</span>
-              <span className="small"><b>2.</b> Prep your CV and the job description — every answer grounds itself in your real material.</span>
+              <span className="small"><b>1.</b> Hit <b>New live session</b> — capture starts with consent, transcription warms while you talk.</span>
+              <span className="small"><b>2.</b> Add your CV and the job description — every coached answer grounds itself in your real material.</span>
               <span className="small"><b>3.</b> Review afterwards for fillers, pace and STAR coverage — then drill the weak spots in Arena.</span>
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="primary" disabled={creating} onClick={() => void newSession()}>Start your first session</button>
-              <button className="ghost" onClick={() => setScreen("prep")}>Add prep materials</button>
             </div>
           </div>
         </MotionCard>
-      )}
-
-      {lastCompleted && !resume && (
-        <span className="small muted">
-          Last completed: <b>{lastCompleted.title ?? "Untitled session"}</b> — open it from Sessions to review the coaching insights.
-        </span>
       )}
     </div>
   );
