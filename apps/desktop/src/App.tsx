@@ -7,6 +7,7 @@ import { api } from "./lib/api";
 import { Keyframes, ToastStack, cn } from "@app/ui";
 import Onboarding from "./features/Onboarding";
 import Home from "./features/Home";
+import Sessions from "./features/Sessions";
 import LiveSession from "./features/LiveSession";
 import Review from "./features/Review";
 import Settings from "./features/Settings";
@@ -14,22 +15,30 @@ import Research from "./features/Research";
 import Work from "./features/Work";
 import Arena from "./features/Arena";
 import Prep from "./features/Prep";
+import { THEMES, getTheme, setTheme, type ThemeId } from "./lib/theme";
 import { useEffect, useRef, useState } from "react";
 
-const CORE_NAV = [
+/** Platform shell first, vertical groups below. Home is the only top-level
+ *  destination; everything else belongs to a vertical group. */
+const PLATFORM_NAV = [
   { id: "home", label: "Home", icon: navIcon("M3 10.5 12 3l9 7.5 M5 9.5V21h14V9.5") },
-  { id: "live", label: "Live session", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
-  { id: "arena", label: "Arena", icon: navIcon("M6 4v16 M18 4l-6 8 6 8 M4 6h5 M4 12h5 M4 18h5") },
-  { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
 ] as const;
 
-/** Interviewer persona swaps the whole nav context — same engine, opposite
- *  side of the table. Shared screens (live, review) adapt via persona. */
-const INTERVIEWER_NAV = [
-  { id: "prep", label: "Prep", icon: navIcon("M9 3h6v4H9z M9 5H6v16h12V5h-3 M9 11h6 M9 15h6") },
-  { id: "live", label: "Live interview", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
-  { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
-] as const;
+/** Interview vertical children, driven by persona. Shared screens (live,
+ *  review) adapt via persona. Candidate owns Sessions; interviewer owns Prep. */
+const INTERVIEW_NAV: Record<"candidate" | "interviewer", { id: string; label: string; icon: () => ReactNode }[]> = {
+  candidate: [
+    { id: "sessions", label: "Sessions", icon: navIcon("M4 5h16v14H4z M8 9h8 M8 13h5") },
+    { id: "live", label: "Live session", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
+    { id: "arena", label: "Arena", icon: navIcon("M6 4v16 M18 4l-6 8 6 8 M4 6h5 M4 12h5 M4 18h5") },
+    { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
+  ],
+  interviewer: [
+    { id: "prep", label: "Prep", icon: navIcon("M9 3h6v4H9z M9 5H6v16h12V5h-3 M9 11h6 M9 15h6") },
+    { id: "live", label: "Live interview", icon: navIcon("M2 12h3l2.5-7 4 14 3-10 2 3H22") },
+    { id: "review", label: "Review", icon: navIcon("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M21 21l-4.3-4.3") },
+  ],
+};
 
 function navIcon(d: string) {
   const paths = d.split(" M").map((p, i) => (i === 0 ? p : `M${p}`));
@@ -57,7 +66,18 @@ function gearIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34 1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83 2.83l.06.06a1.7 1.7 0 0 0 1.87.34 1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
+    </svg>
+  );
+}
+
+function PaletteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 0-5H12a2 2 0 0 1 0-4h6.5A3.5 3.5 0 0 0 22 8.5C22 5.4 17.5 3 12 3z" />
+      <circle cx="7.5" cy="10.5" r="0.9" />
+      <circle cx="12" cy="7.5" r="0.9" />
+      <circle cx="16.5" cy="10.5" r="0.9" />
     </svg>
   );
 }
@@ -116,10 +136,20 @@ export default function App() {
   const verticals = useVerticals();
   const [ready, setReady] = useState(false);
 
-  const nav = persona === "interviewer" ? INTERVIEWER_NAV : CORE_NAV;
+  const interviewChildren = INTERVIEW_NAV[persona];
   /** Screens owned by the interview vertical — the persona switch is visible
    *  only while one of these is active (candidate/interviewer footer toggle). */
-  const isInterviewScreen = ["home", "live", "arena", "review", "prep"].includes(screen);
+  const isInterviewScreen = ["sessions", "live", "arena", "review", "prep"].includes(screen);
+
+  // Theme quick-cycle in the sidebar foot — no trip to Settings needed.
+  const [theme, setThemeState] = useState<ThemeId>(() => getTheme());
+  function cycleTheme() {
+    const order = THEMES.map((t) => t.id);
+    const idx = order.indexOf(theme);
+    const next = order[(idx + 1) % order.length] ?? "ocean";
+    setTheme(next);
+    setThemeState(next);
+  }
 
   // Sidebar: persisted width + collapsed icon rail.
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -185,11 +215,13 @@ export default function App() {
 
   const activeVertical = verticals.find((v) => v.id === screen);
   const activeLabel =
-    screen === "home" || screen === "live" || screen === "review" || screen === "arena" || screen === "prep"
-      ? verticals.find((v) => v.id === "interview-intelligence")?.displayName ?? "Interview Intelligence"
-      : screen === "settings"
-        ? "Settings"
-        : activeVertical?.displayName ?? APP_NAME;
+    screen === "home"
+      ? "Dashboard"
+      : interviewChildren.some((c) => c.id === screen)
+        ? verticals.find((v) => v.id === "interview-intelligence")?.displayName ?? "Interview Intelligence"
+        : screen === "settings"
+          ? "Settings"
+          : activeVertical?.displayName ?? APP_NAME;
 
   useEffect(() => {
     document.title = `${APP_NAME} — ${activeLabel}`;
@@ -216,23 +248,60 @@ export default function App() {
             {rail ? "»" : "«"}
           </button>
         </div>
-        {nav === INTERVIEWER_NAV && <div className="sidebar-group">Interviewer</div>}
-        {nav.map((item) => (
+        {PLATFORM_NAV.map((item) => (
           <NavItem key={item.id} label={item.label} icon={item.icon} active={screen === item.id} onSelect={() => setScreen(item.id)} />
         ))}
-        {verticals.length > 0 && <div className="sidebar-group">Verticals</div>}
-        {verticals.map((v) => (
+        {/* Interview vertical is built-in — its group renders even before
+            /verticals resolves. The header itself navigates to the persona
+            landing (candidate → Sessions, interviewer → Prep). */}
+        <button
+          className="sidebar-group group-link"
+          title={persona === "interviewer" ? "Open Prep" : "Open Sessions"}
+          onClick={() => setScreen(persona === "interviewer" ? "prep" : "sessions")}
+        >
+          {verticals.find((v) => v.id === "interview-intelligence")?.displayName ?? "Interview Intelligence"}
+        </button>
+        {interviewChildren.map((item) => (
+          <NavItem key={item.id} label={item.label} icon={item.icon} active={screen === item.id} onSelect={() => setScreen(item.id)} />
+        ))}
+        {verticals.some((v) => v.id !== "interview-intelligence") && <div className="sidebar-group">Verticals</div>}
+        {verticals.filter((v) => v.id !== "interview-intelligence").map((v) => (
           <NavItem
             key={v.id}
             label={v.displayName}
             icon={verticalIcon(v.id)}
-            active={screen === v.id || (v.id === "interview-intelligence" && ["home", "live", "review", "prep", "arena"].includes(screen))}
+            active={screen === v.id}
             dot={v.overlay?.mode ?? "none"}
-            onSelect={() => setScreen(v.id === "interview-intelligence" ? (persona === "interviewer" ? "prep" : "home") : v.id)}
+            onSelect={() => setScreen(v.id)}
           />
         ))}
         <div className="foot">
-          <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
+          {rail ? (
+            <>
+              <button
+                className="nav-item"
+                title="Cycle theme"
+                onClick={cycleTheme}
+              >
+                <PaletteIcon />
+              </button>
+              <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
+            </>
+          ) : (
+            <div className="row" style={{ gap: 6, padding: "8px 10px 0", alignItems: "stretch" }}>
+              <button
+                className="ghost"
+                style={{ flex: "none", padding: "7px 9px" }}
+                title={`Theme: ${THEMES.find((t) => t.id === theme)?.name ?? theme} — click to cycle`}
+                onClick={cycleTheme}
+              >
+                <PaletteIcon />
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <NavItem label="Settings" icon={gearIcon} active={screen === "settings"} onSelect={() => setScreen("settings")} />
+              </div>
+            </div>
+          )}
           {/* Persona switch belongs to the interview vertical only — showing it
               under Copilot/Work (or any future vertical) is noise. It appears
               while an interview screen is active, plus one screen of grace
@@ -281,6 +350,7 @@ export default function App() {
           <ScreenErrorBoundary>
             {screen === "onboarding" && <Onboarding />}
             {screen === "home" && <Home />}
+            {screen === "sessions" && <Sessions />}
             {screen === "live" && <LiveSession />}
             {screen === "arena" && <Arena />}
             {screen === "review" && <Review />}

@@ -1,223 +1,238 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import { EmptyState, MotionCard, PageHeader, Skeleton, Sparkline, StatusPill } from "@app/ui";
+import { EmptyState, MotionCard, PageHeader, Skeleton, StatusPill } from "@app/ui";
 
 type SessionRow = { id: string; title: string | null; status: string };
+type TrendEntry = { metrics: { fillerRate: number; wpm: number | null; starShare: number } };
 
-/** Trash icon — stroke style matching the shell nav icons. */
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 6h18" />
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6 M14 11v6" />
-    </svg>
-  );
-}
-
+/** Platform dashboard — the landing surface for the whole product, not any
+ *  single vertical. Answers "where was I, what's live, what changed" at a
+ *  glance, then hands off to the vertical screens. Every cross-vertical
+ *  card degrades independently: a dead vertical never blanks the Home. */
 export default function Home() {
-  const { workspaceId, setSession, setScreen, clearAuth, resetLive, notify } = useStore();
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [title, setTitle] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { workspaceId, persona, setSession, setScreen, resetLive, notify } = useStore();
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const [trend, setTrend] = useState<TrendEntry[] | null>(null);
+  const [researchCount, setResearchCount] = useState<number | null>(null);
+  const [workOpen, setWorkOpen] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  async function refresh() {
-    if (!workspaceId) return;
-    try {
-      const list = await api.listSessions(workspaceId);
-      setSessions(list as never[]);
-      setErr(null);
-    } catch (ex) {
-      setErr(ex instanceof Error ? ex.message : String(ex));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
-    setLoading(true);
-    void refresh();
+    if (!workspaceId) return;
+    // Interview Intelligence: recent sessions + aggregate trend.
+    api.listSessions(workspaceId)
+      .then((list) => setSessions(list as SessionRow[]))
+      .catch(() => setSessions(null));
+    api.verticalPost<{ trend: TrendEntry[] }>("interview-intelligence", "/arena/analytics", { workspaceId })
+      .then((r) => setTrend(r.trend ?? []))
+      .catch(() => setTrend(null));
+    // Sibling verticals — counts only, each failing silently to "—".
+    api.verticalGet<{ chats: unknown[] }>("research", `/chats?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then((r) => setResearchCount(Array.isArray(r.chats) ? r.chats.length : 0))
+      .catch(() => setResearchCount(null));
+    api.verticalGet<{ tasks: Array<{ status?: string }> }>("work", `/tasks?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then((r) => setWorkOpen(Array.isArray(r.tasks) ? r.tasks.filter((t) => t.status !== "done" && t.status !== "completed").length : 0))
+      .catch(() => setWorkOpen(null));
   }, [workspaceId]);
 
-  /** Warm STT models the instant the user acts on a session — the ~300ms of
-   *  screen transition becomes model-load time. Fire-and-forget; failures
-   *  are invisible (the WS connect re-warms anyway). */
+  /** Model load starts during navigation — same trick the session screens use. */
   function warmOnNavigate() {
     void api.sttWarm();
   }
 
-  /** Delete one session: transcripts, insights, artifacts AND prep materials
-   *  cascade server-side; story-bank and answer-cache rows stay (workspace
-   *  memory). Live sessions can't be deleted — end them first. */
-  async function deleteOne(id: string) {
-    if (deleting) return;
-    setDeleting(true);
-    try {
-      await api.deleteSession(id);
-      setConfirmDelete(null);
-      await refresh();
-      notify("success", "Session deleted");
-    } catch (ex) {
-      notify("error", `Delete failed: ${ex instanceof Error ? ex.message : String(ex)}`);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  async function create() {
-    if (!workspaceId) return;
+  async function newSession() {
+    if (!workspaceId || creating) return;
     setCreating(true);
-    warmOnNavigate(); // model load starts during the create round-trip
+    warmOnNavigate();
     try {
-      const s = await api.createSession({ workspaceId, title: title || null, consentStatus: "confirmed" });
-      setTitle("");
-      resetLive(); // a new session starts clean — never inherits the previous one's transcript/insights
-      setSession(s.id, "draft", title.trim() || null);
+      const s = await api.createSession({ workspaceId, title: null, consentStatus: "confirmed" });
+      resetLive();
+      setSession(s.id, "draft", null);
       setScreen("live");
     } catch (ex) {
-      setErr(ex instanceof Error ? ex.message : String(ex));
+      notify("error", ex instanceof Error ? ex.message : String(ex));
     } finally {
       setCreating(false);
     }
   }
 
-  if (!workspaceId) {
-    return (
-      <EmptyState
-        title="No workspace selected"
-        description="Sign in from onboarding to create or open a workspace."
-        action={<button onClick={clearAuth}>Sign out</button>}
-      />
-    );
+  function openSession(s: SessionRow) {
+    warmOnNavigate();
+    resetLive(); // LiveSession hydrates fresh from the API
+    setSession(s.id, s.status, s.title ?? null);
+    setScreen("live");
   }
 
-  const live = sessions.filter((s) => s.status === "live").length;
-  const completed = sessions.filter((s) => s.status === "completed").length;
-  const sparkData = sessions.map((_, i) => sessions.length - i); // cumulative trend
+  if (!workspaceId) {
+    return <EmptyState title="No workspace selected" description="Sign in from onboarding to load your dashboard." />;
+  }
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const list = sessions ?? [];
+  const live = list.find((s) => s.status === "live");
+  const draft = list.find((s) => s.status === "draft");
+  const lastCompleted = list.find((s) => s.status === "completed");
+  const resume = live ?? draft ?? null;
+
+  const trendChips = trend && trend.length > 0 ? [
+    { label: "filler", value: `${(trend.reduce((a, t) => a + (t.metrics.fillerRate ?? 0), 0) / trend.length).toFixed(1)}` },
+    { label: "wpm", value: trend.some((t) => t.metrics.wpm != null) ? `${Math.round(trend.filter((t) => t.metrics.wpm != null).reduce((a, t) => a + (t.metrics.wpm ?? 0), 0) / trend.filter((t) => t.metrics.wpm != null).length)}` : "—" },
+    { label: "star", value: `${Math.round((trend.reduce((a, t) => a + (t.metrics.starShare ?? 0), 0) / trend.length) * 100)}%` },
+  ] : null;
+
+  const firstRun = sessions != null && list.length === 0;
 
   return (
     <div className="col">
       <PageHeader
-        kicker="Interview intelligence"
-        title="Sessions"
-        description="Create a session, capture both sides of the conversation, review what mattered."
-        actions={
-          <>
-            <button className="ghost" onClick={() => void refresh()}>Refresh</button>
-            <button className="primary" disabled={creating} onClick={() => void create()}>{creating ? "Creating…" : "New session"}</button>
-          </>
-        }
+        kicker="Dashboard"
+        title={`${greeting} — ${persona === "interviewer" ? "interviewer mode" : "ready when you are"}`}
+        description="Everything across Velari at a glance. Pick up where you left off, or start something new."
       />
 
-      <div className="stats stagger">
-        <MotionCard delay={0.03}>
-          <div className="stat premium">
-            <span className="label">Total</span>
-            <span className="value grad">{sessions.length}</span>
-            <Sparkline data={sessions.map((_, i) => sessions.length - i)} />
-            <span className="stat-trend">↗ {sessions.length} sessions</span>
+      {/* Quick actions */}
+      <div className="row stagger" style={{ gap: 10, flexWrap: "wrap" }}>
+        <MotionCard delay={0.02}>
+          <button className="primary" disabled={creating} onClick={() => void newSession()}>
+            {creating ? "Creating…" : "＋ New session"}
+          </button>
+        </MotionCard>
+        <MotionCard delay={0.05}>
+          <button className="ghost" onClick={() => setScreen("sessions")}>Sessions</button>
+        </MotionCard>
+        <MotionCard delay={0.08}>
+          <button className="ghost" onClick={() => setScreen("arena")}>Arena drills</button>
+        </MotionCard>
+        {persona === "interviewer" && (
+          <MotionCard delay={0.11}>
+            <button className="ghost" onClick={() => setScreen("prep")}>Prep</button>
+          </MotionCard>
+        )}
+      </div>
+
+      {/* Continue where you left off */}
+      {resume && (
+        <MotionCard delay={0.1}>
+          <div
+            className="card hoverable row"
+            style={{ justifyContent: "space-between", cursor: "pointer", borderColor: "rgba(var(--accent-rgb), 0.35)" }}
+            onClick={() => openSession(resume)}
+          >
+            <div className="col" style={{ gap: 2 }}>
+              <span className="kicker">Continue</span>
+              <div style={{ fontWeight: 600 }}>{resume.title ?? "Untitled session"}</div>
+              <div className="small muted">
+                {resume.status === "live" ? "This session is live right now — jump back in." : "Started but not finished. Pick up where you stopped."}
+              </div>
+            </div>
+            <div className="row" style={{ gap: 6 }}>
+              <StatusPill status={resume.status} />
+              <button className="ghost">Resume →</button>
+            </div>
           </div>
         </MotionCard>
+      )}
+
+      {/* Cross-vertical stats — each card independent, failures degrade to "—" */}
+      <div className="stats stagger">
         <MotionCard delay={0.06}>
-          <div className="stat">
-            <span className="label">Live</span>
-            <span className="value">{live}</span>
-            <span className="small muted">{live > 0 ? "actively running • pulse" : "none active"}</span>
-            {live > 0 && <div className="waveform" style={{ marginTop: 6 }}><span></span><span></span><span></span><span></span><span></span></div>}
+          <div className="stat premium">
+            <span className="label">Sessions</span>
+            {sessions == null ? <Skeleton height="24px" /> : <span className="value grad">{list.length}</span>}
+            <span className="small muted">
+              {live ? "1 live now" : `${list.filter((s) => s.status === "completed").length} completed`}
+            </span>
           </div>
         </MotionCard>
         <MotionCard delay={0.09}>
           <div className="stat">
-            <span className="label">Completed</span>
-            <span className="value">{completed}</span>
-            <span className="small muted">{sessions.length ? `${Math.round((completed / sessions.length) * 100)}% completion` : "—"}</span>
-            <div className="timing-bar" style={{ marginTop: 6 }}><div style={{ width: `${sessions.length ? (completed / sessions.length) * 100 : 0}%` }} /></div>
+            <span className="label">Copilot threads</span>
+            <span className="value">{researchCount ?? "—"}</span>
+            <span className="small muted">{researchCount == null ? "unavailable" : "research conversations"}</span>
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.12}>
+          <div className="stat">
+            <span className="label">Work tasks</span>
+            <span className="value">{workOpen ?? "—"}</span>
+            <span className="small muted">{workOpen == null ? "unavailable" : "open items"}</span>
+          </div>
+        </MotionCard>
+        <MotionCard delay={0.15}>
+          <div className="stat">
+            <span className="label">Speaking trend</span>
+            {trend == null ? (
+              <span className="value">—</span>
+            ) : trendChips ? (
+              <div className="row" style={{ gap: 8, marginTop: 4 }}>
+                {trendChips.map((c) => (
+                  <span key={c.label} className="small mono" style={{ color: "var(--accent)" }}>
+                    {c.value} <span className="muted" style={{ color: "var(--muted)" }}>{c.label}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="small muted">no sessions analyzed yet</span>
+            )}
           </div>
         </MotionCard>
       </div>
 
-      <div className="card row">
-        <input
-          placeholder="Session title (optional)"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void create()}
-          style={{ flex: 1 }}
-        />
-        <button className="primary" disabled={creating} onClick={() => void create()}>{creating ? "Creating…" : "Start"}</button>
+      {/* Interview Intelligence spotlight — recent sessions */}
+      <div className="card col" style={{ gap: 10 }}>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <span className="kicker">Interview intelligence · recent sessions</span>
+          <button className="ghost" style={{ padding: "4px 10px" }} onClick={() => setScreen("sessions")}>View all →</button>
+        </div>
+        {sessions == null ? (
+          <div className="col" style={{ gap: 10 }}>
+            <Skeleton height="52px" />
+            <Skeleton height="52px" />
+          </div>
+        ) : list.length === 0 ? (
+          <span className="small muted">No sessions yet — your first capture starts the trend lines above.</span>
+        ) : (
+          list.slice(0, 4).map((s) => (
+            <div
+              key={s.id}
+              className="row hoverable"
+              style={{ justifyContent: "space-between", padding: "8px 10px", borderRadius: "var(--radius-sm)", cursor: "pointer" }}
+              onClick={() => openSession(s)}
+            >
+              <div style={{ fontWeight: 550 }}>{s.title ?? "Untitled session"}</div>
+              <div className="row" style={{ gap: 8 }}>
+                <StatusPill status={s.status} />
+                <span className="small muted mono">{s.id.slice(0, 8)}</span>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
-      {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}
+      {/* First-run getting started */}
+      {firstRun && (
+        <MotionCard delay={0.2}>
+          <div className="card col" style={{ gap: 8 }}>
+            <span className="kicker">Getting started</span>
+            <div className="col" style={{ gap: 6 }}>
+              <span className="small"><b>1.</b> Hit <b>New session</b> — capture starts with consent, transcription warms while you talk.</span>
+              <span className="small"><b>2.</b> Prep your CV and the job description — every answer grounds itself in your real material.</span>
+              <span className="small"><b>3.</b> Review afterwards for fillers, pace and STAR coverage — then drill the weak spots in Arena.</span>
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="primary" disabled={creating} onClick={() => void newSession()}>Start your first session</button>
+              <button className="ghost" onClick={() => setScreen("prep")}>Add prep materials</button>
+            </div>
+          </div>
+        </MotionCard>
+      )}
 
-      {loading ? (
-        <div className="col" style={{ gap: 10 }}>
-          <Skeleton height="60px" />
-          <Skeleton height="60px" />
-          <Skeleton height="60px" />
-        </div>
-      ) : sessions.length === 0 ? (
-        <EmptyState
-          title="No sessions yet"
-          description="Name your first session above and press Start — capture, transcription, and coaching are one click away."
-        />
-      ) : (
-        <div className="grid stagger" style={{ gap: 10 }}>
-          {sessions.map((s) => {
-            const isLive = s.status === "live";
-            const confirming = confirmDelete === s.id;
-            return (
-              <div
-                key={s.id}
-                className="card hoverable row"
-                style={{ justifyContent: "space-between", borderColor: confirming ? "var(--danger)" : undefined }}
-                onClick={() => {
-                  warmOnNavigate();
-                  resetLive(); // clear the previous view; LiveSession hydrates from the API
-                  setSession(s.id, s.status, s.title ?? null);
-                  setScreen("live");
-                }}
-              >
-                <div className="col" style={{ gap: 2 }}>
-                  <div style={{ fontWeight: 600 }}>{s.title ?? "Untitled session"}</div>
-                  <div className="small muted mono">{s.id.slice(0, 8)}</div>
-                </div>
-                <div className="row" style={{ gap: 6 }}>
-                  <StatusPill status={s.status} />
-                  <button className="ghost">Open →</button>
-                  {confirming ? (
-                    <>
-                      <button
-                        className="ghost"
-                        style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
-                        disabled={deleting}
-                        onClick={(e) => { e.stopPropagation(); void deleteOne(s.id); }}
-                      >
-                        {deleting ? "…" : "Delete?"}
-                      </button>
-                      <button className="ghost" onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}>✕</button>
-                    </>
-                  ) : (
-                    <button
-                      className="ghost"
-                      style={{ color: "var(--danger)", opacity: 0.75, padding: "6px 8px" }}
-                      title={isLive ? "End the live session before deleting it" : "Delete session"}
-                      disabled={isLive}
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(s.id); }}
-                    >
-                      <TrashIcon />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      {lastCompleted && !resume && (
+        <span className="small muted">
+          Last completed: <b>{lastCompleted.title ?? "Untitled session"}</b> — open it from Sessions to review the coaching insights.
+        </span>
       )}
     </div>
   );

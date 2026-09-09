@@ -267,6 +267,13 @@ input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
   font-size: 10px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--muted); padding: 12px 10px 4px; opacity: 0.75;
 }
+/* Clickable group header (e.g. Interview Intelligence navigates to the
+   persona landing) — same look, plus an interactive affordance. */
+button.sidebar-group.group-link {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  cursor: pointer; transition: color var(--duration-fast) ease, opacity var(--duration-fast) ease;
+}
+button.sidebar-group.group-link:hover { color: var(--text); opacity: 1; }
 .nav-dot {
   width: 6px; height: 6px; border-radius: 50%; flex: none; margin-left: auto;
   box-shadow: 0 0 6px color-mix(in srgb, currentColor 60%, transparent);

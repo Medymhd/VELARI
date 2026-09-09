@@ -115,7 +115,9 @@ export const useStore = create<State>((set, get) => ({
     // it ends. Everything else swaps context immediately.
     if (get().sessionStatus === "live") return false;
     localStorage.setItem(PERSONA_KEY, persona);
-    set({ persona, screen: persona === "interviewer" ? "prep" : "home" });
+    // Land on the persona's interview home: candidate → session list,
+    // interviewer → question sheet. Platform Home stays one click away.
+    set({ persona, screen: persona === "interviewer" ? "prep" : "sessions" });
     return true;
   },
   setAuth: (token, userId, workspaceId) => {

@@ -144,7 +144,7 @@ ${(data.insights ?? []).map((i) => `<div class="insight"><span class="tag">${esc
   }, [data, q]);
 
   if (!sessionId) {
-    return <EmptyState title="No session selected" description="Open a completed session from Home to review its transcript and coaching insights." />;
+    return <EmptyState title="No session selected" description="Open a completed session from Sessions to review its transcript and coaching insights." />;
   }
 
   return (

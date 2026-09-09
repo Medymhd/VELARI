@@ -196,7 +196,7 @@ export default function LiveSession() {
 
   // Hydration: opening a session loads its persisted transcript + insights
   // from the API, so reopening (even a completed one) continues in place.
-  // resetLive() from Home guarantees we never append to another session's data.
+  // resetLive() from Sessions guarantees we never append to another session's data.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setHydrated(false);
@@ -834,7 +834,7 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }
 
-  if (!sessionId) return <div className="card muted">Select or create a session from Home.</div>;
+  if (!sessionId) return <div className="card muted">Select or create a session from Sessions.</div>;
 
   return (
     <div className="grid" style={{ gridTemplateColumns: "1.2fr 0.8fr", alignItems: "start" }}>

@@ -24,7 +24,10 @@ Brand is configured in one place: `packages/brand/src/index.ts`. Change the valu
 ## Live session intelligence (what makes it real-time)
 
 - **Dual-channel capture** — native mic (CPAL) and system loopback (dual-endpoint WASAPI covering both media and communications endpoints) are captured, gated, resampled and attributed to the right speaker automatically
+- **Warm before you speak** — STT engines load at session open (and Moonshine weights once per API process, kicked at boot), so the first question is never buffered behind a model download; keep-warm pings hold the provider connection open between questions
 - **Dictation-style partials** — each utterance is one evolving line that commits in place; no transcript clutter
+- **Answer-first pipeline** — a question-shaped final drafts the speakable answer immediately (one LLM round-trip), then the coach framework follows; one LLM call in flight at any moment keeps free tiers out of 429 storms
+- **Two-part drafted answers** — direct response to the question as asked (definitional questions stay persona-free) + an optional crimson-tinted grounding paragraph with a CV-grounded instance; the JD is the objective every answer optimizes for, the CV the constraint it may never contradict
 - **Single-flight coaching with interruption preemption** — a new utterance aborts any in-flight LLM call; a 900 ms confirmation window makes sure the speaker has truly finished before the coach crafts an answer; a first-token "crafting answer…" indicator replaces dead air while the LLM generates
 - **Tolerant answer cache** — a question asked (nearly) before is answered in ~0 ms without an LLM call: normalized exact match → stem-lite token-overlap fuzzy match (≥0.80) → vector cosine over hashed embeddings (≥0.92). Only judge-accepted answers are cached; changed prep materials auto-invalidate (`prepHash`); hits are badged "cached" with the matched question shown on fuzzy hits
 - **Prepared-answer recall** — your uploaded Q&A bank answers drilled questions in ~0 ms, ahead of both the cache and the LLM
@@ -35,8 +38,9 @@ Brand is configured in one place: `packages/brand/src/index.ts`. Change the valu
 - **Session lifecycle done right** — new sessions start clean, any session (including completed ones) reopens with its full transcript and insights restored, and a "Reopen session" button continues capture
 - **Speech analytics** — deterministic per-session metrics (filler rate per 100 words, WPM over timed segments, STAR-structured share, words/answer) with good/ok/warn verdicts; persisted as insights so they appear in Review and the PDF export, rendered as metric chips with cross-session sparklines in Review and a progress-trend strip in Arena
 - **Post-interview follow-up** — thank-you email + honest debrief grounded in the measured speech metrics
-- **Stealth overlay** — card stack with the newest response pinned on top, driven by Rust-emitter event forwarding that works from every screen, with `Ctrl+Shift+O` toggle, `Ctrl+Shift+P` position cycling, `Ctrl+Shift+B` click-through passthrough, `Ctrl+Shift+H` app show/hide
-- **Post-session review** — persisted transcript and insights with search and print-to-PDF export
+- **Stealth overlay** — answer-first card stack (latest drafted answer pinned on top in green, prepared hits beneath, frameworks at the bottom) with a live interviewer-question strip, driven by Rust-emitter event forwarding that works from every screen, with `Ctrl+Shift+O` toggle, `Ctrl+Shift+P` position cycling, `Ctrl+Shift+B` click-through passthrough, `Ctrl+Shift+H` app show/hide
+- **Session auto-naming** — the model titles new sessions from the CV/JD (or the opening transcript) once material exists; user-typed names are never overwritten, rename anytime
+- **Post-session review** — persisted transcript and insights with search and print-to-PDF export; per-session delete (transcripts, insights, artifacts and prep materials cascade)
 
 ### Interviewer mode (recruiters / HR)
 
@@ -51,8 +55,8 @@ Flip the `Candidate | Interviewer` switch in the sidebar footer (blocked mid-liv
 Velari is model-agnostic. Keys stay in your workspace vault (AES-256-GCM sealed); managed keys are optional.
 
 - **Bring your own OpenAI-compatible endpoint** — base URL + key is all it takes; the platform tests your models against the real coach prompt
-- **Built-in test-and-ranker** — `pnpm bench:models` discovers every live model on your configured gateways, benchmarks streaming TTFT, total latency and strict-JSON reliability, and writes the winners into the router (`COACH_MODEL_*`). Deprecated, renamed or rate-limited models are replaced automatically on the next run. Schedule it at launch (default), hourly, every 4 hours, daily, or off — in Settings → Model benchmarking. At request time, a 429 with `Retry-After` excludes that candidate for exactly the provider's window — no blind re-picks against a rate-limited tier.
-- **Measured reference points** (see `benchmarks/results/`): Groq's `qwen/qwen3.8-27b` delivers flat ~1 s coach turnaround across a full 12-question simulated interview (92% JSON validity, no degradation curve), with `openai/gpt-oss-20b` and `groq/compound-mini` as measured failovers. OpenRouter's free pool is supported as a $0 fallback rung.
+- **Built-in test-and-ranker** — `pnpm bench:models` discovers every live model on your configured gateways (Groq, OpenRouter, OpenAI-compat, Gemini), benchmarks streaming TTFT, total latency and strict-JSON reliability, and writes the winners into the router (`COACH_MODEL_*`). Deprecated, renamed or rate-limited models are replaced automatically on the next run. Schedule it at launch (default), hourly, every 4 hours, daily, or off — or run **Settings → Probe now** for an on-demand ranked table and apply a winner manually (same-gateway runners-up become fallbacks; effective on the next session connect, no restart). At request time, a 429 with `Retry-After` excludes that candidate for exactly the provider's window — no blind re-picks against a rate-limited tier.
+- **Measured reference points** (see `benchmarks/results/`): Groq's `qwen/qwen3.8-27b` is the fastest strict-JSON free model measured (TTFT ~200-400 ms, ~0.5-1 s total), with `openai/gpt-oss-20b` and `groq/compound-mini` as measured failovers and Groq's tiny `allam-2-7b` (~277 ms TTFT) as a speed-over-depth alternative. Gemini's free flash models were measured unusable for realtime JSON (thinking-token truncation, 503 capacity); the gateway stays in the probe for future re-checks. OpenRouter's free pool is supported as a $0 fallback rung.
 
 ## Getting started
 
