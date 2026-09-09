@@ -6,12 +6,15 @@ import { EmptyState, MotionCard, PageHeader, Skeleton, Sparkline, StatusPill } f
 type SessionRow = { id: string; title: string | null; status: string };
 
 export default function Home() {
-  const { workspaceId, setSession, setScreen, clearAuth, resetLive } = useStore();
+  const { workspaceId, setSession, setScreen, clearAuth, resetLive, notify } = useStore();
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [title, setTitle] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function refresh() {
     if (!workspaceId) return;
@@ -30,6 +33,42 @@ export default function Home() {
     setLoading(true);
     void refresh();
   }, [workspaceId]);
+
+  function toggleSelect(id: string) {
+    setConfirmBatch(false);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Batch delete: transcripts, insights, artifacts AND prep materials cascade
+   *  server-side; story-bank and answer-cache rows stay (workspace memory). */
+  async function deleteSelected() {
+    if (selected.size === 0 || deleting) return;
+    setDeleting(true);
+    try {
+      const ids = [...selected].filter((id) => sessions.find((s) => s.id === id)?.status !== "live");
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          await api.deleteSession(id);
+        } catch {
+          failed += 1;
+        }
+      }
+      setSelected(new Set());
+      setConfirmBatch(false);
+      await refresh();
+      notify(failed === 0 ? "success" : "error", failed === 0 ? `Deleted ${ids.length} session${ids.length === 1 ? "" : "s"}` : `Deleted ${ids.length - failed}, ${failed} failed`);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const selectableCount = sessions.filter((s) => s.status !== "live").length;
 
   async function create() {
     if (!workspaceId) return;
@@ -115,6 +154,37 @@ export default function Home() {
 
       {err && <span className="small" style={{ color: "var(--danger)" }}>{err}</span>}
 
+      {selected.size > 0 && (
+        <div className="card row" style={{ justifyContent: "space-between", borderColor: "var(--danger)" }}>
+          <span className="small">
+            {selected.size} selected
+            {sessions.some((s) => selected.has(s.id) && s.status === "live") && (
+              <span className="muted"> · live sessions are excluded</span>
+            )}
+          </span>
+          <span className="row" style={{ gap: 8 }}>
+            <button className="ghost" onClick={() => { setSelected(new Set()); setConfirmBatch(false); }}>Clear</button>
+            {confirmBatch ? (
+              <>
+                <button
+                  className="ghost"
+                  style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
+                  disabled={deleting}
+                  onClick={() => void deleteSelected()}
+                >
+                  {deleting ? "Deleting…" : "Delete? This cannot be undone"}
+                </button>
+                <button className="ghost" onClick={() => setConfirmBatch(false)}>Keep</button>
+              </>
+            ) : (
+              <button className="ghost" style={{ color: "var(--danger)" }} onClick={() => setConfirmBatch(true)}>
+                Delete 🗑
+              </button>
+            )}
+          </span>
+        </div>
+      )}
+
       {loading ? (
         <div className="col" style={{ gap: 10 }}>
           <Skeleton height="60px" />
@@ -128,27 +198,41 @@ export default function Home() {
         />
       ) : (
         <div className="grid stagger" style={{ gap: 10 }}>
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              className="card hoverable row"
-              style={{ justifyContent: "space-between" }}
-              onClick={() => {
-                resetLive(); // clear the previous view; LiveSession hydrates from the API
-                setSession(s.id, s.status);
-                setScreen("live");
-              }}
-            >
-              <div className="col" style={{ gap: 2 }}>
-                <div style={{ fontWeight: 600 }}>{s.title ?? "Untitled session"}</div>
-                <div className="small muted mono">{s.id.slice(0, 8)}</div>
+          {sessions.map((s) => {
+            const isLive = s.status === "live";
+            return (
+              <div
+                key={s.id}
+                className="card hoverable row"
+                style={{ justifyContent: "space-between", borderColor: selected.has(s.id) ? "var(--danger)" : undefined }}
+                onClick={() => {
+                  resetLive(); // clear the previous view; LiveSession hydrates from the API
+                  setSession(s.id, s.status);
+                  setScreen("live");
+                }}
+              >
+                <div className="row" style={{ gap: 10, flex: 1, minWidth: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(s.id)}
+                    disabled={isLive}
+                    title={isLive ? "End the live session before deleting it" : "Select for batch delete"}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleSelect(s.id)}
+                    style={{ flex: "none" }}
+                  />
+                  <div className="col" style={{ gap: 2, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600 }}>{s.title ?? "Untitled session"}</div>
+                    <div className="small muted mono">{s.id.slice(0, 8)}</div>
+                  </div>
+                </div>
+                <div className="row">
+                  <StatusPill status={s.status} />
+                  <button className="ghost">Open →</button>
+                </div>
               </div>
-              <div className="row">
-                <StatusPill status={s.status} />
-                <button className="ghost">Open →</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

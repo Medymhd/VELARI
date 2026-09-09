@@ -140,6 +140,13 @@ export const api = {
   updateModelProfile: (id: string, body: Record<string, unknown>) =>
     req(`/model-profiles/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   testModelProfile: (id: string) => req<{ ok: boolean; latencyMs?: number }>(`/model-profiles/${id}/test`, { method: "POST" }),
+  /** Manual probe: benchmarks every gateway, returns ranked rows. Takes
+   *  1–4 minutes; writes nothing until you Apply a row. */
+  probeModels: (workspaceId: string) =>
+    req<{ ranAt: string; results: { gateway: string; model: string; ttftMs: number; totalMs: number; jsonOk: boolean; chars: number; error: string | null }[] }>(
+      "/model-profiles/probe",
+      { method: "POST", body: JSON.stringify({ workspaceId }) },
+    ),
   policy: (workspaceId: string) => req<Record<string, unknown>>(`/workspaces/${workspaceId}/policy`),
   updatePolicy: (workspaceId: string, policy: Record<string, unknown>) =>
     req(`/workspaces/${workspaceId}/policy`, { method: "PATCH", body: JSON.stringify(policy) }),

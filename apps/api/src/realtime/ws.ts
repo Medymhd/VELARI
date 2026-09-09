@@ -76,6 +76,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let warmTimer: ReturnType<typeof setInterval> | null = null;
+    /** Last real provider call (coach/draft/summary) — keep-warm pings back
+     *  off while live traffic is flowing. */
+    let lastCoachActivityAt = 0;
     let workspaceCfg: Awaited<ReturnType<typeof loadWorkspaceAiConfig>> | null = null;
     /** Mode persona (rival ModesManager parity) — client-switchable mid-session. */
     let sessionMode = "general";
@@ -274,20 +277,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         maxTokens: 1,
         maxLatencyMs: 5_000,
       };
-      void executeRouted(
-        { db, breakers },
-        workspaceCfg,
-        session!.workspaceId,
-        session!.id,
-        warmRequest as never,
-      ).catch(() => {});
-
-      // Keep-warm: pooled sockets go stale after a few seconds of idle
-      // (undici keep-alive + provider-side timeouts), so the connect-time
-      // warmup alone is dead by the time the first question lands. Re-warm
-      // every 45s for the life of the socket — 1-token pings are free-tier
-      // noise, and a warm pool means the FIRST answer pays zero handshake.
-      warmTimer = setInterval(() => {
+      const pingWarm = () => {
+        // Idle discipline: real coach traffic already warmed the pool within
+        // the last 30s — skip the ping so keep-warm never competes with live
+        // answers for free-tier RPM.
+        if (Date.now() - lastCoachActivityAt < 30_000) return;
         void executeRouted(
           { db, breakers },
           workspaceCfg,
@@ -295,7 +289,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           session!.id,
           warmRequest as never,
         ).catch(() => {});
-      }, 45_000);
+      };
+      pingWarm();
+
+      // Keep-warm: pooled sockets go stale after a few seconds of idle
+      // (undici keep-alive + provider-side timeouts), so the connect-time
+      // warmup alone is dead by the time the first question lands. Re-warm
+      // every 60s for the life of the socket (skipped when live traffic is
+      // already flowing) so the FIRST answer pays zero handshake.
+      warmTimer = setInterval(pingWarm, 60_000);
     }
 
     /** Per-utterance segment ids: partials and their final share one id so the
@@ -481,6 +483,20 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    /** Head-budget trim: keep whole paragraphs up to ~budget chars so the
+     *  draft call carries lighter input without ever cutting mid-paragraph.
+     *  CV leads the joined prep string, so it always survives the cut. */
+    function headParagraphs(text: string | undefined, budget: number): string | undefined {
+      if (!text || text.length <= budget) return text;
+      const paras = text.split("\n\n");
+      let out = "";
+      for (const p of paras) {
+        if ((out + p).length > budget && out) break;
+        out += (out ? "\n\n" : "") + p;
+      }
+      return out || text.slice(0, budget);
+    }
+
     function normalizeTrigger(t: string): string {
       return t.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
     }
@@ -520,6 +536,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (!workspaceCfg) return;
       const chunk = assembler.finals.slice(-8).map((s: { text: string }) => s.text).join("\n");
       if (!chunk) return;
+      lastCoachActivityAt = Date.now();
       try {
         const outcome = await executeRouted(
           { db, breakers },
@@ -641,6 +658,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       coachAbort = abort;
       const epoch = ++coachEpoch;
       coachBusy = true;
+      lastCoachActivityAt = Date.now();
       const startedAt = Date.now();
       const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
       // Style adaptation: learn the user's voice from their own transcript
@@ -1000,6 +1018,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       const key = question.toLowerCase().replace(/[^a-z0-9 ]/g, "").slice(0, 120);
       if (key === lastAnsweredQuestion) return;
       lastAnsweredQuestion = key;
+      lastCoachActivityAt = Date.now();
       try {
         const outcome = await executeRouted(
           { db, breakers },
@@ -1018,7 +1037,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               length: sessionLength,
               // The verbatim answer is what the interviewer hears — it must
               // speak AS the candidate their CV describes (CV > JD > notes).
-              prepContext,
+              // Trimmed to the head budget: CV leads the joined string so it
+              // always survives; the framework call keeps the full context.
+              prepContext: headParagraphs(prepContext, 6000),
               personaContext,
             }),
             // Two-part output: answer + optional grounding (extra CV example
