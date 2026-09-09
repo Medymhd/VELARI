@@ -213,6 +213,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
      *     stall, force-finalize as before. */
     const staleTimer = setInterval(() => {
       const now = Date.now();
+      // Coach watchdog: a hung await inside runCoach (DB wedge, provider
+      // freeze past the fetch deadline) must never wedge the pipeline
+      // forever — coachBusy stuck true silently kills the coach AND the
+      // cache lookups that live inside it. Force-release after 45s; the
+      // next final re-arms everything naturally.
+      if (coachBusy && coachBusySince > 0 && now - coachBusySince > 45_000) {
+        log.warn("coach stuck >45s — force-releasing pipeline lock", { sessionId: session!.id, stuckMs: now - coachBusySince });
+        coachBusy = false;
+        coachBusySince = 0;
+        draftInFlight = false;
+      }
       for (const [channel, rec] of channelAudio) {
         if (rec.lastPartialAt <= rec.lastFinalAt) continue;
         const sinceChunk = now - rec.lastChunkAtMs;
@@ -372,7 +383,18 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       utteranceTurn[ch] = (utteranceTurn[ch] ?? 0) + 1;
     };
 
-    async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer", segmentId?: string): Promise<void> {
+    async function handleFinal(
+      text: string,
+      confidence: number,
+      startedAtMs: number,
+      endedAtMs: number,
+      source: string,
+      speaker?: "user" | "interviewer",
+      segmentId?: string,
+      /** Pre-resolved framework (cache hit) — emitted as-is instead of running
+       *  the LLM coach. */
+      cachedFramework?: Record<string, unknown>,
+    ): Promise<void> {
       // Echo dedup (rival `ECHO_WINDOW` parity): the mic hears the speaker's
       // output acoustically — if a user final near-identically repeats the
       // last interviewer final within 8s, it's echo, drop it.
@@ -509,6 +531,45 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (finalsSinceSummary >= 8 && !coachBusy) {
         finalsSinceSummary = 0;
         void summarizeChunk();
+      }
+
+      // Pre-resolved framework (cache fast path from coach.ask): emit as a
+      // suggested_answer with cached chips and return — no LLM, and the
+      // judge never gets a chance to swallow a manual ask as a duplicate.
+      if (cachedFramework) {
+        const insightId = randomUUID();
+        const contentJson: Record<string, unknown> = { ...cachedFramework, stt_confidence: confidence };
+        try {
+          await db.sessionInsight.create({
+            data: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "suggested_answer",
+              sourceSegmentIds: [finalSegmentId],
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+            },
+          });
+        } catch (e) {
+          log.warn("failed to persist cached insight", { error: String(e) });
+        }
+        emit({
+          type: "coach.suggestion",
+          eventId: randomUUID(),
+          sequenceNo: serverSeq++,
+          occurredAt: new Date().toISOString(),
+          sessionId: session!.id,
+          insight: {
+            id: insightId,
+            sessionId: session!.id,
+            type: "suggested_answer",
+            sourceSegmentIds: [finalSegmentId],
+            contentJson: contentJson as any,
+            modelTraceId: traceId,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        return;
       }
 
       // Rival semantic (Cluely/LockedIn parity): the coach responds to the
@@ -674,6 +735,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let coachAbort: AbortController | null = null;
     let coachEpoch = 0;
     let coachBusy = false;
+    /** When the current runCoach started — drives the stuck watchdog. */
+    let coachBusySince = 0;
 
     /** Confirmation window: coaching fires only after the speaker has held
      *  still for this long. Every new final from the same conversation resets
@@ -683,6 +746,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     /** Junk-trigger gate state: the last normalized trigger text. */
     let lastTriggerNorm = "";
+
+    /** Manual-ask duplicate-bypass — set by coach.ask around its runCoach
+     *  invocation so the judge never swallows a typed question. */
+    let bypassDuplicateFilter = false;
 
     /** Timestamp of the last heuristic verbatim draft. The coach's own draft
      *  trigger defers to it — one draft per question, whichever path fires
@@ -719,6 +786,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       coachAbort = abort;
       const epoch = ++coachEpoch;
       coachBusy = true;
+      coachBusySince = Date.now();
       lastCoachActivityAt = Date.now();
       const startedAt = Date.now();
       const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
@@ -885,8 +953,14 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           if (sttConfidence !== undefined) contentJson.stt_confidence = sttConfidence;
 
           // Auto-answer judge: filter weak/repetitive output before UI + persistence.
-          const verdict = judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
-          if (!verdict.accept) {
+          // Manual asks (bypass) skip the duplicate gate — the user explicitly
+          // typed this question; silence is the worst possible outcome.
+          const bypassJudge = bypassDuplicateFilter;
+          bypassDuplicateFilter = false;
+          const verdict = bypassJudge
+            ? { accept: true, reason: "manual_bypass" as string | undefined }
+            : judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
+          if (!verdict.accept && !(verdict.reason === "duplicate_question" && bypassJudge)) {
             // Duplicates are correct suppression (same question already answered);
             // everything else still shows the offline scaffold so the panel is
             // never silently empty.
@@ -1007,6 +1081,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           });
         } finally {
           coachBusy = false;
+          coachBusySince = 0;
           if (coachAbort === abort) coachAbort = null;
         }
     }
@@ -1288,17 +1363,44 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
       if (frame.type === "coach.ask") {
         // Written ask from the stealth overlay: a typed/pasted question or a
-        // direction for the coach. Persists as a manual interviewer-perspective
-        // segment (so the transcript shows it and the cache keys stay honest),
-        // then rides the SAME pipeline as a spoken question — prepared-QA bank,
-        // answer cache (~0ms on repeats), answer-first draft, framework coach.
-        // handleFinal exempts source "manual" from the sawInterviewer flip —
-        // a typed ask is not live interviewer audio, and flipping it would
-        // silence mic-driven coaching in speakerphone/in-person sessions
-        // after the first typed question.
+        // direction for the coach. handleFinal exempts source "manual" from
+        // the sawInterviewer flip — a typed ask is not live interviewer
+        // audio, and flipping it would silence mic-driven coaching in
+        // speakerphone/in-person sessions after the first typed question.
         const text = frame.text.trim();
-        if (!text) return;
+        if (!text || !workspaceCfg) return;
         log.info("coach.ask received", { sessionId: session!.id, chars: text.length });
+
+        // CACHE FAST PATH — check before handleFinal so a repeated question
+        // is answered instantly and never risked to the duplicate filter.
+        // (The verbatim path also checks, but its duplicate_question swallow
+        // would silently drop a manual ask — unacceptable for typed input.)
+        const askPrepHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+        if (answerCache.size() > 0 && text.length > 12) {
+          try {
+            const hit = await answerCache.lookup(text, { mode: sessionMode, length: sessionLength, prepHash: askPrepHash });
+            if (hit) {
+              log.info("coach.ask cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
+              await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
+              await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer", undefined, {
+                cached: true,
+                cache_tier: hit.key,
+                cache_score: hit.score,
+                cached_question: hit.matchedQuestion,
+                detected_question: text.slice(0, 300),
+                ...hit.frameworkJson,
+              });
+              return;
+            }
+          } catch (e) {
+            log.warn("coach.ask cache lookup failed (continuing normal path)", { error: String(e) });
+          }
+        }
+
+        // No cache hit — normal pipeline (persist segment, LLM coach).
+        // The judge's duplicate_question filter must not swallow a manual
+        // ask: arm the bypass so the next runCoach keeps the result.
+        bypassDuplicateFilter = true;
         await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer");
         return;
       }

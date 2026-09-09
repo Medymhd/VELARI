@@ -376,9 +376,10 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [connected]);
 
-  // Written asks from the stealth overlay ("Ask" input): a typed/pasted
-  // question/direction (coach pipeline) or a Solve prompt (direct LLM —
-  // evaluate, analyze, draft, answered as-is).
+  // Written asks from the stealth overlay ("Ask"/"Solve" input). The overlay
+  // now routes through the RUST emitter (overlay_emit command) — JS-to-JS
+  // cross-webview emit silently drops messages in the field, which is why
+  // asks could get stuck on the overlay with the coach never reacting.
   useEffect(() => {
     if (!nativeAvailable) return;
     let un: UnlistenFn | null = null;

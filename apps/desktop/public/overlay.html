@@ -419,8 +419,10 @@
         if (!text) return;
         try {
           // overlay://user_ask → main window listener (LiveSession) → WS
-          // coach.ask (full coach pipeline) or coach.solve (direct LLM).
-          event.emit("overlay://user_ask", { text, mode: askMode });
+          // coach.ask / coach.solve. MUST go through the Rust emitter —
+          // JS-to-JS cross-webview emit silently drops messages in the field
+          // (the reason asks got stuck on the overlay).
+          invoke("overlay_emit", { event: "overlay://user_ask", payload: { text, mode: askMode } });
           if (input) input.value = "";
           if (status) {
             status.textContent = askMode === "solve"
