@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { useStore } from "../state/store";
+import { useStore, isDefaultSessionTitle } from "../state/store";
 import { stealthSetCapture, stealthSetMasquerade, stealthSetTaskbar, type MasqueradeProfile, type StealthState } from "../lib/tauri";
 import { isTauri } from "../lib/tauri";
 import { invoke } from "@tauri-apps/api/core";
@@ -185,7 +185,7 @@ function useRealtime(sessionId: string | null) {
 }
 
 export default function LiveSession() {
-  const { sessionId, sessionStatus, transcript, insights, connected, workspaceId, pushTranscript, pushInsight, setSession, stealth, setStealth, consentConfirmed, setConsent, notify, coachWorking, persona } = useStore();
+  const { sessionId, sessionStatus, sessionTitle, transcript, insights, connected, workspaceId, pushTranscript, pushInsight, setSession, stealth, setStealth, consentConfirmed, setConsent, notify, coachWorking, persona } = useStore();
   const [busy, setBusy] = useState(false);
   const [stealthBusy, setStealthBusy] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
@@ -221,6 +221,30 @@ export default function LiveSession() {
     })();
     return () => { cancelled = true; };
   }, [sessionId, pushTranscript, pushInsight]);
+
+  // Model auto-naming: once a few finals exist and the session still carries
+  // a placeholder title, the model names it from CV/JD + opening transcript
+  // (user-typed names are never touched). Once per session, silent on failure.
+  const titledRef = useRef<string | null>(null);
+  const finalCount = transcript.filter((t) => t.isFinal).length;
+  useEffect(() => {
+    if (!sessionId || !workspaceId) return;
+    if (titledRef.current === sessionId) return;
+    if (finalCount < 3) return;
+    if (!isDefaultSessionTitle(sessionTitle)) { titledRef.current = sessionId; return; }
+    titledRef.current = sessionId;
+    void (async () => {
+      try {
+        const res = await api.verticalPost<{ title: string }>(
+          "interview-intelligence", "/session/suggest-title", { workspaceId, sessionId },
+        );
+        if (!res.title) return;
+        await api.patchSession(sessionId, { title: res.title });
+        setSession(sessionId, undefined, res.title);
+        notify("success", `Named "${res.title}" — rename anytime`);
+      } catch { /* best-effort */ }
+    })();
+  }, [sessionId, workspaceId, finalCount, sessionTitle, setSession, notify]);
 
   // Browser-companion capture (rival Ctrl+Y parity): poll for web contexts
   // captured via the extension and drop them into the transcript as notes.

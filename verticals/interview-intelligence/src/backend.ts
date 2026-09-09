@@ -9,6 +9,7 @@ import type { VerticalRegistration, VerticalServices } from "@app/agent-sdk";
 import { interviewIntelligenceManifest } from "./manifest.js";
 import { QUESTION_BANK, offlineFramework } from "./prompts.js";
 import { buildSheetMessages, offlineSheet, normalizeSheet, type QuestionSheet } from "./interviewerSheet.js";
+import { buildTitleMessages, normalizeTitle, offlineTitle } from "./sessionTitle.js";
 import { questionTokens, cosineOf, matchStories, type StoryCandidate } from "./storyMatch.js";
 import { analyzeSession, metricVerdicts, type AnalyzedSegment } from "./analytics.js";
 
@@ -597,6 +598,61 @@ export const vertical: VerticalRegistration = {
         reply.send({ probes, signal, providerId: out.providerId });
       } catch (e) {
         (reply as { status(n: number): { send(v: unknown): unknown } }).status(502).send({ error: "probe_failed", detail: e instanceof Error ? e.message : String(e) });
+      }
+    });
+
+    // ── Session auto-naming: one model-generated title from CV/JD + opening
+    // transcript. The caller PATCHes it through the platform session route;
+    // the vertical never writes the session row itself.
+    register.post("/session/suggest-title", async (req, reply) => {
+      const body = (req as { body?: Record<string, unknown> }).body ?? {};
+      const workspaceId = str(body.workspaceId);
+      const sessionId = str(body.sessionId);
+      if (!workspaceId || !sessionId) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "workspaceId and sessionId required" });
+      if (!db) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(503).send({ error: "db_unavailable" });
+
+      try {
+        const contexts = await db.sessionContext.findMany({ where: { sessionId } });
+        const cvs = contexts.filter((c) => c.kind === "cv");
+        const jds = contexts.filter((c) => c.kind === "jd");
+        const cv = cvs.map((c) => c.content).join("\n\n");
+        const jd = jds.map((c) => c.content).join("\n\n");
+        const segs = await db.transcriptSegment.findMany({ where: { sessionId }, orderBy: { sequenceNo: "asc" } });
+        const transcript = segs.slice(-8).map((s) => s.text).join("\n");
+        if (!cv.trim() && !jd.trim() && !transcript.trim()) {
+          return (reply as { status(n: number): { send(v: unknown): unknown } }).status(400).send({ error: "nothing to name from yet — add CV/JD or start talking" });
+        }
+
+        let title = "";
+        let generatedBy: "llm" | "offline" = "offline";
+        if (ai) {
+          try {
+            const out = await ai.ask({
+              workspaceId,
+              taskClass: "deep_analysis",
+              messages: buildTitleMessages(cv, jd, transcript),
+              responseSchema: {
+                type: "object",
+                properties: { title: { type: "string" } },
+                required: ["title"],
+              },
+            });
+            const raw = out.structured ?? (out.text ? (() => { try { return JSON.parse(out.text); } catch { return undefined; } })() : undefined);
+            title = normalizeTitle((raw as { title?: unknown } | null)?.title);
+            if (title) generatedBy = "llm";
+          } catch { /* fall through to the offline title */ }
+        }
+        if (!title) {
+          title = offlineTitle(
+            cvs.map((c) => c.title ?? "").join(" "),
+            jds.map((c) => c.title ?? "").join(" "),
+            transcript,
+          );
+        }
+        if (!title) return (reply as { status(n: number): { send(v: unknown): unknown } }).status(502).send({ error: "title_failed" });
+        reply.send({ title, generatedBy });
+      } catch (e) {
+        (reply as { status(n: number): { send(v: unknown): unknown } }).status(502).send({ error: "title_failed", detail: e instanceof Error ? e.message : String(e) });
       }
     });
 

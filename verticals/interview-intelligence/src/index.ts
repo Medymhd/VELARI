@@ -10,6 +10,7 @@ export {
 } from "./modes.js";
 export { sanitizeCoachFramework, stripLeakage, speakable } from "./postProcess.js";
 export { matchPreparedQa, type PreparedQa, type PreparedMatch } from "./prepared.js";
+export { buildTitleMessages, normalizeTitle, offlineTitle } from "./sessionTitle.js";
 export {
   buildSheetMessages,
   offlineSheet,

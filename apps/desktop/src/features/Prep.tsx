@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { useStore } from "../state/store";
+import { isDefaultSessionTitle, useStore } from "../state/store";
 import { PageHeader } from "@app/ui";
 
 interface SheetQuestion {
@@ -51,6 +51,27 @@ export default function Prep() {
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** The title this Prep session was created with — auto-naming only fires
+   *  while it is still the placeholder (user-typed names are never touched). */
+  const createdTitleRef = useRef<string | null>(null);
+  const titledRef = useRef<string | null>(null);
+
+  /** Model-generated title from CV/JD (+ transcript when present). Silent on
+   *  failure — a name is garnish, never a blocker. */
+  async function autoName(sid: string) {
+    const { workspaceId: ws } = useStore.getState();
+    if (!ws || titledRef.current === sid) return;
+    titledRef.current = sid;
+    try {
+      const res = await api.verticalPost<{ title: string; generatedBy: string }>(
+        "interview-intelligence", "/session/suggest-title", { workspaceId: ws, sessionId: sid },
+      );
+      if (!res.title) return;
+      await api.patchSession(sid, { title: res.title });
+      setSession(sid, undefined, res.title);
+      notify("success", `Named "${res.title}" — rename anytime`);
+    } catch { /* best-effort */ }
+  }
 
   // Reload contexts when a sheet session is active (and after uploads).
   async function refreshContexts(sid: string) {
@@ -65,14 +86,16 @@ export default function Prep() {
     if (!workspaceId) return;
     setCreating(true);
     try {
+      const createdTitle = title.trim() || "Interviewer session";
       const s = await api.createSession({
         workspaceId,
-        title: title.trim() || "Interviewer session",
+        title: createdTitle,
         consentStatus: "confirmed",
         metadataJson: { kind: "interviewer" },
       });
       resetLive();
-      setSession(s.id, "draft");
+      setSession(s.id, "draft", createdTitle);
+      createdTitleRef.current = createdTitle;
       setSessionId(s.id);
       setTitle("");
       setSheet(null);
@@ -93,6 +116,9 @@ export default function Prep() {
       await api.addSessionContext(sessionId, { kind, files: payload });
       notify("success", `${kind.toUpperCase()} added — extraction runs server-side`);
       await refreshContexts(sessionId);
+      // First materials in → the model names the session from them, unless
+      // the user already gave it a real name.
+      if (isDefaultSessionTitle(createdTitleRef.current)) void autoName(sessionId);
     } catch (ex) {
       notify("error", ex instanceof Error ? ex.message : String(ex));
     } finally {
@@ -107,6 +133,7 @@ export default function Prep() {
       await api.addSessionContext(sessionId, { kind, content: text.trim() });
       notify("success", `${kind.toUpperCase()} added`);
       await refreshContexts(sessionId);
+      if (isDefaultSessionTitle(createdTitleRef.current)) void autoName(sessionId);
     } catch (ex) {
       notify("error", ex instanceof Error ? ex.message : String(ex));
     } finally {
