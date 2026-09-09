@@ -24,7 +24,11 @@ const TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   draft: ["live", "failed"],
   live: ["paused", "completed", "failed"],
   paused: ["live", "completed", "failed"],
-  completed: [],
+  // completed → live is the REOPEN path: a previous session reopened to
+  // reuse its transcript, prep materials and the workspace answer cache
+  // (re-asked questions return cached answers instantly). The transcript
+  // keeps appending; analytics treat the reopen as a new capture window.
+  completed: ["live"],
   failed: [],
 };
 

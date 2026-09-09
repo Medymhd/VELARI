@@ -116,7 +116,9 @@ export function sessionRoutes(app: FastifyInstance, db: PrismaClient): void {
           data: {
             status: to,
             startedAt: action === "start" ? new Date() : session.startedAt,
-            endedAt: action === "complete" ? new Date() : session.endedAt,
+            // Reopen (completed → live) also clears endedAt — otherwise
+            // duration math (endedAt - startedAt) goes negative.
+            endedAt: action === "complete" ? new Date() : null,
           },
         });
         await writeAudit(db, {
