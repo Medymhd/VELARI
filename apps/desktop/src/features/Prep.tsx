@@ -24,7 +24,7 @@ interface ContextRow {
 
 const DIFF_STYLE: Record<SheetQuestion["difficulty"], { color: string; borderColor: string }> = {
   warmup: { color: "var(--success)", borderColor: "rgba(52,211,153,0.4)" },
-  core: { color: "var(--accent)", borderColor: "rgba(108,123,255,0.4)" },
+  core: { color: "var(--accent)", borderColor: "rgba(var(--accent-rgb), 0.4)" },
   pressure: { color: "var(--warn)", borderColor: "rgba(251,191,36,0.4)" },
 };
 

@@ -210,7 +210,7 @@ export default function Arena() {
           {avg !== null && (
             <span className="row small" style={{ gap: 6, marginLeft: "auto" }}>
               <span className="muted">Session average</span>
-              <span className="badge" style={{ color: scoreColor(avg), borderColor: "rgba(124,124,255,0.4)" }}>{avg}/10 · {rounds.length} answered</span>
+              <span className="badge" style={{ color: scoreColor(avg), borderColor: "rgba(var(--accent-rgb), 0.4)" }}>{avg}/10 · {rounds.length} answered</span>
             </span>
           )}
         </div>
@@ -278,7 +278,7 @@ export default function Arena() {
             <div key={i} className="card col" style={{ gap: 8, borderColor: r.eval ? scoreColor(r.eval.score) : undefined, borderWidth: 2 }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <span className="kicker">{r.depth === 0 ? `Question ${i + 1}` : "Follow-up probe"}</span>
-                {r.eval && <span className="badge" style={{ color: scoreColor(r.eval.score), borderColor: "rgba(124,124,255,0.4)" }}>{r.eval.score}/10</span>}
+                {r.eval && <span className="badge" style={{ color: scoreColor(r.eval.score), borderColor: "rgba(var(--accent-rgb), 0.4)" }}>{r.eval.score}/10</span>}
               </div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{r.depth === 0 ? r.question : r.followUp}</div>
               {r.answer && (

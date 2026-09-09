@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useStore } from "../state/store";
 import { api } from "../lib/api";
 import { stealthEnforceNow, stealthGetState } from "../lib/tauri";
+import { getTheme, setTheme, THEMES, type ThemeId } from "../lib/theme";
 import { PageHeader, Section, Skeleton, Toggle } from "@app/ui";
 
 interface ProviderRow {
@@ -68,6 +69,7 @@ export default function Settings() {
   const [routing, setRouting] = useState<Record<string, RoutingRow>>({});
   const [privacyMode, setPrivacyMode] = useState<string>("managed_allowed");
   const [benchSchedule, setBenchSchedule] = useState<string>("at_launch");
+  const [theme, setThemeState] = useState<ThemeId>(() => getTheme());
   const [probeRows, setProbeRows] = useState<{ gateway: string; model: string; ttftMs: number; totalMs: number; jsonOk: boolean; chars: number; error: string | null }[]>([]);
   const [probeRanAt, setProbeRanAt] = useState<string | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
@@ -676,6 +678,41 @@ function RoutingPicker(props: {
               </div>
             ))}
             <span className="small muted">Change in <span className="mono">.env</span> then restart the API. Secrets are never returned by the API — vault refs only.</span>
+          </Section>
+
+          <Section kicker="Appearance" title="Theme">
+            <span className="small muted">
+              Applies instantly across the app and the stealth overlay — saved for every future session.
+            </span>
+            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+              {THEMES.map((t) => {
+                const active = theme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    className="card"
+                    style={{
+                      width: 168, padding: 0, overflow: "hidden", cursor: "pointer", textAlign: "left",
+                      borderColor: active ? "var(--accent)" : "var(--border)",
+                      boxShadow: active ? "0 0 0 1px var(--accent), 0 6px 22px rgba(var(--accent-rgb), 0.25)" : "none",
+                    }}
+                    title={t.hint}
+                    onClick={() => { setTheme(t.id); setThemeState(t.id); }}
+                  >
+                    <div style={{ height: 46, background: `linear-gradient(135deg, ${t.swatch[0]}, ${t.swatch[1]})`, position: "relative" }}>
+                      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(180deg, transparent 40%, ${t.surface})` }} />
+                    </div>
+                    <div className="col" style={{ gap: 2, padding: "8px 10px 10px" }}>
+                      <span className="row" style={{ justifyContent: "space-between" }}>
+                        <b style={{ fontSize: 13 }}>{t.name}</b>
+                        {active && <span className="badge accent" style={{ fontSize: 9.5, padding: "1px 7px" }}>active</span>}
+                      </span>
+                      <span className="small muted" style={{ fontSize: 10.5, lineHeight: 1.35 }}>{t.hint}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </Section>
 
           <Section kicker="Diagnostics" title="Stealth state">

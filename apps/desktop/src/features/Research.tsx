@@ -60,7 +60,7 @@ function inline(text: string) {
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) return <b key={i}>{p.slice(2, -2)}</b>;
     if (p.startsWith("`") && p.endsWith("`") && p.length > 2) {
-      return <span key={i} className="mono" style={{ background: "rgba(124,124,255,0.12)", borderRadius: 4, padding: "1px 5px" }}>{p.slice(1, -1)}</span>;
+      return <span key={i} className="mono" style={{ background: "rgba(var(--accent-rgb), 0.12)", borderRadius: 4, padding: "1px 5px" }}>{p.slice(1, -1)}</span>;
     }
     return p;
   });

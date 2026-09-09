@@ -77,6 +77,10 @@ export default function Review() {
   function exportPdf() {
     if (!data) return;
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // PDF follows the active theme: read the live accent from computed style
+    // (var() can't cross into the print iframe's own document).
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4d8dff";
+    const tagBg = getComputedStyle(document.documentElement).getPropertyValue("--surface-2").trim() || "#eef0ff";
     const summaryInsight = (data.insights ?? []).find((i) => i.type === "session_summary")?.contentJson as
       | { summary?: string; highlights?: string[]; followups?: string[]; questionBank?: string[] }
       | undefined;
@@ -86,11 +90,11 @@ body { font-family: "Segoe UI", system-ui, sans-serif; margin: 36px; color: #161
 h1 { font-size: 22px; margin: 0 0 4px; }
 h2 { font-size: 15px; margin: 22px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 .muted { color: #6b7280; font-size: 12px; }
-.seg { border-left: 2px solid #6c7bff; padding-left: 10px; margin: 10px 0; font-size: 13px; }
-.who { color: #6c7bff; font-weight: 600; margin-right: 6px; font-size: 11px; text-transform: uppercase; }
+.seg { border-left: 2px solid ${accent}; padding-left: 10px; margin: 10px 0; font-size: 13px; }
+.who { color: ${accent}; font-weight: 600; margin-right: 6px; font-size: 11px; text-transform: uppercase; }
 .meta { color: #9ca3af; font-size: 11px; }
 .insight { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13px; }
-.tag { display: inline-block; background: #eef0ff; color: #4a52d9; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+.tag { display: inline-block; background: ${tagBg}; color: ${accent}; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
 li { margin: 3px 0; }
 @media print { body { margin: 12mm; } }
 </style></head><body>

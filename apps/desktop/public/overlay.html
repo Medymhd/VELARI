@@ -3,12 +3,31 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      :root {
+      /* Theme palettes mirror packages/ui/styles.css. The active theme is set
+         on <html data-theme="…"> by the loader script below (reads the same
+         localStorage the main window writes; same origin = shared). */
+      :root, [data-theme="ocean"] {
+        --accent: #4d8dff;
+        --accent-2: #22d3ee;
+        --accent-rgb: 77, 141, 255;
+        --glass: rgba(14, 20, 31, 0.86);
+      }
+      [data-theme="violet"] {
+        --accent: #7c7cff;
+        --accent-2: #a06bff;
+        --accent-rgb: 124, 124, 255;
         --glass: rgba(16, 17, 22, 0.86);
+      }
+      [data-theme="midnight"] {
+        --accent: #5e8bd9;
+        --accent-2: #8fb8f0;
+        --accent-rgb: 94, 139, 217;
+        --glass: rgba(13, 18, 32, 0.86);
+      }
+      :root {
         --border: rgba(255, 255, 255, 0.08);
         --text: #e9ebf0;
         --muted: #8f94a3;
-        --accent: #7c7cff;
         --success: #34d399;
         --radius: 14px;
       }
@@ -101,7 +120,7 @@
       .panel.hud { position: relative; overflow: hidden; }
       .panel.hud::after {
         content: ""; position: absolute; inset: 0;
-        background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(124,124,255,0.04) 2px 3px);
+        background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(var(--accent-rgb), 0.04) 2px 3px);
         pointer-events: none; animation: scanDrift 8s linear infinite;
       }
       @keyframes scanDrift { from { transform: translateY(0); } to { transform: translateY(3px); } }
@@ -113,7 +132,7 @@
       .waveform span:nth-child(5) { animation-delay: 0.05s; height: 12px; }
       @keyframes wave { 0%,100% { height: 6px; opacity: 0.6; } 50% { height: 16px; opacity: 1; } }
       .timing-bar { height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 4px; }
-      .timing-bar > div { height: 100%; background: linear-gradient(90deg, #7c7cff, #34d399); border-radius: 2px; transition: width 0.4s cubic-bezier(0.16,1,0.3,1); }
+      .timing-bar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 2px; transition: width 0.4s cubic-bezier(0.16,1,0.3,1); }
       .confidence-meter { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 4px; }
       .confidence-meter > div { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
       .confidence-meter.high > div { background: #34d399; }
@@ -142,6 +161,20 @@
       </section>
     </div>
     <script>
+      // Theme loader — runs before the main script. Same-origin localStorage
+      // is shared with the main window, so the persisted palette applies at
+      // overlay open; the theme://changed event restyles live on switch.
+      (function () {
+        const apply = () => {
+          try {
+            const t = localStorage.getItem("velari_theme") || "ocean";
+            document.documentElement.dataset.theme = t;
+          } catch { /* localStorage unavailable — default palette */ }
+        };
+        apply();
+      })();
+    </script>
+    <script>
       if (!window.__TAURI__) {
         // Never leave the overlay silently dead — say what's wrong.
         const stack = document.getElementById("responses");
@@ -152,6 +185,14 @@
       } else {
       const { invoke, event } = window.__TAURI__;
       const $ = (id) => document.getElementById(id);
+
+      // Live theme switch: the Settings screen forwards the new palette here.
+      event.listen("theme://changed", (e) => {
+        try {
+          const t = String(e.payload?.theme ?? "ocean");
+          document.documentElement.dataset.theme = t;
+        } catch { /* keep current palette */ }
+      });
 
       // EVENT LISTENERS FIRST — they must attach before anything else in this
       // block can throw. (A speak-button listener on a removed element used to
