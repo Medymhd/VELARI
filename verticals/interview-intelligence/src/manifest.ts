@@ -1,8 +1,8 @@
 ﻿/**
- * Interview Intelligence vertical â€” manifest (architecture doc Â§10).
+ * Interview Intelligence vertical — manifest (architecture doc §10).
  * Declares capabilities, permissions, routes, tools and retention defaults.
  * The platform validates this at install/boot time; the vertical never
- * touches another vertical's tables, prompts or integrations (Â§3 module rule).
+ * touches another vertical's tables, prompts or integrations (§3 module rule).
  */
 import type { VerticalManifest } from "@app/contracts";
 
@@ -15,6 +15,9 @@ export const interviewIntelligenceManifest: VerticalManifest = {
   routes: [
     { method: "GET", path: "/question-bank", handlerId: "questionBank.list" },
     { method: "POST", path: "/rehearsal/framework", handlerId: "rehearsal.framework" },
+    { method: "POST", path: "/interviewer/sheet", handlerId: "interviewer.sheet" },
+    { method: "POST", path: "/interviewer/probe", handlerId: "interviewer.probe" },
+    { method: "POST", path: "/session/suggest-title", handlerId: "session.suggestTitle" },
   ],
   tools: [
     {

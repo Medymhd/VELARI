@@ -121,6 +121,12 @@ export class SherpaStreamingSttEngine implements SttEngine {
   private readonly injected: boolean;
   private readonly sampleRate: number;
 
+  /** Process-level recognizer cache (keyed by modelDir): the ONNX session is
+   *  expensive to build and holds no per-session state (streams are per-
+   *  engine), so it is shared across engine instances — every session after
+   *  the first opens hot. Test-injected modules stay per-engine. */
+  private static recognizerCache = new Map<string, SherpaOnlineRecognizer>();
+
   private recognizer: SherpaOnlineRecognizer | null = null;
   private stream: SherpaOnlineStream | null = null;
   private unavailableFired = false;
@@ -159,8 +165,19 @@ export class SherpaStreamingSttEngine implements SttEngine {
     this.unavailableCb = cb;
   }
 
+  /** Build the recognizer now (model must already be on disk) so the first
+   *  utterance doesn't pay ONNX load time. Sync by design; failures mark the
+   *  engine unavailable immediately instead of hanging a session. Model
+   *  download itself stays out-of-band (ensureSherpaModel at boot). */
+  warmup(): void {
+    try {
+      this.init();
+    } catch { /* init() already warns + fires unavailable */ }
+  }
+
   close(): void {
-    this.recognizer = null;
+    // The recognizer is process-shared — never destroy it on engine close.
+    // Only the per-session stream dies here.
     this.stream = null;
     this.pendingSamples = [];
   }
@@ -188,6 +205,16 @@ export class SherpaStreamingSttEngine implements SttEngine {
   private init(): boolean {
     if (this.recognizer) return true;
     if (this.unavailableFired) return false;
+    // Process-level cache first: another engine instance already built the
+    // ONNX session for this model dir — reuse it, skip construction entirely.
+    if (!this.injected) {
+      const cached = SherpaStreamingSttEngine.recognizerCache.get(this.modelDir);
+      if (cached) {
+        this.recognizer = cached;
+        this.stream = this.recognizer.createStream();
+        return true;
+      }
+    }
     try {
       // Injected modules (tests) get placeholder paths; the real loader
       // requires the on-disk model.
@@ -207,7 +234,7 @@ export class SherpaStreamingSttEngine implements SttEngine {
           joiner: path.join(dir, "joiner.onnx"),
         };
       const { OnlineRecognizer } = this.loadModule();
-      this.recognizer = new OnlineRecognizer({
+      const recognizer = new OnlineRecognizer({
         modelConfig: {
           transducer: { encoder: resolved.encoder, decoder: resolved.decoder, joiner: resolved.joiner },
           tokens: resolved.tokens,
@@ -216,6 +243,8 @@ export class SherpaStreamingSttEngine implements SttEngine {
           featureDim: 80,
         },
       });
+      this.recognizer = recognizer;
+      if (!this.injected) SherpaStreamingSttEngine.recognizerCache.set(this.modelDir, recognizer);
       this.stream = this.recognizer.createStream();
       return true;
     } catch (e) {

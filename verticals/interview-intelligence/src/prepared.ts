@@ -89,11 +89,12 @@ function tokens(text: string): Set<string> {
  */
 export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.34): PreparedMatch | null {
   const qTokens = tokens(question);
-  if (qTokens.size === 0 || bank.length === 0) return null;
+  if (bank.length === 0) return null;
 
   let best: PreparedMatch | null = null;
   for (const qa of bank) {
-    // Marked format wins when present.
+    // Marked format wins when present — an explicit "Q: … A: …" is a real
+    // drill, so any question size may match it.
     const aMatch = /\bA\s*:\s*/i.exec(qa.content);
     const qMarked = /\bQ\s*:/i.test(qa.content);
     if (qMarked && aMatch) {
@@ -108,10 +109,17 @@ export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.
       continue;
     }
 
-    // Unmarked: slide a window of up to 3 sentences over the content; the
-    // best-matching window is the "question", the rest is the "answer".
+    // Unmarked docs: the "question" is inferred from a content window, so it
+    // must earn trust. Two guards kill the false-100% class:
+    //  (a) the live question needs ≥2 distinctive tokens — one-token
+    //      questions ("Tell me about yourself." → just "yourself") otherwise
+    //      score a perfect 1.0 against any window containing that token;
+    //  (b) the matched window must be question-shaped — a window of answer
+    //      prose scoring high is a false positive, not a drilled Q&A.
+    if (qTokens.size < 2) continue;
     const sentences = qa.content.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
     if (sentences.length <= 1) {
+      if (!looksQuestion(qa.content)) continue;
       const score = overlapScore(question, qa.content);
       if (score >= floor && (!best || score > best.score)) {
         best = { qa, score, answer: qa.content.trim().slice(0, 1500) };
@@ -120,6 +128,7 @@ export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.
     }
     for (let i = 0; i < sentences.length; i++) {
       const window = sentences.slice(i, i + 3).join(" ");
+      if (!looksQuestion(window)) continue;
       const score = overlapScore(question, window);
       if (score >= floor && (!best || score > best.score)) {
         const answer = sentences.slice(i + 3).join(" ").trim() || sentences.slice(i, i + 3).join(" ").trim();
@@ -128,6 +137,16 @@ export function matchPreparedQa(question: string, bank: PreparedQa[], floor = 0.
     }
   }
   return best;
+}
+
+/** Question-shaped text: contains '?', or opens with an interrogative or
+ *  imperative interview verb. Windows of answer prose ("I've also worked
+ *  with…") fail this and can never pose as a drilled question. */
+function looksQuestion(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (t.includes("?")) return true;
+  return /^(tell|what|how|why|when|who|where|walk|describe|explain|give|share|discuss|can|could|do|did|have|are|would)\b/i.test(t);
 }
 
 /** Token overlap of `question` against `text`, normalized by question size. */

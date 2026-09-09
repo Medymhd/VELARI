@@ -140,6 +140,13 @@ export const api = {
   updateModelProfile: (id: string, body: Record<string, unknown>) =>
     req(`/model-profiles/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   testModelProfile: (id: string) => req<{ ok: boolean; latencyMs?: number }>(`/model-profiles/${id}/test`, { method: "POST" }),
+  /** Manual probe: benchmarks every gateway, returns ranked rows. Takes
+   *  1–4 minutes; writes nothing until you Apply a row. */
+  probeModels: (workspaceId: string) =>
+    req<{ ranAt: string; results: { gateway: string; model: string; ttftMs: number; totalMs: number; jsonOk: boolean; chars: number; error: string | null }[] }>(
+      "/model-profiles/probe",
+      { method: "POST", body: JSON.stringify({ workspaceId }) },
+    ),
   policy: (workspaceId: string) => req<Record<string, unknown>>(`/workspaces/${workspaceId}/policy`),
   updatePolicy: (workspaceId: string, policy: Record<string, unknown>) =>
     req(`/workspaces/${workspaceId}/policy`, { method: "PATCH", body: JSON.stringify(policy) }),
@@ -147,6 +154,9 @@ export const api = {
   deleteProfile: (workspaceId: string) =>
     req(`/profile?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" }),
   health: () => req<{ ok: boolean; version?: string }>("/health"),
+  /** Fire-and-forget STT warmup: kicks model loading server-side the moment
+   *  the user clicks New/Open, before navigation completes. Never awaited. */
+  sttWarm: () => req<{ ok: boolean }>("/stt/warm", { method: "POST" }).catch(() => ({ ok: false })),
   verticalGet: <T>(vertical: string, path: string) => req<T>(`/verticals/${vertical}${path}`),
   verticalPost: <T>(vertical: string, path: string, body: unknown) =>
     req<T>(`/verticals/${vertical}${path}`, { method: "POST", body: JSON.stringify(body) }),

@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { CircuitBreakerRegistry } from "@app/ai-runtime";
 import type { ModelInfo, ModelFeature, ModelModality } from "@app/contracts";
 import { secretBox } from "../secrets.js";
@@ -9,6 +13,16 @@ import { assertRole } from "./workspaces.js";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
 
 const breakers = new CircuitBreakerRegistry();
+
+/** Manual probe run — one at a time per API process. The scheduled auto-probe
+ *  path (modelProbeScheduler) is untouched; this is the user-triggered twin. */
+let manualProbeRunning = false;
+function probeResultsDir(): string {
+  const dir = path.resolve(process.cwd(), "..", "..", ".data");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+const PROBE_TIMEOUT_MS = 4 * 60_000;
 
 /** Known-provider endpoints — mirrors the runtime catalog (metadataJson overrides these). */
 const PROVIDER_BASE_URLS: Record<string, string> = {
@@ -292,7 +306,7 @@ export function providerRoutes(app: FastifyInstance, db: PrismaClient): void {
     return reply.send(toJson(saved));
   });
 
-  /** Probe a profile through the real router Ã¢â‚¬â€ proves failover wiring works. */
+  /** Probe a profile through the real router ” proves failover wiring works. */
   app.post("/v1/model-profiles/:id/test", async (req, reply) => {
     const { id } = req.params as { id: string };
     const profile = await db.modelProfile.findUnique({ where: { id } });
@@ -320,6 +334,59 @@ export function providerRoutes(app: FastifyInstance, db: PrismaClient): void {
       providerId: outcome.ok ? undefined : outcome.error,
       textPreview: typeof outcome.text === "string" ? outcome.text.slice(0, 120) : undefined,
     });
+  });
+
+  /** Manual model probe — runs benchmarks/probe-models.mjs in --json-out mode
+   *  (no .env writes, nothing auto-applies) and returns the ranked rows for
+   *  the Settings table. Owner/admin only; one run at a time. */
+  app.post("/v1/model-profiles/probe", async (req, reply) => {
+    const body = (req.body ?? {}) as { workspaceId?: string };
+    if (!body.workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (!(await assertRole(db, req.user!.userId, body.workspaceId, ["owner", "admin"]))) {
+      return reply.status(403).send({ error: "owner or admin required" });
+    }
+    if (manualProbeRunning) {
+      return reply.status(409).send({ error: "a probe run is already in progress" });
+    }
+    manualProbeRunning = true;
+    try {
+      const outFile = path.join(probeResultsDir(), `probe-results-${randomUUID()}.json`);
+      const script = path.join(probeResultsDir(), "..", "benchmarks", "probe-models.mjs");
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(process.execPath, [script, "--json-out", outFile], {
+          cwd: path.join(probeResultsDir(), ".."),
+          stdio: "ignore",
+        });
+        const timer = setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* already gone */ }
+          reject(new Error("probe timed out"));
+        }, PROBE_TIMEOUT_MS);
+        child.on("error", (e) => { clearTimeout(timer); reject(e); });
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve();
+          else reject(new Error(`probe exited with code ${code}`));
+        });
+      });
+      const parsed = JSON.parse(readFileSync(outFile, "utf8")) as {
+        ranAt?: string;
+        results?: { gateway: string; model: string; ttftMs: number; totalMs: number; jsonOk: boolean; chars: number; error: string | null }[];
+      };
+      try { unlinkSync(outFile); } catch { /* best-effort cleanup */ }
+      await writeAudit(db, {
+        workspaceId: body.workspaceId,
+        actorType: "user",
+        actorId: req.user!.userId,
+        eventType: "models.probed",
+        resourceType: "workspace",
+        resourceId: body.workspaceId,
+      });
+      return reply.send({ ranAt: parsed.ranAt ?? new Date().toISOString(), results: parsed.results ?? [] });
+    } catch (e) {
+      return reply.status(502).send({ error: e instanceof Error ? e.message : "probe failed" });
+    } finally {
+      manualProbeRunning = false;
+    }
   });
 }
 

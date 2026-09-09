@@ -1,4 +1,4 @@
-﻿import type { ModelRequest } from "@app/contracts";
+﻿﻿import type { ModelRequest } from "@app/contracts";
 import type { InvokeOutcome, ModelCandidate, ProviderError, RequestContext } from "./provider.js";
 
 export interface ScoredCandidate {
@@ -7,14 +7,14 @@ export interface ScoredCandidate {
 }
 
 /**
- * Candidate scoring (architecture doc Â§5):
+ * Candidate scoring (architecture doc §5):
  *
  *   score =
- *     0.35 Ã— health_score
- *   + 0.25 Ã— latency_fit
- *   + 0.20 Ã— capability_quality
- *   + 0.10 Ã— privacy_fit
- *   + 0.10 Ã— budget_fit
+ *     0.35 × health_score
+ *   + 0.25 × latency_fit
+ *   + 0.20 × capability_quality
+ *   + 0.10 × privacy_fit
+ *   + 0.10 × budget_fit
  *   - circuit_breaker_penalty
  */
 export function scoreCandidates(
@@ -47,7 +47,7 @@ function fit(value: number, target: number): number {
 function privacyScore(mode: ModelCandidate["privacyMode"], requested: ModelRequest["privacyMode"]): number {
   switch (requested) {
     case "local_only":
-      return mode === "local" ? 1 : 0; // hard filter upstream too â€” defense in depth
+      return mode === "local" ? 1 : 0; // hard filter upstream too — defense in depth
     case "byok_only":
       return mode === "local" ? 1 : mode === "byok" ? 0.9 : 0;
     case "managed_allowed":
@@ -79,7 +79,7 @@ export class ServiceUnavailableError extends Error {
 
 /**
  * Route with deadline, single transient retry per candidate, then failover
- * to the next compatible candidate. Mirrors the reference algorithm Â§5.
+ * to the next compatible candidate. Mirrors the reference algorithm §5.
  */
 export async function route(
   request: ModelRequest,

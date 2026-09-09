@@ -12,14 +12,24 @@
  *
  * Deprecation-proof: a model that 404s, rate-limits or returns non-JSON is
  * disqualified; the next run picks up new/renamed models automatically.
- * Usage: node benchmarks/probe-models.mjs [--top 3]
+ * Usage: node benchmarks/probe-models.mjs [--top 3] [--json-out <path>]
+ *
+ * --json-out: machine-readable mode for the Settings "Probe now" flow —
+ * writes [{gateway, model, ttftMs, totalMs, jsonOk, chars, error}] to the
+ * path and SKIPS the .env + markdown writes (nothing auto-applies; the user
+ * picks a row and hits Apply, which upserts the model_profiles row).
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TOP = Number(process.argv[2] ?? process.env.TOP ?? 3);
+const argv = process.argv.slice(2);
+const TOP = Number(argv.find((a) => /^\d+$/.test(a)) ?? process.env.TOP ?? 3);
+const JSON_OUT = (() => {
+  const i = argv.indexOf("--json-out");
+  return i >= 0 && argv[i + 1] ? path.resolve(ROOT, argv[i + 1]) : null;
+})();
 
 // ---- .env loader (no deps) -------------------------------------------------
 const env = {};
@@ -65,6 +75,21 @@ if (env.OPENAI_COMPAT_BASE_URL && env.OPENAI_COMPAT_API_KEY) {
     envPrefix: "OPENAI_COMPAT",
     // Explicit model list (env) probes first; discovery fills the rest.
     models: (env.OPENAI_COMPAT_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  });
+}
+if (env.GEMINI_API_KEY) {
+  gateways.push({
+    id: "gemini",
+    base: "https://generativelanguage.googleapis.com/v1beta/openai",
+    key: env.GEMINI_API_KEY,
+    keyEnv: "GEMINI_API_KEY",
+    envPrefix: "GEMINI",
+    // Explicit list — the full /models catalog is mostly non-chat endpoints.
+    // NOTE (measured 2026-09-08): gemini-2.5-flash-lite now 404s (removed);
+    // gemini-3.5-flash-lite hangs (13-25s) on free tier — excluded by default.
+    // gemini-3.8-flash is capacity-starved (503s) but fails fast, so it stays
+    // in the list for signal when capacity allows.
+    models: (env.GEMINI_MODELS ?? "gemini-flash-lite-latest,gemini-3.1-flash-lite,gemini-3.8-flash").split(",").map((s) => s.trim()).filter(Boolean),
   });
 }
 
@@ -148,6 +173,7 @@ async function probe(gw, model) {
 // ---- Main -------------------------------------------------------------------
 const report = [];
 const rankings = {};
+const results = [];
 
 for (const gw of gateways) {
   console.log(`\n=== ${gw.id} (${gw.base}) ===`);
@@ -161,16 +187,20 @@ for (const gw of gateways) {
   console.log(`  candidates: ${candidates.map((c) => c.id).join(", ") || "none"}`);
 
   const scored = [];
+  const all = [];
   for (const c of candidates) {
     try {
       const p = await probe(gw, c.id);
       const ok = p.jsonOk && p.chars > 20;
       console.log(`  ${ok ? "PASS" : "FAIL"} ${c.id.padEnd(48)} ttft=${p.ttft}ms total=${p.total}ms json=${p.jsonOk}`);
+      all.push({ gateway: gw.id, model: c.id, ttftMs: p.ttft, totalMs: p.total, jsonOk: p.jsonOk, chars: p.chars, error: null });
       if (ok) scored.push({ model: c.id, ttft: p.ttft, total: p.total });
     } catch (e) {
       console.log(`  FAIL ${c.id.padEnd(48)} ${String(e.message ?? e).slice(0, 60)}`);
+      all.push({ gateway: gw.id, model: c.id, ttftMs: -1, totalMs: -1, jsonOk: false, chars: 0, error: String(e.message ?? e).slice(0, 120) });
     }
   }
+  results.push(...all);
 
   scored.sort((a, b) => a.ttft - b.ttft || a.total - b.total);
   const top = scored.slice(0, TOP).map((s) => s.model);
@@ -179,6 +209,14 @@ for (const gw of gateways) {
 }
 
 // ---- Write results ----------------------------------------------------------
+// --json-out (manual "Probe now" flow): machine-readable only — the user
+// picks a row and hits Apply. Nothing auto-writes to .env here.
+if (JSON_OUT) {
+  results.sort((a, b) => (a.jsonOk === b.jsonOk ? a.ttftMs - b.ttftMs : a.jsonOk ? -1 : 1));
+  writeFileSync(JSON_OUT, JSON.stringify({ ranAt: new Date().toISOString(), results }, null, 2), "utf8");
+  console.log(`\nWrote ${results.length} rows to ${JSON_OUT} (no .env changes — apply manually).`);
+  process.exit(0);
+}
 // 1. .env COACH_MODEL_* overrides (runtime reads these per provider/task)
 let envText = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
 const envLines = envText.split(/\r?\n/);

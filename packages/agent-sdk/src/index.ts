@@ -1,5 +1,5 @@
-﻿/**
- * App Agent SDK â€” runtime contracts a vertical must satisfy.
+﻿﻿/**
+ * App Agent SDK — runtime contracts a vertical must satisfy.
  * The API validates every installed vertical against these types at boot
  * and enforces approval policy on any tool flagged external_write/sensitive.
  */
@@ -71,7 +71,7 @@ export interface VerticalServices {
 }
 
 /**
- * Minimal structural subset of Fastify the SDK relies on â€” keeps verticals
+ * Minimal structural subset of Fastify the SDK relies on — keeps verticals
  * decoupled from the concrete server framework.
  */
 export interface RouteRegistrar {

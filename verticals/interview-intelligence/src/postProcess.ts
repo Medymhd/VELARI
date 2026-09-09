@@ -11,8 +11,8 @@ const LEAK_PATTERNS: RegExp[] = [
   /^\s*\{[\s\S]*\}\s*$/, // raw JSON envelope
   /^\s*"(detected_question|suggested_outline|talking_points|summary)"\s*:/, // schema stubs
   /^\s*(JSON|Output|Response)\s*[:=]/i,
-  /as an ai(?: language model)?/i,
-  /i(?:'m| am) (?:just )?an ai\b/i,
+  /(?:^|\.\s+)as an ai(?: language model)?\b/i, // "as an AI" only at sentence start — "as an AI training specialist" is real speech
+  /\bI(?:'m| am) (?:just )?an AI\b/,
 ];
 
 const AI_TELLS: [RegExp, string][] = [
@@ -32,6 +32,21 @@ const AI_TELLS: [RegExp, string][] = [
   [/\b—\b/g, ", "],
   [/\b–\b/g, "-"],
 ];
+
+/** Prompt-echo markers: when the model regurgitates prompt scaffolding into a
+ *  field, that field is garbage — blank it instead of showing the leak. */
+const ECHO_MARKERS: RegExp[] = [
+  /recent verbatim transcript/i,
+  /session prep materials/i,
+  /earlier session summary/i,
+  /candidate role\/context/i,
+  /respond only (?:with )?(?:json|output)/i,
+  /you are the user's/i,
+];
+
+function isPromptEcho(t: string): boolean {
+  return ECHO_MARKERS.some((re) => re.test(t));
+}
 
 export function stripLeakage(text: string): string {
   let t = text.trim();
@@ -68,7 +83,9 @@ export function speakable(text: string, maxSentences = 3): string {
  * suggestion instead of showing garbage.
  */
 export function sanitizeCoachFramework(fw: CoachFramework): CoachFramework | null {
-  const question = stripLeakage(fw.detected_question ?? "").slice(0, 300);
+  const rawQuestion = stripLeakage(fw.detected_question ?? "").slice(0, 300);
+  // A "question" that echoes prompt labels is parsing debris, not a question.
+  const question = isPromptEcho(rawQuestion) ? "" : rawQuestion;
   const outline = (fw.suggested_outline ?? [])
     .map((o) => speakable(o, 2))
     .filter((o) => o.length > 2)

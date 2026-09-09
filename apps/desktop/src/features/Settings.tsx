@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useStore } from "../state/store";
 import { api } from "../lib/api";
 import { stealthEnforceNow, stealthGetState } from "../lib/tauri";
+import { getTheme, setTheme, THEMES, type ThemeId } from "../lib/theme";
 import { PageHeader, Section, Skeleton, Toggle } from "@app/ui";
 
 interface ProviderRow {
@@ -68,6 +69,11 @@ export default function Settings() {
   const [routing, setRouting] = useState<Record<string, RoutingRow>>({});
   const [privacyMode, setPrivacyMode] = useState<string>("managed_allowed");
   const [benchSchedule, setBenchSchedule] = useState<string>("at_launch");
+  const [theme, setThemeState] = useState<ThemeId>(() => getTheme());
+  const [probeRows, setProbeRows] = useState<{ gateway: string; model: string; ttftMs: number; totalMs: number; jsonOk: boolean; chars: number; error: string | null }[]>([]);
+  const [probeRanAt, setProbeRanAt] = useState<string | null>(null);
+  const [probeBusy, setProbeBusy] = useState(false);
+  const [probeErr, setProbeErr] = useState<string | null>(null);
   const [stealthAllowed, setStealthAllowed] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -178,6 +184,48 @@ export default function Settings() {
       await api.deleteProfile(workspaceId);
       setProfile(null);
       flash("Profile deleted");
+    } catch (e) { fail(e); }
+  }
+
+  /** Manual probe: benchmark every gateway now, show the ranked table, and let
+   *  the user Apply a row — nothing writes until Apply. 1–4 minute run. */
+  async function probeNow() {
+    if (!workspaceId || probeBusy) return;
+    setProbeBusy(true);
+    setProbeErr(null);
+    try {
+      const res = await api.probeModels(workspaceId);
+      setProbeRows(res.results ?? []);
+      setProbeRanAt(res.ranAt);
+      if ((res.results ?? []).length === 0) setProbeErr("Probe returned no models — check gateway keys");
+    } catch (e) {
+      setProbeErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProbeBusy(false);
+    }
+  }
+
+  /** Apply a probe row as the live_coach primary (fallbacks = the other
+   *  JSON-valid rows on the same gateway). DB profile wins at runtime, so
+   *  this takes effect on the next session connect — no restart. */
+  async function applyProbeRow(row: { gateway: string; model: string }) {
+    if (!workspaceId) return;
+    try {
+      const live = profiles.find((p) => p.taskClass === "live_coach");
+      if (!live?.id) { fail("No live_coach profile yet — save routing once first"); return; }
+      const sameGw = probeRows
+        .filter((r) => r.gateway === row.gateway && r.jsonOk && r.model !== row.model)
+        .sort((a, b) => a.ttftMs - b.ttftMs)
+        .slice(0, 2)
+        .map((r) => ({ providerId: r.gateway, model: r.model }));
+      await api.updateModelProfile(live.id, {
+        workspaceId,
+        taskClass: "live_coach",
+        primaryModel: { providerId: row.gateway, model: row.model },
+        fallbackModels: sameGw,
+      });
+      flash(`live_coach → ${row.model} (applies on next session connect)`);
+      void refresh();
     } catch (e) { fail(e); }
   }
 
@@ -566,6 +614,46 @@ function RoutingPicker(props: {
             <span className="small muted">Off disables automatic probing entirely — model winners stay frozen until you run <span className="mono">pnpm bench:models</span> manually.</span>
           </Section>
 
+          <Section kicker="Model benchmarking" title="Probe now — rank & apply manually">
+            <span className="small muted">
+              Benchmarks every gateway on demand (1–4 min) and ranks by TTFT × JSON reliability. Nothing changes until you hit Apply on a row — Apply sets it as the live_coach primary (same-gateway runners-up become fallbacks), effective on your next session connect.
+            </span>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="primary" disabled={probeBusy} onClick={() => void probeNow()}>
+                {probeBusy ? "Probing… (1–4 min)" : probeRows.length > 0 ? "Re-probe" : "Probe now"}
+              </button>
+              {probeRanAt && <span className="small muted">Last run {new Date(probeRanAt).toLocaleString()}</span>}
+            </div>
+            {probeErr && <span className="small" style={{ color: "var(--danger)" }}>{probeErr}</span>}
+            {probeRows.length > 0 && (
+              <div className="col" style={{ gap: 0, borderTop: "1px solid var(--border)", marginTop: 4 }}>
+                {probeRows.map((r) => (
+                  <div key={`${r.gateway}:${r.model}`} className="row small" style={{ justifyContent: "space-between", borderBottom: "1px solid var(--border)", padding: "6px 0", gap: 8 }}>
+                    <span className="mono" style={{ flex: 2, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={`${r.gateway} · ${r.error ?? ""}`}>
+                      {r.model}
+                      <span className="muted"> · {r.gateway}</span>
+                    </span>
+                    <span className="mono muted" style={{ flex: "none" }}>
+                      {r.jsonOk ? `TTFT ${r.ttftMs}ms · ${r.totalMs}ms` : (r.error ?? "failed").slice(0, 42)}
+                    </span>
+                    <span className="badge" style={{ flex: "none", color: r.jsonOk ? "var(--success)" : "var(--danger)" }}>
+                      {r.jsonOk ? "JSON ✓" : "JSON ✗"}
+                    </span>
+                    <button
+                      className="ghost"
+                      style={{ flex: "none", padding: "2px 10px" }}
+                      disabled={!r.jsonOk}
+                      title={r.jsonOk ? "Set as live_coach primary" : "JSON-invalid models cannot drive the coach"}
+                      onClick={() => void applyProbeRow(r)}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+
           <Section kicker="Privacy & policy" title="Workspace rules">
             <div className="row">
               <label className="col small" style={{ gap: 4, maxWidth: 240 }}>
@@ -590,6 +678,41 @@ function RoutingPicker(props: {
               </div>
             ))}
             <span className="small muted">Change in <span className="mono">.env</span> then restart the API. Secrets are never returned by the API — vault refs only.</span>
+          </Section>
+
+          <Section kicker="Appearance" title="Theme">
+            <span className="small muted">
+              Applies instantly across the app and the stealth overlay — saved for every future session.
+            </span>
+            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+              {THEMES.map((t) => {
+                const active = theme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    className="card"
+                    style={{
+                      width: 168, padding: 0, overflow: "hidden", cursor: "pointer", textAlign: "left",
+                      borderColor: active ? "var(--accent)" : "var(--border)",
+                      boxShadow: active ? "0 0 0 1px var(--accent), 0 6px 22px rgba(var(--accent-rgb), 0.25)" : "none",
+                    }}
+                    title={t.hint}
+                    onClick={() => { setTheme(t.id); setThemeState(t.id); }}
+                  >
+                    <div style={{ height: 46, background: `linear-gradient(135deg, ${t.swatch[0]}, ${t.swatch[1]})`, position: "relative" }}>
+                      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(180deg, transparent 40%, ${t.surface})` }} />
+                    </div>
+                    <div className="col" style={{ gap: 2, padding: "8px 10px 10px" }}>
+                      <span className="row" style={{ justifyContent: "space-between" }}>
+                        <b style={{ fontSize: 13 }}>{t.name}</b>
+                        {active && <span className="badge accent" style={{ fontSize: 9.5, padding: "1px 7px" }}>active</span>}
+                      </span>
+                      <span className="small muted" style={{ fontSize: 10.5, lineHeight: 1.35 }}>{t.hint}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </Section>
 
           <Section kicker="Diagnostics" title="Stealth state">

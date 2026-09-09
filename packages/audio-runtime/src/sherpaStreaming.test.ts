@@ -104,3 +104,33 @@ test("init failure fires onUnavailable instead of throwing", async () => {
   assert.equal(results.length, 0, "no results emitted when unavailable");
   engine.close();
 });
+
+test("warmup builds the recognizer without audio and emits nothing", () => {
+  const calls = { resets: 0 };
+  const { module } = fakeModule({ getText: () => "words", endpoint: false }, calls);
+  const engine = new SherpaStreamingSttEngine({ loadModule: () => module, modelDir: "unused" });
+  const results: unknown[] = [];
+  // No feed() at all — warmup alone must construct the recognizer.
+  engine.warmup?.();
+  assert.equal(results.length, 0, "warmup emits no partials or finals");
+  // First audio then decodes immediately against the warm recognizer.
+  engine.feed(Buffer.alloc(3200 * 2), 0, (r) => results.push(r));
+  assert.ok(results.length >= 1, "audio works straight after warmup");
+  engine.close();
+});
+
+test("warmup with missing model marks unavailable without throwing", () => {
+  const engine = new SherpaStreamingSttEngine({
+    loadModule: () => {
+      throw new Error("native binding missing");
+    },
+    modelDir: "unused",
+  });
+  let unavailable = 0;
+  engine.onUnavailable(() => {
+    unavailable += 1;
+  });
+  engine.warmup?.(); // must not throw — feed-time path stays the safety net
+  assert.equal(unavailable, 1);
+  engine.close();
+});

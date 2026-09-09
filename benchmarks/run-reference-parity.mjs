@@ -1,19 +1,19 @@
 /**
- * P5 â€” Reference-parity benchmark. Replicates the reference's documented pipeline
+ * P5 — Reference-parity benchmark. Replicates the reference's documented pipeline
  * SEMANTICS (constants extracted from source, file:line in the annex) against
  * the same providers and corpus we use, then measures our equivalent:
  *
- *   Coach  â€” reference `textStreamFallback`: race provider streams, commit the
- *            first to emit a token (their order: groq primary â†’ gemini â†’ â€¦),
+ *   Coach  — reference `textStreamFallback`: race provider streams, commit the
+ *            first to emit a token (their order: groq primary → gemini → …),
  *            params temperature 0.2 / seed 7 (LLMHelper.ts:186).
  *            Ours: the router's measured best (groq qwen3.8-27b) single-shot.
- *   Vision â€” reference chain order (groq vision retired 2026-08 â†’ gemini next);
+ *   Vision — reference chain order (groq vision retired 2026-08 → gemini next);
  *            ours: bai vision measured separately.
- *   STT    â€” their local rung IS moonshine-tiny (we run the same model class)
+ *   STT    — their local rung IS moonshine-tiny (we run the same model class)
  *            + Deepgram nova-3 cloud (skipped without key). Numbers reused
  *            from stt/moonshine/sherpa results.
  *
- * The reference binary itself requires its license server â€” this measures
+ * The reference binary itself requires its license server — this measures
  * pipeline DESIGN semantics on identical provider calls, which is the
  * conservative comparison (their native runtime would only help them).
  */
@@ -30,7 +30,7 @@ const RACE_FIRST_TOKEN_MS = 8_000; // reference TEXT_TTFT budget (LLMHelper.ts)
 const SCHEMA_HINT =
   'Respond ONLY with JSON {"detected_question":string,"suggested_outline":string[],"talking_points":string[],"confidence":number,"requires_user_review":boolean}';
 
-// â”€â”€ Reference semantics: race streams, commit the first to emit a token â”€â”€â”€â”€â”€â”€
+// ── Reference semantics: race streams, commit the first to emit a token ──────
 async function referenceRace(branches, messages) {
   const started = now();
   const controllers = branches.map(() => new AbortController());
@@ -127,7 +127,7 @@ async function referenceRace(branches, messages) {
   };
 }
 
-// â”€â”€ Our semantics: router's measured best, single committed call â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Our semantics: router's measured best, single committed call ─────────
 async function ours(branch, messages) {
   const started = now();
   let firstTokenMs = null;
@@ -167,7 +167,7 @@ async function ours(branch, messages) {
   return { firstTokenMs, totalMs: now() - started, valid };
 }
 
-// â”€â”€ Setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Setup ────────────────────────────────────────────────────────────────
 const groqKey = process.env.GROQ_API_KEY;
 const geminiKey = process.env.GEMINI_API_KEY;
 const results = { startedAt: new Date().toISOString(), runs: RUNS, scenarios: {} };

@@ -3,13 +3,13 @@
  *
  * Single source of truth for DTOs, realtime events, model-request
  * contracts and vertical manifests. Every app/package depends on
- * these schemas â€” never redefine them locally (architecture doc Â§3).
+ * these schemas — never redefine them locally (architecture doc §3).
  */
 import { z } from "zod";
 
 export { z };
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Identity & tenancy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Identity & tenancy ───────────────────────── */
 
 export const WorkspaceRole = z.enum(["owner", "admin", "member", "viewer"]);
 export type WorkspaceRole = z.infer<typeof WorkspaceRole>;
@@ -34,7 +34,7 @@ export const WorkspaceDto = z.object({
 });
 export type WorkspaceDto = z.infer<typeof WorkspaceDto>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Permissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Permissions ──────────────────────────────── */
 
 export const Permission = z.enum([
   "microphone",
@@ -50,7 +50,7 @@ export const Permission = z.enum([
 ]);
 export type Permission = z.infer<typeof Permission>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Model / AI runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Model / AI runtime ───────────────────────── */
 
 export const ModelCapability = z.enum([
   "chat",
@@ -122,7 +122,7 @@ export const ProviderHealth = z.object({
 });
 export type ProviderHealth = z.infer<typeof ProviderHealth>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Interview vertical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Interview vertical ───────────────────────── */
 
 export const SessionStatus = z.enum(["draft", "live", "paused", "completed", "failed"]);
 export type SessionStatus = z.infer<typeof SessionStatus>;
@@ -177,7 +177,7 @@ export const InterviewSessionDto = z.object({
 });
 export type InterviewSessionDto = z.infer<typeof InterviewSessionDto>;
 
-/** Structured coaching payload requested by the live pipeline (Â§7). */
+/** Structured coaching payload requested by the live pipeline (§7). */
 export const CoachingPayload = z.object({
   detected_question: z.string(),
   suggested_outline: z.array(z.string()),
@@ -187,7 +187,7 @@ export const CoachingPayload = z.object({
 });
 export type CoachingPayload = z.infer<typeof CoachingPayload>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Realtime envelope â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Realtime envelope ────────────────────────── */
 
 export const RealtimeEvent = z.discriminatedUnion("type", [
   z.object({
@@ -249,7 +249,7 @@ export const RealtimeEvent = z.discriminatedUnion("type", [
 ]);
 export type RealtimeEvent = z.infer<typeof RealtimeEvent>;
 
-/** Client â†’ server frames on the realtime socket. */
+/** Client → server frames on the realtime socket. */
 export const RealtimeClientFrame = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("audio.chunk"),
@@ -289,7 +289,7 @@ export const RealtimeClientFrame = z.discriminatedUnion("type", [
 ]);
 export type RealtimeClientFrame = z.infer<typeof RealtimeClientFrame>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Vertical SDK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Vertical SDK ─────────────────────────────── */
 
 export const AgentRisk = z.enum(["read", "external_write", "sensitive"]);
 
@@ -331,11 +331,11 @@ export const VerticalManifest = z.object({
 });
 export type VerticalManifest = z.infer<typeof VerticalManifest>;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Stealth module contract â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ────────────────────────── Stealth module contract ──────────────────── */
 
 /**
  * Contract between the desktop stealth plugin and the rest of the platform.
- * The red team gets this exact list in the handoff brief â€” the point of the
+ * The red team gets this exact list in the handoff brief — the point of the
  * exercise is detection, so the surface is documented, not hidden.
  */
 export const MasqueradeProfile = z.enum(["none", "notepad", "terminal", "explorer", "settings", "custom"]);

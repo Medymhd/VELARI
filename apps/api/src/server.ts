@@ -17,7 +17,16 @@ import { recallRoutes } from "./routes/recall.js";
 import { profileRoutes } from "./routes/profile.js";
 import { contextRoutes } from "./routes/contexts.js";
 import { startModelProbeScheduler } from "./ai/modelProbeScheduler.js";
-import { registerRealtime } from "./realtime/ws.js";
+import { registerRealtime, bootWarmStt } from "./realtime/ws.js";
+
+// Sherpa's native decoder is hard-banned in this process: its bundled
+// onnxruntime.dll (1.27.1, C API v27) collides with onnxruntime-node
+// (1.24.3, API v24, loaded for Moonshine) — Windows resolves both imports to
+// whichever DLL loads first and the loser crashes the process mid-session
+// ("The requested API version [27] is not available"). The STT chain skips
+// the sherpa rung entirely; Moonshine → REST remains the local→cloud path.
+// Module scope so every import path (routes, realtime, tests) inherits it.
+process.env.VELARI_DISABLE_SHERPA ??= "1";
 import { logger } from "@app/observability";
 import { VerticalManifest } from "@app/contracts";
 import { validateRegistration, type VerticalRegistration } from "@app/agent-sdk";
@@ -211,6 +220,10 @@ async function main(): Promise<void> {
   // controls it: hourly / 4h / daily / off). Keeps COACH_MODEL_* winners in
   // .env fresh without anyone touching a hardcoded model name.
   startModelProbeScheduler(prisma);
+
+  // Boot-time STT warm: Moonshine weights start loading NOW, so the first
+  // session of the day doesn't buffer the first question behind a download.
+  bootWarmStt();
 
   const shutdown = async (signal: string) => {
     log.info(`received ${signal}, shutting down`);

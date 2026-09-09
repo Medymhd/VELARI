@@ -3,12 +3,31 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      :root {
+      /* Theme palettes mirror packages/ui/styles.css. The active theme is set
+         on <html data-theme="…"> by the loader script below (reads the same
+         localStorage the main window writes; same origin = shared). */
+      :root, [data-theme="ocean"] {
+        --accent: #4d8dff;
+        --accent-2: #22d3ee;
+        --accent-rgb: 77, 141, 255;
+        --glass: rgba(14, 20, 31, 0.86);
+      }
+      [data-theme="violet"] {
+        --accent: #7c7cff;
+        --accent-2: #a06bff;
+        --accent-rgb: 124, 124, 255;
         --glass: rgba(16, 17, 22, 0.86);
+      }
+      [data-theme="midnight"] {
+        --accent: #5e8bd9;
+        --accent-2: #8fb8f0;
+        --accent-rgb: 94, 139, 217;
+        --glass: rgba(13, 18, 32, 0.86);
+      }
+      :root {
         --border: rgba(255, 255, 255, 0.08);
         --text: #e9ebf0;
         --muted: #8f94a3;
-        --accent: #7c7cff;
         --success: #34d399;
         --radius: 14px;
       }
@@ -37,16 +56,41 @@
       .btn.on { background: var(--accent); border-color: transparent; color: #fff; }
       .sec { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
       .sec label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-      .q { font-size: 14px; font-weight: 600; line-height: 1.35; }
-      .outline { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.5; color: var(--text); }
-      .points { font-size: 12px; line-height: 1.5; color: var(--muted); }
-      .transcript {
-        flex: 1; min-height: 52px; overflow-y: auto; font-size: 12px; line-height: 1.5;
-        border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.25);
+      .q { font-size: 15px; font-weight: 600; line-height: 1.35; }
+      .outline { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; color: var(--text); }
+      .points { font-size: 13px; line-height: 1.5; color: var(--muted); }
+      .resp-kind { font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+      .resp-q { font-size: 16px; font-weight: 650; line-height: 1.35; }
+      .chip {
+        display: inline-block; margin-top: 4px; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+        border: 1px solid rgba(251, 191, 36, 0.45); color: #fbbf24;
       }
+      .resp-body { font-size: 14.5px; line-height: 1.5; color: var(--text); margin-top: 5px; }
+      .resp-body ol { margin: 0; padding-left: 18px; }
+      .resp-points { color: var(--muted); margin-top: 4px; font-size: 13.5px; }
+      /* Crimson-tinted "extra info" block: CV-grounded instance the user may
+         or may not need — clearly secondary to the direct answer above. */
+      .grounding {
+        margin-top: 8px; padding: 7px 10px; border-radius: 8px;
+        background: rgba(220, 20, 60, 0.08); border-left: 2px solid rgba(220, 20, 60, 0.45);
+        font-size: 12.5px; line-height: 1.5; color: #b5566a;
+      }
+      .resp-empty { color: var(--muted); font-size: 12.5px; padding: 6px 2px; }
+      /* Single-line interviewer strip — the current question, full width.
+         The old 8-line transcript churned truncated fragments ("IVWhat"). */
+      .qstrip {
+        font-size: 15px; font-weight: 600; line-height: 1.4; color: var(--text);
+        border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+        background: rgba(0, 0, 0, 0.25);
+        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .qstrip.empty { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+      .muted { color: var(--muted); }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
       .resp-stack { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 84px; }
       .resp-card {
-        border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+        border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
         background: rgba(124, 124, 255, 0.07);
       }
       /* Ring system: green = newest response, yellow = low STT confidence
@@ -70,24 +114,13 @@
       .resp-empty { color: var(--muted); font-size: 11.5px; padding: 6px 2px; }
       .insight-arrive { animation: respIn 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
       @keyframes respIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-      .transcript .line { margin-bottom: 4px; }
-      .transcript .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
-      .transcript .who.you { color: var(--success); }
-      .transcript .partial { opacity: 0.55; }
-      .notes {
-        min-height: 44px; max-height: 72px; overflow-y: auto; font-size: 12px; line-height: 1.5;
-        border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, 0.2);
-        white-space: pre-wrap; word-break: break-word;
-      }
-      .notes:empty::before { content: 'Engage "Tap keys" and type — swallowed system-wide'; color: var(--muted); }
-      .muted { color: var(--muted); }
-      ::-webkit-scrollbar { width: 6px; }
+      .resp-as { font-size: 10px; color: var(--muted); margin-top: 4px; font-style: italic; }
       ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
       /* Extraordinary HUD — scan lines, waveform, timing, confidence */
       .panel.hud { position: relative; overflow: hidden; }
       .panel.hud::after {
         content: ""; position: absolute; inset: 0;
-        background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(124,124,255,0.04) 2px 3px);
+        background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(var(--accent-rgb), 0.04) 2px 3px);
         pointer-events: none; animation: scanDrift 8s linear infinite;
       }
       @keyframes scanDrift { from { transform: translateY(0); } to { transform: translateY(3px); } }
@@ -99,7 +132,7 @@
       .waveform span:nth-child(5) { animation-delay: 0.05s; height: 12px; }
       @keyframes wave { 0%,100% { height: 6px; opacity: 0.6; } 50% { height: 16px; opacity: 1; } }
       .timing-bar { height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 4px; }
-      .timing-bar > div { height: 100%; background: linear-gradient(90deg, #7c7cff, #34d399); border-radius: 2px; transition: width 0.4s cubic-bezier(0.16,1,0.3,1); }
+      .timing-bar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 2px; transition: width 0.4s cubic-bezier(0.16,1,0.3,1); }
       .confidence-meter { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 4px; }
       .confidence-meter > div { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
       .confidence-meter.high > div { background: #34d399; }
@@ -113,7 +146,6 @@
         <span class="dot"></span><b>Live coach</b>
         <div class="waveform" id="wave" style="margin-left: 8px; display: none;"><span></span><span></span><span></span><span></span><span></span></div>
         <span class="spacer" data-tauri-drag-region></span>
-        <button class="btn" id="tapBtn">Tap keys</button>
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
       <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
@@ -123,15 +155,25 @@
           <div class="resp-empty">Listening — coach answers will stack here, latest on top.</div>
         </div>
       </section>
-      <section class="sec" style="flex: 1;">
-        <label>Interviewer — newest first</label>
-        <div class="transcript" id="transcript"></div>
-      </section>
       <section class="sec">
-        <label>Notes <span class="muted" id="tapState"></span></label>
-        <div class="notes" id="notes"></div>
+        <label>Interviewer</label>
+        <div id="qstrip" class="qstrip empty">Listening for the interviewer…</div>
       </section>
     </div>
+    <script>
+      // Theme loader — runs before the main script. Same-origin localStorage
+      // is shared with the main window, so the persisted palette applies at
+      // overlay open; the theme://changed event restyles live on switch.
+      (function () {
+        const apply = () => {
+          try {
+            const t = localStorage.getItem("velari_theme") || "ocean";
+            document.documentElement.dataset.theme = t;
+          } catch { /* localStorage unavailable — default palette */ }
+        };
+        apply();
+      })();
+    </script>
     <script>
       if (!window.__TAURI__) {
         // Never leave the overlay silently dead — say what's wrong.
@@ -143,55 +185,64 @@
       } else {
       const { invoke, event } = window.__TAURI__;
       const $ = (id) => document.getElementById(id);
-      const tapState = { active: false, notes: "" };
+
+      // Live theme switch: the Settings screen forwards the new palette here.
+      event.listen("theme://changed", (e) => {
+        try {
+          const t = String(e.payload?.theme ?? "ocean");
+          document.documentElement.dataset.theme = t;
+        } catch { /* keep current palette */ }
+      });
 
       // EVENT LISTENERS FIRST — they must attach before anything else in this
       // block can throw. (A speak-button listener on a removed element used to
       // kill the script here and leave the overlay permanently deaf.)
       let lastInsight = null;
 
+      // Interviewer strip: track the CURRENT question, not a fragment churn.
+      // Finals append; a question final replaces the strip in place; back-
+      // channel short lines never overwrite a real question.
+      let currentQuestion = "";
       event.listen("overlay://transcript", (e) => {
+        try {
         const { speaker, text, isFinal } = e.payload;
-        // Both sides flow — interviewer prominent, the user's own voice muted.
-        // Newest at TOP (descending): the freshest speech is the most relevant.
         setWave(!isFinal);
-        const el = $("transcript");
-        const existing = el.querySelector(`[data-utt="${CSS.escape(String(e.payload.id ?? ""))}"]`);
-        const line = existing ?? document.createElement("div");
-        line.className = "line" + (isFinal ? "" : " partial");
-        line.dataset.final = String(isFinal);
-        if (e.payload.id) line.dataset.utt = String(e.payload.id);
-        const who = document.createElement("span");
-        who.className = "who" + (speaker === "user" ? " you" : "");
-        who.textContent = speaker === "user" ? "YOU" : "IV";
-        if (speaker === "user") line.style.opacity = "0.6";
-        line.replaceChildren(who, document.createTextNode(text));
-        if (!existing) el.prepend(line);
-        // Cap both ends — the list grows downward from the newest line.
-        while (el.childElementCount > 8) el.removeChild(el.lastElementChild);
-        el.scrollTop = 0;
-        if (isFinal) setTimeout(() => setWave(false), 800);
+        if (!isFinal) return;
+        const t = String(text ?? "").trim();
+        if (!t) return;
+        const isUser = speaker === "user";
+        if (isUser) return; // only the interviewer side is shown
+        const looksQuestion = t.includes("?") || /^(tell|what|how|why|when|walk|describe|explain|give|can you|could you|do you|have you)\b/i.test(t);
+        const backchannel = t.split(/\s+/).length <= 2 && !t.includes("?");
+        if (looksQuestion || (!currentQuestion && !backchannel)) {
+          currentQuestion = t;
+          const strip = $("qstrip");
+          strip.textContent = t;
+          strip.classList.remove("empty");
+          strip.classList.toggle("empty", false);
+        }
+        setTimeout(() => setWave(false), 800);
+        } catch (err) {
+          console.error("transcript render failed", err);
+        }
       });
 
       event.listen("overlay://insight", (e) => {
+        try {
         const c = e.payload.contentJson ?? {};
-        // Card stack — newest response pinned at the top, previous cards
-        // below, so the latest answer is always in the same spot.
+        // Answer-first stack: the speakable answer (drafted/prepared/cached)
+        // ALWAYS lives at the top in green; coach framework cards slot
+        // beneath it when they arrive a beat later. Newest card of its kind
+        // still gets placement priority within its zone.
         const stack = $("responses");
         const empty = stack.querySelector(".resp-empty");
         if (empty) empty.remove();
-        // Ring system: green = newest, yellow = low STT confidence, blue default.
-        const isNewest = !stack.querySelector(".resp-card.newest");
-        stack.querySelectorAll(".resp-card.newest").forEach((n) => {
-          n.classList.remove("newest");
-          n.classList.add("older");
-        });
+        const isAnswer = e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
+        const isPrepared = e.payload.type === "prepared_answer";
         const card = document.createElement("div");
-        card.className = "resp-card insight-arrive newest";
+        card.className = "resp-card insight-arrive";
         const lowConf = typeof c.stt_confidence === "number" && c.stt_confidence < 0.7;
         if (lowConf) card.classList.add("lowconf");
-        const isAnswer = e.payload.type === "auto_answer" || (c.answer && !c.detected_question);
-        const isPrepared = e.payload.type === "prepared_answer";
         const badge = document.createElement("div");
         badge.className = "resp-kind";
         badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
@@ -222,6 +273,14 @@
         body.className = "resp-body";
         if (isAnswer || isPrepared) {
           body.textContent = c.answer ?? "";
+          // Crimson "extra info" block: optional CV-grounded instance —
+          // annotation, not part of the rehearsed answer.
+          if (typeof c.grounding === "string" && c.grounding.trim()) {
+            const g = document.createElement("div");
+            g.className = "grounding";
+            g.textContent = c.grounding;
+            body.appendChild(g);
+          }
         } else {
           const ol = document.createElement("ol");
           for (const item of (c.suggested_outline ?? []).slice(0, 4)) {
@@ -242,45 +301,49 @@
           as.textContent = "answered as: " + c.cached_question;
           card.appendChild(as);
         }
-        stack.prepend(card);
-        while (stack.childElementCount > 3) stack.removeChild(stack.lastElementChild);
-        // Re-rank rings: the newest card is green, the rest keep yellow/blue.
+        // Zone insertion: drafted > prepared > coach framework. The LATEST
+        // drafted answer always goes to the very top (index 0) — the previous
+        // top card slides down and the green ring follows the new answer.
+        // (insertBefore(card, null) appends — that pinned the first answer on
+        // top forever whenever no prepared/framework card existed yet.)
+        const firstFramework = [...stack.children].find((el) => el.dataset?.zone === "framework");
+        card.dataset.zone = isPrepared ? "prepared" : isAnswer ? "answer" : "framework";
+        card.__content = c;
+        const frameworkCards = [...stack.children].filter((el) => el.dataset?.zone === "framework");
+        if (isAnswer && !isPrepared) {
+          stack.insertBefore(card, stack.firstElementChild); // absolute top — latest answer leads
+        } else if (isPrepared) {
+          stack.insertBefore(card, frameworkCards[0] ?? null); // under drafted answers, above frameworks
+        } else {
+          stack.insertBefore(card, firstFramework ?? null); // head of framework zone
+        }
+        while (stack.childElementCount > 3) {
+          // Never drop the card we just inserted — trim the oldest sibling.
+          const victim = stack.lastElementChild === card ? card.previousElementSibling : stack.lastElementChild;
+          if (victim) stack.removeChild(victim); else break;
+        }
+        // Ring ranking: newest overall card is green, the rest blue/yellow —
+        // with answer-first insertion, that is the speakable answer 95% of
+        // the time.
         stack.querySelectorAll(".resp-card").forEach((n, idx) => {
           n.classList.toggle("newest", idx === 0);
           n.classList.toggle("older", idx !== 0);
         });
-        lastInsight = c;
+        // Speak reads the topmost (green) card's content.
+        lastInsight = stack.children[0]?.__content ?? c;
         pulseTiming();
         setWave(false);
+        } catch (err) {
+          // One malformed payload must never wedge the stack for the session —
+          // log and keep listening.
+          console.error("insight render failed", err);
+        }
       });
 
       // Announce readiness — the app-level forwarder backfills the current
       // session tail (recent transcript + latest response) on open.
       event.emit("overlay://ready", {});
 
-      $("tapBtn").addEventListener("click", async () => {
-        try {
-          if (tapState.active) await stopTap();
-          else {
-            await invoke("stealth_keyboard_start");
-            tapState.active = true;
-            tapState.notes = "";
-            renderNotes();
-            $("tapBtn").classList.add("on");
-            $("tapBtn").textContent = "Stop tap";
-            $("tapState").textContent = "· system keys swallowed";
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      });
-      async function stopTap() {
-        await invoke("stealth_keyboard_stop").catch(() => {});
-        tapState.active = false;
-        $("tapBtn").classList.remove("on");
-        $("tapBtn").textContent = "Tap keys";
-        $("tapState").textContent = "";
-      }
       $("hideBtn").addEventListener("click", async () => {
         try {
           await invoke("overlay_hide", { verticalId: "interview-intelligence" });
@@ -288,24 +351,6 @@
           console.error("hide failed", e);
         }
       });
-
-      event.listen("keyboard://captured", (e) => {
-        if (!tapState.active) return;
-        const k = e.payload;
-        if (k.isOutsideMouseDown) { stopTap(); return; }
-        if (!k.isKeyDown) return;
-        if (k.keyCode === 53) { stopTap(); return; } // Esc
-        if (k.keyCode === 36 || k.keyCode === 76) {
-          const text = tapState.notes.trim();
-          if (text) event.emit("overlay://manual", { text });
-          tapState.notes = "";
-          renderNotes();
-          return;
-        }
-        if (k.keyCode === 51) { tapState.notes = tapState.notes.slice(0, -1); renderNotes(); return; }
-        if (k.chars) { tapState.notes += k.chars; renderNotes(); }
-      });
-      function renderNotes() { $("notes").textContent = tapState.notes; }
 
       // Auto-height (reference parity): report panel height so the window fits content.
       function reportHeight() {
@@ -332,15 +377,22 @@
       }
 
       // Speak reads the newest card aloud: question, then the answer/points.
+      // Drafted answers speak the direct answer ONLY — the crimson grounding
+      // block is optional extra, not something to rehearse.
       // Guarded — the button is optional chrome; a missing element must never
       // kill this script (that class of crash left the overlay deaf once).
       let speakText = "";
       $("speakBtn")?.addEventListener("click", async () => {
         if (!lastInsight) return;
         const parts = [];
-        if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
-        if (lastInsight.suggested_outline?.length) parts.push(lastInsight.suggested_outline.join(". "));
-        if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
+        if (lastInsight.answer) {
+          if (lastInsight.question) parts.push(lastInsight.question);
+          parts.push(lastInsight.answer);
+        } else {
+          if (lastInsight.detected_question) parts.push(lastInsight.detected_question);
+          if (lastInsight.suggested_outline?.length) parts.push(lastInsight.suggested_outline.join(". "));
+          if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
+        }
         speakText = parts.join(". ");
         if (!speakText) return;
 

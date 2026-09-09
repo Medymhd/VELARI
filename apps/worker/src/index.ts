@@ -1,4 +1,4 @@
-﻿import { Queue, Worker, QueueEvents } from "bullmq";
+﻿﻿import { Queue, Worker, QueueEvents } from "bullmq";
 import { Redis } from "ioredis";
 import { logger } from "@app/observability";
 import { postSessionSummary, retentionSweep } from "./jobs.js";
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     await connection.ping();
     log.info("redis connected", { redisUrl: redisUrl.replace(/:[^@]+@/, ":***@") });
   } catch (e) {
-    log.warn("redis unavailable â€” worker will run retention sweep on interval without queue", { error: String(e) });
+    log.warn("redis unavailable — worker will run retention sweep on interval without queue", { error: String(e) });
     // Fallback: interval sweep without BullMQ when Redis is down (dev convenience).
     setInterval(() => void retentionSweep().catch((err: unknown) => log.warn("sweep failed", { error: String(err) })), 60_000);
     await retentionSweep().catch((err: unknown) => log.warn("initial sweep failed", { error: String(err) }));

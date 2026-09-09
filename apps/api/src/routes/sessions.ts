@@ -147,6 +147,11 @@ export function sessionRoutes(app: FastifyInstance, db: PrismaClient): void {
     await db.transcriptSegment.deleteMany({ where: { sessionId: id } });
     await db.sessionInsight.deleteMany({ where: { sessionId: id } });
     await db.artifact.deleteMany({ where: { sessionId: id } });
+    // Prep materials live in their own table — orphaned CV/JD rows would
+    // otherwise linger after the session is gone.
+    await db.sessionContext.deleteMany({ where: { sessionId: id } });
+    // Story entries are workspace memory — keep them (sessionId is nullable
+    // by design); answer-cache rows likewise (workspace-scoped reuse).
     await db.interviewSession.delete({ where: { id } });
     await writeAudit(db, {
       workspaceId: session.workspaceId,

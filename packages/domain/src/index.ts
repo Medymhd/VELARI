@@ -1,6 +1,6 @@
-﻿/**
+/**
  * App domain layer: entities' invariants, pure use-case logic.
- * No IO here â€” everything is testable and portable (desktop reuse later).
+ * No IO here — everything is testable and portable (desktop reuse later).
  */
 import type { ConsentStatus, SessionStatus, TranscriptSegmentDto } from "@app/contracts";
 
@@ -18,7 +18,7 @@ export class DomainError extends Error {
   }
 }
 
-/* â”€â”€ Session lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Session lifecycle ─────────────────────────────────────────────────── */
 
 const TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   draft: ["live", "failed"],
@@ -30,7 +30,7 @@ const TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
 
 export function assertTransition(from: SessionStatus, to: SessionStatus): void {
   if (!TRANSITIONS[from].includes(to)) {
-    throw new DomainError("invalid_transition", `cannot transition ${from} â†’ ${to}`);
+    throw new DomainError("invalid_transition", `cannot transition ${from} → ${to}`);
   }
 }
 
@@ -40,7 +40,7 @@ export function assertStartAllowed(consent: ConsentStatus): void {
   }
 }
 
-/* â”€â”€ Transcript assembler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Transcript assembler ──────────────────────────────────────────────── */
 
 export interface AssemblerState {
   nextSequenceNo: number;
@@ -85,7 +85,7 @@ export function verbatimWindow(state: AssemblerState, maxSegments = 24): string 
   return [...finals, ...partials].join("\n").slice(-12_000);
 }
 
-/* â”€â”€ Context window manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Context window manager ───────────────────────────────────────────── */
 
 export interface ContextWindowState {
   verbatimSegmentIds: string[];
@@ -108,7 +108,7 @@ export class ContextWindowManager {
     }
     this.state.verbatimSegmentIds = kept;
     if (this.state.rollingSummary.length < 2_000) {
-      this.state.rollingSummary += ` [${new Date().toISOString()}] discussed: ${segment.text.slice(0, 80)}â€¦`;
+      this.state.rollingSummary += ` [${new Date().toISOString()}] discussed: ${segment.text.slice(0, 80)}…`;
     }
   }
 
@@ -117,7 +117,7 @@ export class ContextWindowManager {
   }
 }
 
-/* â”€â”€ Retention policy resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Retention policy resolution ──────────────────────────────────────── */
 
 export function retentionDeadlineMs(policy: string, now = Date.now()): number {
   switch (policy) {
