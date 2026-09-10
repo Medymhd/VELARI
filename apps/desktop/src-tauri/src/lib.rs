@@ -185,6 +185,7 @@ pub fn run() {
             overlay::overlay_set_typing,
             overlay::overlay_set_passthrough,
             overlay::overlay_resize,
+            overlay::overlay_set_size,
             overlay::overlay_cycle_position,
             tts::tts_piper_available,
             tts::tts_speak,

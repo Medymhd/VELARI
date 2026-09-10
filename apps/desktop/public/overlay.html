@@ -98,6 +98,20 @@
       }
       .upnext-item .ready { color: #34d399; font-size: 10px; flex: none; font-weight: 600; letter-spacing: 0.04em; }
       .upnext-item .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Corner grip — drag to resize the overlay. Sits above everything in
+         the bottom-right corner; visible on hover, faint otherwise. */
+      #resizeGrip {
+        position: fixed; right: 0; bottom: 0; width: 18px; height: 18px;
+        cursor: nwse-resize; z-index: 50;
+        background:
+          linear-gradient(135deg, transparent 0 50%, rgba(255, 255, 255, 0.25) 50% 55%, transparent 55% 65%, rgba(255, 255, 255, 0.25) 65% 70%, transparent 70% 80%, rgba(255, 255, 255, 0.25) 80% 85%, transparent 85%);
+        border-radius: 0 0 10px 0;
+        touch-action: none;
+      }
+      #resizeGrip:hover {
+        background:
+          linear-gradient(135deg, transparent 0 50%, var(--accent) 50% 55%, transparent 55% 65%, var(--accent) 65% 70%, transparent 70% 80%, var(--accent) 80% 85%, transparent 85%);
+      }
       /* Written ask — type or paste a question / direction for the coach.
          Collapsed by default (stealth first); ⌘/Ctrl+K or the ✎ button opens. */
       .ask-row { display: flex; gap: 6px; align-items: flex-start; }
@@ -175,6 +189,7 @@
         <span class="spacer" data-tauri-drag-region></span>
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
+      <div id="resizeGrip" title="Drag to resize"></div>
       <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
       <section class="sec" style="flex: 1;">
         <label>Responses — newest first</label>
@@ -605,11 +620,49 @@
           void window.__TAURI__.core.invoke("overlay_resize", { verticalId, height: Math.ceil(h) });
         } catch { /* label unavailable */ }
       }
-      const resizeObs = new ResizeObserver(() => reportHeight());
+      // ── Corner grip resize: pointer-drag scales the window live. Once the
+      // user has grabbed the grip, auto-height stands down for the session —
+      // the user owns the geometry now (content reflows via the 100% panel).
+      let userSized = false;
+      let gripDrag = null; // { startW, startH, startX, startY }
+      function initGripResize() {
+        const grip = $("resizeGrip");
+        if (!grip) return;
+        grip.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          grip.setPointerCapture(e.pointerId);
+          const w = window.__TAURI__.window.getCurrentWindow();
+          void w.innerSize().then((s) => {
+            const scale = s.width / (window.innerWidth || s.width); // physical/logical
+            gripDrag = {
+              startW: window.innerWidth,
+              startH: window.innerHeight,
+              startX: e.screenX,
+              startY: e.screenY,
+              scale: isFinite(scale) && scale > 0 ? scale : 1,
+            };
+            userSized = true;
+          });
+        });
+        grip.addEventListener("pointermove", (e) => {
+          if (!gripDrag) return;
+          const w = Math.round(gripDrag.startW + (e.screenX - gripDrag.startX) / gripDrag.scale);
+          const h = Math.round(gripDrag.startH + (e.screenY - gripDrag.startY) / gripDrag.scale);
+          try {
+            const label = window.__TAURI__.window.getCurrentWindow().label;
+            const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+            void window.__TAURI__.core.invoke("overlay_set_size", { verticalId, width: w, height: h });
+          } catch { /* label unavailable */ }
+        });
+        grip.addEventListener("pointerup", () => { gripDrag = null; });
+        grip.addEventListener("pointercancel", () => { gripDrag = null; });
+      }
+      const resizeObs = new ResizeObserver(() => { if (!userSized) reportHeight(); });
       window.addEventListener("DOMContentLoaded", () => {
         const panel = document.querySelector(".panel");
         if (panel) resizeObs.observe(panel);
         reportHeight();
+        initGripResize();
       });
       function setWave(active) { const w = $("wave"); if (w) w.style.display = active ? "flex" : "none"; }
       function pulseTiming() {

@@ -99,7 +99,7 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
     .decorations(false)
     .always_on_top(mode.always_on_top())
     .skip_taskbar(mode.skip_taskbar())
-    .resizable(false)
+    .resizable(true)
     .shadow(false)
     .focused(false)
     .position(x, y)
@@ -454,6 +454,22 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
         .set_size(tauri::LogicalSize::new(size.width as f64 / scale, h))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Manual size from the overlay's corner grip — the user took explicit
+/// control of the geometry. Width AND height clamped; the content reflows
+/// (panel is 100% of the window, the response stack flexes).
+#[tauri::command]
+pub async fn overlay_set_size(app: AppHandle, vertical_id: String, width: f64, height: f64) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    let w = width.clamp(360.0, 1200.0);
+    let h = height.clamp(240.0, 880.0);
+    window
+        .set_size(tauri::LogicalSize::new(w, h))
+        .map_err(|e| e.to_string())
 }
 
 /// Overlay placement modes: TopCenter (default), Right (top-right, where the
