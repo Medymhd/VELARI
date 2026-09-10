@@ -366,8 +366,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           log.info("cache embeddings backfilled", { sessionId: session!.id, count: missing.length });
         } catch { /* best-effort */ }
       })();
-      // Question radar kick — gates + cadence enforced inside.
-      void maybeRadar();
+      // (Question radar kick moved to the END of the connection setup — the
+      // TDZ crash: this line ran before the `let radarBusy`/`coachBusy`
+      // declarations below had executed, killing the whole connection.)
 
       // Provider warmup: the first real coach call otherwise pays DNS + TLS +
       // auth handshake (~0.3-1s) on the critical path while the candidate is
@@ -1881,6 +1882,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     socket.on("error", (err: unknown) => {
       log.warn("realtime socket error", { error: String(err), traceId });
     });
+
+    // Question radar initial kick — placed HERE at the very end of the
+    // connection setup, after every `let` in the callback body has been
+    // initialized (the previous position mid-setup crashed with a TDZ
+    // ReferenceError and took the whole connection down).
+    void maybeRadar();
   });
 }
 
