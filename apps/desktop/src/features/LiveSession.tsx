@@ -1028,7 +1028,7 @@ const [overlayOn, setOverlayOn] = useState(false);
             ) : (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>
-                  {String(ins.contentJson.detected_question ?? "—")}
+                  {String(ins.contentJson.detected_question ?? ins.contentJson.question ?? "—")}
                   {lowConf && (
                     <span className="badge" style={{ marginLeft: 8, color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }} title="The question was transcribed with low confidence — it may be misheard. Verify before speaking.">
                       low confidence — verify
@@ -1046,10 +1046,18 @@ const [overlayOn, setOverlayOn] = useState(false);
                 {ins.contentJson.cached === true && typeof ins.contentJson.cached_question === "string" && (
                   <div className="small muted" style={{ marginTop: 2 }}>answered as: {String(ins.contentJson.cached_question)}</div>
                 )}
-                <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
-                  {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
-                </ul>
-                <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
+                {/* Draft-seeded cache hits carry `answer` instead of an outline —
+                    render the response body when present, outline otherwise. */}
+                {typeof ins.contentJson.answer === "string" && (ins.contentJson.answer as string).trim() ? (
+                  <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{ins.contentJson.answer as string}</div>
+                ) : (
+                  <>
+                    <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13 }}>
+                      {(ins.contentJson.suggested_outline as string[] | undefined)?.map((o: string) => <li key={o}>{o}</li>)}
+                    </ul>
+                    <div className="small muted" style={{ marginTop: 6 }}>{(ins.contentJson.talking_points as string[] | undefined)?.join(" · ")}</div>
+                  </>
+                )}
               </div>
             );
           })}

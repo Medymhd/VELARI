@@ -308,7 +308,11 @@
         const empty = stack.querySelector(".resp-empty");
         if (empty) empty.remove();
         const isSolve = e.payload.type === "solver";
-        const isAnswer = isSolve || e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
+        // A card carrying an `answer` is always an answer card — draft-seeded
+        // cache hits have BOTH answer and detected_question, and the old
+        // `!c.detected_question` condition dumped them into the framework
+        // branch with an empty body ("answered as:" and nothing else).
+        const isAnswer = isSolve || e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer);
         const isPrepared = e.payload.type === "prepared_answer";
         const card = document.createElement("div");
         card.className = "resp-card insight-arrive";
@@ -340,12 +344,6 @@
           const chip = document.createElement("span");
           chip.className = "chip cached";
           chip.textContent = c.predicted === true ? "pre-answered ✓" : "cached";
-          card.appendChild(chip);
-        }
-        if (c.offline === true) {
-          const chip = document.createElement("span");
-          chip.className = "chip offline";
-          chip.textContent = isSolve ? "LLM unavailable" : "scaffold — LLM unavailable";
           card.appendChild(chip);
         }
         const body = document.createElement("div");
