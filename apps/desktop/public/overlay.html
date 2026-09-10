@@ -624,7 +624,8 @@
       // user has grabbed the grip, auto-height stands down for the session —
       // the user owns the geometry now (content reflows via the 100% panel).
       let userSized = false;
-      let gripDrag = null; // { startW, startH, startX, startY }
+      let gripDrag = null; // { startW, startH, startX, startY, scale, lastX, lastY }
+      let gripRaf = 0;
       function initGripResize() {
         const grip = $("resizeGrip");
         if (!grip) return;
@@ -639,6 +640,8 @@
               startH: window.innerHeight,
               startX: e.screenX,
               startY: e.screenY,
+              lastX: e.screenX,
+              lastY: e.screenY,
               scale: isFinite(scale) && scale > 0 ? scale : 1,
             };
             userSized = true;
@@ -646,13 +649,22 @@
         });
         grip.addEventListener("pointermove", (e) => {
           if (!gripDrag) return;
-          const w = Math.round(gripDrag.startW + (e.screenX - gripDrag.startX) / gripDrag.scale);
-          const h = Math.round(gripDrag.startH + (e.screenY - gripDrag.startY) / gripDrag.scale);
-          try {
-            const label = window.__TAURI__.window.getCurrentWindow().label;
-            const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
-            void window.__TAURI__.core.invoke("overlay_set_size", { verticalId, width: w, height: h });
-          } catch { /* label unavailable */ }
+          // Track the latest position; commit at most one set_size per frame
+          // — pointermove fires at input rate and the IPC would churn.
+          gripDrag.lastX = e.screenX;
+          gripDrag.lastY = e.screenY;
+          if (gripRaf) return;
+          gripRaf = requestAnimationFrame(() => {
+            gripRaf = 0;
+            if (!gripDrag) return;
+            const w = Math.round(gripDrag.startW + (gripDrag.lastX - gripDrag.startX) / gripDrag.scale);
+            const h = Math.round(gripDrag.startH + (gripDrag.lastY - gripDrag.startY) / gripDrag.scale);
+            try {
+              const label = window.__TAURI__.window.getCurrentWindow().label;
+              const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+              void window.__TAURI__.core.invoke("overlay_set_size", { verticalId, width: w, height: h });
+            } catch { /* label unavailable */ }
+          });
         });
         grip.addEventListener("pointerup", () => { gripDrag = null; });
         grip.addEventListener("pointercancel", () => { gripDrag = null; });

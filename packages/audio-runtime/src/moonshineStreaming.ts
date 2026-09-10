@@ -83,7 +83,13 @@ export class MoonshineStreamingSttEngine implements SttEngine {
   private unavailableCb: (() => void) | null = null;
   private onResult: ((r: SttPartial | SttFinal) => void) | null = null;
 
-  private buffer: Float32Array = new Float32Array(0);
+  /** Accumulated audio as a chunk list — NOT a growing Float32Array. The old
+   *  per-chunk `concat` copied the whole buffer (up to 320k floats at a 20s
+   *  utterance tail) on EVERY 20ms feed — ~16M float copies/sec of pure CPU
+   *  competing with decode. Chunks materialize into one buffer only at
+   *  decode/flush time. */
+  private chunks: Float32Array[] = [];
+  private chunkSamples = 0;
   private decodedThroughMs = 0; // audio duration already decoded
   private lastPartial = "";
   private decodeInFlight = false;
@@ -126,7 +132,8 @@ export class MoonshineStreamingSttEngine implements SttEngine {
   close(): void {
     this.closed = true;
     this.pipeline = null;
-    this.buffer = new Float32Array(0);
+    this.chunks = [];
+    this.chunkSamples = 0;
     this.initPromise = null;
   }
 
@@ -142,10 +149,8 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       samples[i] = pcm.readInt16LE(i * 2) / 32768;
       sum += samples[i]! * samples[i]!;
     }
-    const merged = new Float32Array(this.buffer.length + samples.length);
-    merged.set(this.buffer, 0);
-    merged.set(samples, this.buffer.length);
-    this.buffer = merged;
+    this.chunks.push(samples);
+    this.chunkSamples += samples.length;
 
     // Track the last loud chunk — the decode gate drops only buffers with no
     // speech since utterance start, never a buffer holding real speech.
@@ -157,9 +162,9 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       console.log(`[moonshine:dbg] first feed: samples=${samples.length} rms=${chunkRms.toFixed(5)}`);
     } else if (process.env.MOONSHINE_DEBUG === "1" && this.dbgFeedCount < 3) {
       this.dbgFeedCount += 1;
-      console.log(`[moonshine:dbg] feed #${this.dbgFeedCount + 1}: bufferMs=${Math.round((this.buffer.length / this.sampleRate) * 1000)}`);
+      console.log(`[moonshine:dbg] feed #${this.dbgFeedCount + 1}: bufferMs=${Math.round((this.chunkSamples / this.sampleRate) * 1000)}`);
     }
-    const audioMs = (this.buffer.length / this.sampleRate) * 1000;
+    const audioMs = (this.chunkSamples / this.sampleRate) * 1000;
 
     // Endpointing: quiet tail after speech finalizes the utterance.
     const hasSpeech = this.lastLoudAtMs > this.audioStartMs;
@@ -171,7 +176,7 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     // Hard cap: monologues without pauses would grow the buffer unbounded —
     // force-final the head so decode windows stay bounded (rival
     // MAX_SEGMENT_MS parity).
-    if (this.buffer.length >= this.sampleRate * MOONSHINE_MAX_SEGMENT_S && !this.decodeInFlight) {
+    if (this.chunkSamples >= this.sampleRate * MOONSHINE_MAX_SEGMENT_S && !this.decodeInFlight) {
       void this.decode(true);
       return;
     }
@@ -186,14 +191,13 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     this.onResult = (r) => {
       if (r.isFinal) onResult(r);
     };
-    if (this.buffer.length === 0) return;
+    if (this.chunkSamples === 0) return;
     // Snapshot and OWN the buffer synchronously — the disconnect sequence is
     // flush() followed immediately by close(), and close() wipes state. The
     // final decode runs from this private copy and ignores `closed`.
-    const audio = trimTrailingSilence(this.buffer);
+    const audio = trimTrailingSilence(this.takeChunks());
     const startedAtMs = this.audioStartMs;
     const endedAtMs = Math.max(this.lastFeedAtMs, this.audioStartMs + 200);
-    this.buffer = new Float32Array(0);
     this.decodedThroughMs = 0;
     this.lastPartial = "";
     this.audioStartMs = 0;
@@ -244,6 +248,19 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     return this.initPromise;
   }
 
+  /** Materialize the pending chunk list into one buffer and clear it. */
+  private takeChunks(): Float32Array {
+    const raw = new Float32Array(this.chunkSamples);
+    let off = 0;
+    for (const c of this.chunks) {
+      raw.set(c, off);
+      off += c.length;
+    }
+    this.chunks = [];
+    this.chunkSamples = 0;
+    return raw;
+  }
+
   private async decode(final: boolean): Promise<void> {
     if (this.decodeInFlight) {
       // A partial can coalesce into the in-flight decode; a FINAL must never
@@ -252,9 +269,9 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       else this.finalPending = true;
       return;
     }
-    if (this.buffer.length === 0) return;
+    if (this.chunkSamples === 0) return;
     this.decodeInFlight = true;
-    const raw = this.buffer;
+    const raw = this.takeChunks();
     try {
       if (!(await this.init()) || !this.pipeline) return;
       if (this.closed) return;
@@ -265,7 +282,6 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       const trimmedFull = trimTrailingSilence(raw);
       if (trimmedFull.length === 0) {
         // Pure silence since utterance start — drop the buffer entirely.
-        this.buffer = new Float32Array(0);
         this.decodedThroughMs = 0;
         this.lastPartial = "";
         this.audioStartMs = 0;
@@ -294,7 +310,6 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       const endedAtMs = Math.max(this.lastFeedAtMs, startedAtMs + 200);
       if (final) {
         if (text) this.onResult?.({ isFinal: true, text, confidence: 0.85, startedAtMs, endedAtMs });
-        this.buffer = new Float32Array(0);
         this.decodedThroughMs = 0;
         this.lastPartial = "";
         this.audioStartMs = 0;
@@ -310,7 +325,7 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       if (this.finalPending) {
         this.finalPending = false;
         void this.decode(true);
-      } else if (this.decodeQueued && !final && this.buffer.length > 0) {
+      } else if (this.decodeQueued && !final && this.chunkSamples > 0) {
         this.decodeQueued = false;
         void this.decode(false);
       }

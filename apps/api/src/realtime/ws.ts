@@ -94,6 +94,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     let serverSeq = 0;
     const seenClientIds = new Set<string>();
+    // Dedup window is bounded: every audio.chunk carries an eventId (≈50/s),
+    // so an unbounded Set leaks ~180k strings/hour on long sessions. Replays
+    // only ever arrive seconds apart — 600 ids of recency is plenty.
+    const SEEN_CLIENT_IDS_MAX = 600;
     const assembler = newAssemblerState();
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -178,6 +182,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       embeddingModel: process.env.EMBEDDING_MODEL,
     });
     const answerCache = new AnswerCache(async (texts) => embedder.embed(texts));
+    // Lookup memo: a final can consult the cache up to three times (pre-gate,
+    // runCoach, manual fast path) — with an external embedder each miss costs
+    // a network round-trip. Same text+key within 10s reuses the verdict.
+    let lastLookup: { key: string; at: number; hit: Awaited<ReturnType<AnswerCache["lookup"]>> } | null = null;
+    async function cachedLookup(text: string, opts: { mode: string; length: string; prepHash: string }) {
+      const key = `${normalizeQuestion(text)}|${opts.mode}|${opts.length}|${opts.prepHash}`;
+      if (lastLookup && lastLookup.key === key && Date.now() - lastLookup.at < 10_000) return lastLookup.hit;
+      const hit = await answerCache.lookup(text, opts);
+      lastLookup = { key, at: Date.now(), hit };
+      return hit;
+    }
     let activePrepHash = "";
     try {
       const rows = await db.answerCacheEntry.findMany({
@@ -648,7 +663,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         if (!preparedServed && looksLikeQuestion(text) && answerCache.size() > 0) {
           const pHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
           try {
-            const hit = await answerCache.lookup(text, { mode: sessionMode, length: sessionLength, prepHash: pHash });
+            const hit = await cachedLookup(text, { mode: sessionMode, length: sessionLength, prepHash: pHash });
             if (hit && (hit.key === "exact" || hit.key === "fuzzy")) {
               log.info("cache-first hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
               await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
@@ -877,6 +892,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     const RADAR_MIN_INTERVAL_MS = 180_000;
     const RADAR_IDLE_MS = 8_000;
     let radarBusy = false;
+    /** coach.solve in flight — the radar must not stack a second provider call. */
+    let solveBusy = false;
     let lastRadarAt = 0;
     let radarPreServes = 0;
 
@@ -884,7 +901,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (!workspaceCfg || radarBusy) return;
       const now = Date.now();
       if (!force && now - lastRadarAt < RADAR_MIN_INTERVAL_MS) return;
-      if (coachBusy || draftInFlight) return;
+      if (coachBusy || draftInFlight || solveBusy) return;
       if (now - lastCoachActivityAt < RADAR_IDLE_MS) return;
       radarBusy = true;
       lastRadarAt = now;
@@ -996,7 +1013,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           seededQs.push(q);
           seeded += 1;
         }
-        log.info("question radar refresh", { sessionId: session!.id, seeded, totalPredicted: seeded });
+        log.info("question radar refresh", { sessionId: session!.id, seeded, preServedSoFar: radarPreServes });
         // Surface the horizon on the stealth overlay ("Up next") — the client
         // forwards this to the overlay via the Rust emitter.
         if (seededQs.length > 0) {
@@ -1088,7 +1105,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       const lastQuestionLine = verbatim.split("\n").filter(Boolean).at(-1) ?? "";
       if (answerCache.size() > 0 && lastQuestionLine.length > 12) {
         try {
-          const hit = await answerCache.lookup(lastQuestionLine, { mode: sessionMode, length: sessionLength, prepHash });
+          const hit = await cachedLookup(lastQuestionLine, { mode: sessionMode, length: sessionLength, prepHash });
           if (hit) {
             log.info("answer cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
             await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
@@ -1587,7 +1604,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       const frame = frameResult.data;
       if ("eventId" in frame && seenClientIds.has(frame.eventId)) return;
-      if ("eventId" in frame) seenClientIds.add(frame.eventId);
+      if ("eventId" in frame) {
+        seenClientIds.add(frame.eventId);
+        if (seenClientIds.size > SEEN_CLIENT_IDS_MAX) {
+          // Sets iterate in insertion order — evict the oldest fifth.
+          let evict = SEEN_CLIENT_IDS_MAX / 5;
+          for (const id of seenClientIds) {
+            seenClientIds.delete(id);
+            if (--evict <= 0) break;
+          }
+        }
+      }
 
       if (frame.type === "ping") {
         emit({ type: "pipeline.warning", eventId: randomUUID(), sequenceNo: serverSeq++, occurredAt: new Date().toISOString(), code: "pong", message: frame.eventId });
@@ -1692,7 +1719,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const askPrepHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
         if (answerCache.size() > 0 && text.length > 12) {
           try {
-            const hit = await answerCache.lookup(text, { mode: sessionMode, length: sessionLength, prepHash: askPrepHash });
+            const hit = await cachedLookup(text, { mode: sessionMode, length: sessionLength, prepHash: askPrepHash });
             if (hit) {
               log.info("coach.ask cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
               await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
@@ -1727,7 +1754,22 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         // both the overlay and the Live session panel.
         const text = frame.text.trim();
         if (!text || !workspaceCfg) return;
+        if (solveBusy) {
+          // One solve at a time — two concurrent provider calls trip
+          // free-tier 429s and open breakers for the whole pipeline.
+          emit({
+            type: "pipeline.warning",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            code: "solver_busy",
+            message: "A prompt is already running — wait for it to finish",
+          });
+          return;
+        }
         log.info("coach.solve received", { sessionId: session!.id, chars: text.length });
+        solveBusy = true;
         try {
           const outcome = await executeRouted(
             { db, breakers },
@@ -1737,6 +1779,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             {
               taskClass: "solver",
               privacyMode: workspaceCfg.privacyMode,
+              maxLatencyMs: 60_000, // analyze/evaluate prompts run long
               messages: [
                 {
                   role: "system",
@@ -1786,6 +1829,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           });
         } catch (e) {
           log.warn("coach.solve failed", { error: String(e) });
+        } finally {
+          solveBusy = false;
         }
         return;
       }

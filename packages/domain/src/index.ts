@@ -61,10 +61,20 @@ export function newAssemblerState(): AssemblerState {
  * Idempotent, ordered ingest of realtime transcript segments:
  * dedupes by eventId, rejects backwards sequences, keeps latest partial
  * per sequence, appends finals once.
+ *
+ * Bounds: finals are capped (MAX_FINALS) — consumers only read the tail
+ * (verbatimWindow, slice(-6) etc.), and an 8h session would otherwise grow
+ * the array + its O(n) dedup scan/sort without limit. seenEventIds is
+ * cleared wholesale when oversized: sequenceNo + finals-sequence checks
+ * still guard against duplicate finals after a clear.
  */
+const MAX_FINALS = 200;
+const MAX_SEEN_EVENT_IDS = 4000;
+
 export function ingestSegment(state: AssemblerState, segment: TranscriptSegmentDto, eventId: string): void {
   if (state.seenEventIds.has(eventId)) return;
   state.seenEventIds.add(eventId);
+  if (state.seenEventIds.size > MAX_SEEN_EVENT_IDS) state.seenEventIds.clear();
 
   if (segment.sequenceNo < state.nextSequenceNo - 1) {
     throw new DomainError("out_of_order_segment", `sequence ${segment.sequenceNo} already superseded`);
@@ -76,6 +86,7 @@ export function ingestSegment(state: AssemblerState, segment: TranscriptSegmentD
     if (!state.finals.some((f) => f.sequenceNo === segment.sequenceNo)) {
       state.finals.push(segment);
       state.finals.sort((a, b) => a.sequenceNo - b.sequenceNo);
+      if (state.finals.length > MAX_FINALS) state.finals.splice(0, state.finals.length - MAX_FINALS);
     }
   } else {
     state.partials.set(segment.sequenceNo, segment);
