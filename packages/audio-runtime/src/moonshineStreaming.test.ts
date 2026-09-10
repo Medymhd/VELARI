@@ -126,3 +126,42 @@ test("init failure fires onUnavailable and the engine goes inert", async () => {
   assert.equal(results.length, 0, "no results when the model is unavailable");
   engine.close();
 });
+
+test("partials decode the ACCUMULATED utterance, not just new audio since the last partial", async () => {
+  // Regression: the chunk-list refactor made partial decodes CONSUME the
+  // pending audio, so each partial re-decoded only the ~400ms since the last
+  // partial (fragmented garbage like "yourself") instead of the accumulated
+  // utterance. The pipeline records what it was handed; the LAST partial
+  // decode of a long utterance must have seen the whole buffer.
+  const seen: number[] = [];
+  const engine = new MoonshineStreamingSttEngine({
+    factory: async () => async (audio) => {
+      seen.push(audio.length);
+      return { text: `len-${audio.length}` };
+    },
+    partialEveryMs: 100,
+    sampleRate: 16000,
+  });
+  engine.warmup?.();
+  await sleep(20);
+  const handler = () => {};
+  // 3s of loud audio fed in 20ms chunks with real gaps between feeds —
+  // production cadence (a sync burst would coalesce into ONE decode window,
+  // which is exactly what decodeInFlight/decodeQueued exist for).
+  for (let i = 0; i < 150; i++) {
+    engine.feed(nonSilent(320), i * 20, handler);
+    await sleep(4);
+  }
+  await sleep(60);
+  const lastSeen = seen[seen.length - 1] ?? 0;
+  assert.ok(
+    lastSeen >= 40000,
+    `last partial decode saw ${lastSeen} samples of a 48000-sample utterance — the chunk list was consumed by a partial`,
+  );
+  // And the buffer still holds the utterance for the endpointing final.
+  let finalText = "";
+  engine.flush((r) => { finalText = r.text; });
+  await sleep(30);
+  assert.ok(finalText.startsWith("len-"), "flush still decodes the full utterance");
+  engine.close();
+});

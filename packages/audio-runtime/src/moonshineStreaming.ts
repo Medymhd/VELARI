@@ -249,13 +249,21 @@ export class MoonshineStreamingSttEngine implements SttEngine {
   }
 
   /** Materialize the pending chunk list into one buffer and clear it. */
-  private takeChunks(): Float32Array {
+  /** Materialize the pending chunk list WITHOUT clearing it — the partial
+   *  decode path re-reads the accumulated utterance on every refresh. */
+  private peekChunks(): Float32Array {
     const raw = new Float32Array(this.chunkSamples);
     let off = 0;
     for (const c of this.chunks) {
       raw.set(c, off);
       off += c.length;
     }
+    return raw;
+  }
+
+  /** Materialize and CONSUME — finals, flush, and silence-drop only. */
+  private takeChunks(): Float32Array {
+    const raw = this.peekChunks();
     this.chunks = [];
     this.chunkSamples = 0;
     return raw;
@@ -271,7 +279,11 @@ export class MoonshineStreamingSttEngine implements SttEngine {
     }
     if (this.chunkSamples === 0) return;
     this.decodeInFlight = true;
-    const raw = this.takeChunks();
+    // PARTIALS PEEK, FINALS TAKE. Consuming the chunk list on a partial
+    // decode would throw away all context — the next partial would decode
+    // only the ~400ms of new audio since (fragmented garbage: "yourself"),
+    // instead of the accumulated utterance the old buffer semantics kept.
+    const raw = final ? this.takeChunks() : this.peekChunks();
     try {
       if (!(await this.init()) || !this.pipeline) return;
       if (this.closed) return;
@@ -282,6 +294,8 @@ export class MoonshineStreamingSttEngine implements SttEngine {
       const trimmedFull = trimTrailingSilence(raw);
       if (trimmedFull.length === 0) {
         // Pure silence since utterance start — drop the buffer entirely.
+        this.chunks = [];
+        this.chunkSamples = 0;
         this.decodedThroughMs = 0;
         this.lastPartial = "";
         this.audioStartMs = 0;
