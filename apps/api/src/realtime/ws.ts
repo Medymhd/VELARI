@@ -269,51 +269,60 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
      *     (800ms quiet tail) never gets a chunk to run on, and the partial
      *     hangs until the 10s stale flush. Flush as soon as the stream goes
      *     quiet with a partial outstanding: same semantics as endpointing,
-     *     just enforced where the time information lives.
-     *  2. Wedged decoder (10s): audio still flowing but no final — engine
-     *     stall, force-finalize as before. */
-    const staleTimer = setInterval(() => {
-      const now = Date.now();
-      // Coach watchdog: a hung await inside runCoach (DB wedge, provider
-      // freeze past the fetch deadline) must never wedge the pipeline
-      // forever — coachBusy stuck true silently kills the coach AND the
-      // cache lookups that live inside it. Force-release after 45s; the
-      // next final re-arms everything naturally.
-      if (coachBusy && coachBusySince > 0 && now - coachBusySince > 45_000) {
-        log.warn("coach stuck >45s — force-releasing pipeline lock", { sessionId: session!.id, stuckMs: now - coachBusySince });
-        coachBusy = false;
-        coachBusySince = 0;
-        draftInFlight = false;
-      }
-      for (const [channel, rec] of channelAudio) {
-        if (rec.lastPartialAt <= rec.lastFinalAt) continue;
-        const sinceChunk = now - rec.lastChunkAtMs;
-        const sincePartial = now - rec.lastPartialAt;
-        // Starvation: no chunk for 1.2s with a partial outstanding — the
-        // engine can't endpoint without chunks, flush now. (After the flush
-        // lastFinalAt > lastPartialAt, so this fires once per utterance.)
-        // Wedged: chunks still flowing but no final for 10s.
-        const starving = rec.lastChunkAtMs > 0 && sinceChunk > 1_200;
-        if (!starving && sincePartial <= 10_000) continue;
-        rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
-        const engine = sttEngines.get(channel);
-        if (engine) {
-          log.info(
-            starving ? "endpoint flush (chunk starvation)" : "stale partial — forcing flush",
-            { sessionId: session!.id, channel, sincePartialMs: sincePartial, sinceChunkMs: sinceChunk },
-          );
-          try {
-            engine.flush((r) => {
-              if (r.isFinal && r.text.trim()) {
-                const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
-                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
-                advanceTurn(channel);
-              }
-            });
-          } catch { /* engine already gone */ }
+      *     just enforced where the time information lives.
+      *  2. Wedged decoder (10s): audio still flowing but no final — engine
+      *     stall, force-finalize as before.
+      *
+      *  NOTE: the interval is STARTED at the end of the connection setup —
+      *  created this early, its first 1s tick fired during the
+      *  loadWorkspaceAiConfig await, before coachBusy/draftInFlight were
+      *  initialized (TDZ ReferenceError → process death). */
+    const startStaleWatchdog = (): ReturnType<typeof setInterval> => {
+      const tick = () => {
+        const now = Date.now();
+        // Coach watchdog: a hung await inside runCoach (DB wedge, provider
+        // freeze past the fetch deadline) must never wedge the pipeline
+        // forever — coachBusy stuck true silently kills the coach AND the
+        // cache lookups that live inside it. Force-release after 45s; the
+        // next final re-arms everything naturally.
+        if (coachBusy && coachBusySince > 0 && now - coachBusySince > 45_000) {
+          log.warn("coach stuck >45s — force-releasing pipeline lock", { sessionId: session!.id, stuckMs: now - coachBusySince });
+          coachBusy = false;
+          coachBusySince = 0;
+          draftInFlight = false;
         }
-      }
-    }, 1_000);
+        for (const [channel, rec] of channelAudio) {
+          if (rec.lastPartialAt <= rec.lastFinalAt) continue;
+          const sinceChunk = now - rec.lastChunkAtMs;
+          const sincePartial = now - rec.lastPartialAt;
+          // Starvation: no chunk for 1.2s with a partial outstanding — the
+          // engine can't endpoint without chunks, flush now. (After the flush
+          // lastFinalAt > lastPartialAt, so this fires once per utterance.)
+          // Wedged: chunks still flowing but no final for 10s.
+          const starving = rec.lastChunkAtMs > 0 && sinceChunk > 1_200;
+          if (!starving && sincePartial <= 10_000) continue;
+          rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
+          const engine = sttEngines.get(channel);
+          if (engine) {
+            log.info(
+              starving ? "endpoint flush (chunk starvation)" : "stale partial — forcing flush",
+              { sessionId: session!.id, channel, sincePartialMs: sincePartial, sinceChunkMs: sinceChunk },
+            );
+            try {
+              engine.flush((r) => {
+                if (r.isFinal && r.text.trim()) {
+                  const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+                  void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
+                  advanceTurn(channel);
+                }
+              });
+            } catch { /* engine already gone */ }
+          }
+        }
+      };
+      return setInterval(tick, 1_000);
+    };
+    let staleTimer: ReturnType<typeof setInterval> | null = null;
 
     try {
       // STT engine warmup FIRST — before config/DB awaits, so model loading
@@ -1092,6 +1101,16 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         }
       } catch (e) {
         log.warn("question radar failed (non-fatal)", { error: String(e) });
+        // Surface to the client — a dead radar is invisible otherwise.
+        emit({
+          type: "pipeline.warning",
+          eventId: randomUUID(),
+          sequenceNo: serverSeq++,
+          occurredAt: new Date().toISOString(),
+          sessionId: session!.id,
+          code: "radar_failed",
+          message: `Question radar failed: ${String(e).slice(0, 140)}`,
+        });
       } finally {
         radarBusy = false;
       }
@@ -1946,10 +1965,13 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.warn("realtime socket error", { error: String(err), traceId });
     });
 
-    // Question radar initial kick — placed HERE at the very end of the
-    // connection setup, after every `let` in the callback body has been
-    // initialized (the previous position mid-setup crashed with a TDZ
-    // ReferenceError and took the whole connection down).
+    // Timers start HERE — the very end of the connection setup, after every
+    // `let` in the callback body has been initialized. (Created earlier, the
+    // 1s watchdog tick fired during the loadWorkspaceAiConfig await — TDZ
+    // ReferenceError → process death. Same class as the radar-kick crash.)
+    staleTimer = startStaleWatchdog();
+
+    // Question radar initial kick — same TDZ rule as above.
     void maybeRadar();
   });
 }
