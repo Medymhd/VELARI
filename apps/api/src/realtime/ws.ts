@@ -92,13 +92,59 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     const traceId = randomUUID();
     log.info("realtime connected", { traceId, sessionId: session!.id, workspaceId: session!.workspaceId });
 
+    // REOPEN RESUME — a reopened session must never restart its sequence
+    // numbering at 0: transcript_segments carries a UNIQUE (session_id,
+    // sequence_no, is_final) index, and yesterday's rows already occupy 0..N.
+    // Every new final would collide and fail to persist SILENTLY (the UI
+    // still streams live via WS, so it looks like transcription works while
+    // nothing saves — then everything is gone on reload). Resume the
+    // assembler from the DB tail instead: numbering continues at max+1 AND
+    // the coach's verbatim window opens with the prior conversation context.
+    const assembler = newAssemblerState();
+    try {
+      const tail = await db.transcriptSegment.findMany({
+        where: { sessionId: session!.id },
+        orderBy: { sequenceNo: "desc" },
+        take: 10,
+      });
+      for (const s of tail.reverse()) {
+        try {
+          ingestSegment(
+            assembler,
+            {
+              id: s.id,
+              sessionId: s.sessionId,
+              sequenceNo: s.sequenceNo,
+              startedAtMs: s.startedAtMs,
+              endedAtMs: s.endedAtMs,
+              text: s.text,
+              confidence: s.confidence ?? 0.9,
+              isFinal: true,
+              source: s.source,
+              ...(s.speaker ? { speaker: s.speaker as "user" | "interviewer" } : {}),
+              createdAt: s.createdAt.toISOString(),
+            } as never,
+            `db:${s.id}`,
+          );
+        } catch { /* skip malformed row */ }
+      }
+      if (tail.length > 0) {
+        log.info("reopened session resumed from transcript", {
+          sessionId: session!.id,
+          resumedSegments: tail.length,
+          nextSequenceNo: assembler.nextSequenceNo,
+        });
+      }
+    } catch (e) {
+      log.warn("reopen resume failed (fresh sequence numbering)", { error: String(e) });
+    }
+
     let serverSeq = 0;
     const seenClientIds = new Set<string>();
     // Dedup window is bounded: every audio.chunk carries an eventId (≈50/s),
     // so an unbounded Set leaks ~180k strings/hour on long sessions. Replays
     // only ever arrive seconds apart — 600 ids of recency is plenty.
     const SEEN_CLIENT_IDS_MAX = 600;
-    const assembler = newAssemblerState();
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
     let warmTimer: ReturnType<typeof setInterval> | null = null;
@@ -461,6 +507,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       utteranceTurn[ch] = (utteranceTurn[ch] ?? 0) + 1;
     };
 
+    /** One-shot flag: transcript persist failures must surface to the UI. */
+    let persistWarned = false;
+
     async function handleFinal(
       text: string,
       confidence: number,
@@ -531,6 +580,20 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     });
   } catch (e) {
     log.warn("failed to persist transcript segment", { error: String(e) });
+    // Silent transcript loss is the worst failure mode (the live panel keeps
+    // streaming, so it LOOKS fine until reload). Surface it once loudly.
+    if (!persistWarned) {
+      persistWarned = true;
+      emit({
+        type: "pipeline.warning",
+        eventId: randomUUID(),
+        sequenceNo: serverSeq++,
+        occurredAt: new Date().toISOString(),
+        sessionId: session!.id,
+        code: "persist_failed",
+        message: "Transcript persistence failed — new speech will not be saved. Restart the session.",
+      });
+    }
   }
 
       try {
