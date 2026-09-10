@@ -39,7 +39,7 @@ const MODES: { id: string; label: string }[] = [
 /** Speakable-answer insight kinds — these sort above coach frameworks in the
  *  Coaching panel (answer-first, matching the stealth overlay). */
 function isAnswerInsight(i: { type?: string }): boolean {
-  return i.type === "auto_answer" || i.type === "prepared_answer" || i.type === "suggested_answer_cached";
+  return i.type === "auto_answer" || i.type === "prepared_answer" || i.type === "solver" || i.type === "suggested_answer_cached";
 }
 
 const TranscriptRow = memo(function TranscriptRow({ t }: { t: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number | null; speaker?: string } }) {  const conf = t.confidence ?? 0;
@@ -113,7 +113,7 @@ function useRealtime(sessionId: string | null) {
 
     function handleMessage(ev: MessageEvent) {
       try {
-        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; type?: string; contentJson: Record<string, unknown>; createdAt: string } };
+        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; questions?: string[]; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; type?: string; contentJson: Record<string, unknown>; createdAt: string } };
         if (msg.type === "transcript.final" || msg.type === "transcript.partial") {
           const s = msg.segment!;
           pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined, source: s.source });
@@ -123,6 +123,12 @@ function useRealtime(sessionId: string | null) {
         } else if (msg.type === "coach.working") {
           // First token from the coach — replace dead air with a live indicator.
           setCoachWorking(true);
+        } else if (msg.type === "radar.predicted" && Array.isArray(msg.questions)) {
+          // Question radar horizon → the stealth overlay's "Up next" section.
+          // Rust emitter: the only cross-window path that never drops.
+          if (isTauri()) {
+            void invoke("overlay_emit", { event: "overlay://predicted", payload: { questions: msg.questions.slice(0, 2) } }).catch(() => {});
+          }
         } else if (msg.type === "pipeline.warning" && msg.code && msg.code !== "pong" && msg.code !== "session_not_live") {
           // Surface backend trouble instead of swallowing it (throttled per code).
           const now = Date.now();
@@ -376,6 +382,30 @@ const [overlayOn, setOverlayOn] = useState(false);
     }
   }, [connected]);
 
+  // Written asks from the stealth overlay ("Ask"/"Solve" input). The overlay
+  // now routes through the RUST emitter (overlay_emit command) — JS-to-JS
+  // cross-webview emit silently drops messages in the field, which is why
+  // asks could get stuck on the overlay with the coach never reacting.
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let un: UnlistenFn | null = null;
+    void listen<{ text: string; mode?: "ask" | "solve" }>("overlay://user_ask", (e) => {
+      const text = (e.payload?.text ?? "").trim();
+      if (!text || !sessionId) return;
+      const solve = e.payload?.mode === "solve";
+      const frame = {
+        type: solve ? "coach.solve" : "coach.ask",
+        eventId: Math.random().toString(36).slice(2),
+        sequenceNo: Date.now(),
+        occurredAt: new Date().toISOString(),
+        text,
+      };
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(frame));
+      else notify("error", "Realtime not connected — cannot send the ask");
+    }).then((u) => (un = u));
+    return () => un?.();
+  }, [nativeAvailable, sessionId, notify]);
+
   // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) —
   // it works from every screen and backfills the panel when it opens.
 
@@ -400,9 +430,8 @@ const [overlayOn, setOverlayOn] = useState(false);
   const passthroughRef = useRef(false);
   useEffect(() => {
     if (!nativeAvailable) return;
-    invoke("register_global_chord", { chord: "Ctrl+Shift+B", action: "passthrough-toggle" }).catch((e) =>
-      console.warn("global chord unavailable", e),
-    );
+    // Ctrl+Shift+B is registered and dispatched Rust-side (works on every
+    // screen) — LiveSession only mirrors the state here for the UI.
     invoke("register_global_chord", { chord: "Ctrl+Shift+P", action: "overlay-cycle-position" }).catch((e) =>
       console.warn("global chord unavailable", e),
     );
@@ -414,23 +443,24 @@ const [overlayOn, setOverlayOn] = useState(false);
     let un: UnlistenFn | null = null;
     void listen("chord://activated", (e) => {
       const action = (e.payload as { action?: string }).action ?? "";
-      if (action === "passthrough-toggle") {
-        if (!overlayOnRef.current) return; // passthrough only makes sense with the overlay visible
-        const next = !passthroughRef.current;
-        passthroughRef.current = next;
-        void invoke("overlay_set_passthrough", { verticalId: "interview-intelligence", enabled: next })
-          .then(() => notify("info", next ? "Overlay click-through ON (Ctrl+Shift+B to toggle)" : "Overlay click-through OFF"))
-          .catch((err) => notify("error", `Passthrough failed: ${errText(err)}`));
-      } else if (action === "overlay-cycle-position") {
+      if (action === "overlay-cycle-position") {
         if (!overlayOnRef.current) return;
         void invoke<string>("overlay_cycle_position", { verticalId: "interview-intelligence" })
           .then((spot) => notify("info", `Overlay position: ${spot} (Ctrl+Shift+P to cycle)`))
           .catch((err) => notify("error", `Position cycle failed: ${errText(err)}`));
       }
     }).then((u) => (un = u));
+    // The overlay's ● button also toggles passthrough — keep the chord's
+    // state mirror in sync so Ctrl+Shift+B never computes from a stale value
+    // (the "sometimes reversed" feel).
+    let unPt: UnlistenFn | null = null;
+    void listen<boolean>("overlay://passthrough", (e) => {
+      passthroughRef.current = e.payload === true;
+    }).then((u) => (unPt = u));
     return () => {
       un?.();
       unVis?.();
+      unPt?.();
     };
   }, [nativeAvailable]);
 
@@ -939,7 +969,24 @@ const [overlayOn, setOverlayOn] = useState(false);
             const lowConf = typeof ins.contentJson.stt_confidence === "number" && (ins.contentJson.stt_confidence as number) < 0.7;
             const ring = isNewest ? "var(--success)" : lowConf ? "#fbbf24" : "var(--accent)";
             const cardStyle = { background: "var(--surface-2)", borderColor: ring, borderWidth: 2 };
-            return ins.type === "prepared_answer" ? (
+            return ins.type === "solver" ? (
+              <div key={ins.id} className="card insight-arrive" style={cardStyle}>
+                <div className="small muted" style={{ marginBottom: 4 }}>
+                  Solved — {String(ins.contentJson.question ?? "").slice(0, 120)}
+                  {ins.contentJson.offline === true && (
+                    <span className="badge" style={{ marginLeft: 8, color: "#f87171", borderColor: "rgba(248,113,113,0.4)" }} title="The LLM call failed — nothing usable came back.">
+                      LLM unavailable
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{String(ins.contentJson.answer ?? "")}</div>
+                {overlayOn && (
+                  <button className="ghost" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => void emit("overlay://insight", { type: "solver", contentJson: ins.contentJson })}>
+                    Send to overlay
+                  </button>
+                )}
+              </div>
+            ) : ins.type === "prepared_answer" ? (
               <div key={ins.id} className="card insight-arrive" style={cardStyle}>
                 <div className="small muted" style={{ marginBottom: 4 }}>
                   Prepared answer ({Math.round(Number(ins.contentJson.score ?? 0) * 100)}% match) — {String(ins.contentJson.title ?? "")}

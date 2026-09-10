@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -161,6 +161,13 @@ fn run_dsp_loop(
     // Speech/rms snapshot read by the emitter at flush time.
     let speech_flag = Arc::new(AtomicBool::new(false));
     let rms_bits = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    // Starvation gates for the loopback keepalive synthesis (see 1b below):
+    // last real sample drained, and last synthetic frame emitted.
+    let mut last_real_audio = Instant::now();
+    let mut last_synth = Instant::now();
+    // One-time scratch for the synthesized zero frames (see 1b below).
+    let mut zero_frame_scratch: Vec<i16> = vec![0; chunk_size];
+    let zero_frame_bytes: Vec<u8> = vec![0u8; chunk_size * 2];
 
     let mut emitter = {
         let app = app.clone();
@@ -201,8 +208,53 @@ fn run_dsp_loop(
         }
 
         // 1. Drain ALL available samples (lock-free).
+        let mut drained = false;
         while let Some(sample) = consumer.try_pop() {
             raw_batch.push(sample);
+            drained = true;
+        }
+        if drained {
+            last_real_audio = Instant::now();
+        }
+
+        // 1b. Loopback starvation keepalives — WASAPI loopback delivers NO
+        // packets during silence, so after speech ends this loop sees no
+        // samples: the gate never runs again, no keepalives and no
+        // SpeechEdge::Ended reach the server, and the server's endpointing
+        // (which keys off incoming chunks) can't fire. Partials then hang at
+        // ~70% confidence until the API's 10s stale watchdog force-flushes —
+        // the reported "partial takes forever to go green, coach responds
+        // late".
+        //
+        // STRICTLY gated and real-time paced:
+        //  - `last_real_audio` >= 100ms: loopback packet gaps during active
+        //    playback are ~10-40ms — a 100ms starvation means speech truly
+        //    ended. Without this gate the synthesis interleaved zeros with
+        //    speech at 4-5x real-time and stretched the whole audio
+        //    timeline (the "transcription got slower" regression).
+        //  - one 20ms zero-frame per 20ms of wall time (last_synth), so the
+        //    suppressor's state machine — hangover expiry, Ended edge,
+        //    100ms keepalives — advances on the TRUE clock, exactly like
+        //    the CPAL mic path which always delivers real silence frames.
+        if !drained
+            && last_real_audio.elapsed() >= Duration::from_millis(100)
+            && last_synth.elapsed() >= Duration::from_millis(20)
+        {
+            last_synth = Instant::now();
+            // Reusable scratch (allocated once below the loop header) — a
+            // fresh Vec per 20ms tick would churn the allocator for zeros.
+            for s in zero_frame_scratch.iter_mut() {
+                *s = 0;
+            }
+            let (action, edge) = suppressor.process_edges(&zero_frame_scratch);
+            if matches!(action, FrameAction::SendSilence | FrameAction::Send(_)) {
+                speech_flag.store(false, Ordering::Relaxed);
+                rms_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
+                emitter.push(&zero_frame_bytes);
+            }
+            if edge == SpeechEdge::Ended {
+                emitter.flush();
+            }
         }
 
         // 2. Resample (anti-aliased) to 16kHz i16, or f32 -> i16 passthrough.
@@ -691,10 +743,9 @@ mod dual_loopback {
                             .Activate(CLSCTX_ALL, None)
                             .map_err(|e| anyhow::anyhow!("activate: {e}"))?;
                         let mixformat = client.GetMixFormat().map_err(|e| anyhow::anyhow!("mixformat: {e}"))?;
-                        let wfx = unsafe { &*mixformat };
+                        let wfx = &*mixformat;
                         let rate = wfx.nSamplesPerSec;
                         let channels = wfx.nChannels as usize;
-                        let align = wfx.nBlockAlign as usize;
                         client
                             .Initialize(
                                 AUDCLNT_SHAREMODE_SHARED,

@@ -20,7 +20,7 @@ import {
 } from "@app/vertical-interview-intelligence";
 import { captureStyleProfile, withStyle, type StyleProfile, createEmbeddingProvider } from "@app/ai-runtime";
 import { executeRouted, loadWorkspaceAiConfig } from "../ai/runtime.js";
-import { AnswerCache, prepHashOf, questionTokens, keyHashFor } from "../services/answerCache.js";
+import { AnswerCache, prepHashOf, questionTokens, keyHashFor, normalizeQuestion } from "../services/answerCache.js";
 
 const log = logger({ svc: "realtime" });
 const breakers = new CircuitBreakerRegistry();
@@ -94,6 +94,10 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
 
     let serverSeq = 0;
     const seenClientIds = new Set<string>();
+    // Dedup window is bounded: every audio.chunk carries an eventId (≈50/s),
+    // so an unbounded Set leaks ~180k strings/hour on long sessions. Replays
+    // only ever arrive seconds apart — 600 ids of recency is plenty.
+    const SEEN_CLIENT_IDS_MAX = 600;
     const assembler = newAssemblerState();
     let lastFinalIds: string[] = [];
     let coachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -155,7 +159,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     } = {};
     const sttEngines = new Map<string, SttEngine>();
     /** Per-channel partial/final recency — drives the staleness watchdog. */
-    const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number }>();
+    const channelAudio = new Map<string, { lastPartialAt: number; lastFinalAt: number; lastChunkAtMs: number }>();
     const engineFor = (channel?: string): SttEngine => {
       const key = channel ?? "default";
       let engine = sttEngines.get(key);
@@ -178,12 +182,23 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       embeddingModel: process.env.EMBEDDING_MODEL,
     });
     const answerCache = new AnswerCache(async (texts) => embedder.embed(texts));
+    // Lookup memo: a final can consult the cache up to three times (pre-gate,
+    // runCoach, manual fast path) — with an external embedder each miss costs
+    // a network round-trip. Same text+key within 10s reuses the verdict.
+    let lastLookup: { key: string; at: number; hit: Awaited<ReturnType<AnswerCache["lookup"]>> } | null = null;
+    async function cachedLookup(text: string, opts: { mode: string; length: string; prepHash: string }) {
+      const key = `${normalizeQuestion(text)}|${opts.mode}|${opts.length}|${opts.prepHash}`;
+      if (lastLookup && lastLookup.key === key && Date.now() - lastLookup.at < 10_000) return lastLookup.hit;
+      const hit = await answerCache.lookup(text, opts);
+      lastLookup = { key, at: Date.now(), hit };
+      return hit;
+    }
     let activePrepHash = "";
     try {
       const rows = await db.answerCacheEntry.findMany({
         where: { workspaceId: session!.workspaceId },
         orderBy: { createdAt: "asc" },
-        take: 500,
+        take: 2000, // full session-memory cap: entries are ~KB, 2000 ≈ a few MB
       });
       answerCache.load(rows.map((r) => ({
         id: r.id,
@@ -200,30 +215,59 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       log.warn("answer cache load failed (cache disabled this session)", { error: String(e) });
     }
 
-    /** Staleness watchdog: a partial hanging with no final (engine wedged,
-     *  gate never closed) force-finalizes after 10s by flushing the engine —
-     *  "70% partials get stuck" is a dead-end otherwise. */
+    /** Endpoint watchdog — turns "partial stuck at 70%" into fast finals.
+     *
+     *  1. Chunk starvation (~1.2s): WASAPI loopback delivers NO packets
+     *     during silence, so after the interviewer stops talking no
+     *     audio.chunk reaches the engine — its feed()-based endpointing
+     *     (800ms quiet tail) never gets a chunk to run on, and the partial
+     *     hangs until the 10s stale flush. Flush as soon as the stream goes
+     *     quiet with a partial outstanding: same semantics as endpointing,
+     *     just enforced where the time information lives.
+     *  2. Wedged decoder (10s): audio still flowing but no final — engine
+     *     stall, force-finalize as before. */
     const staleTimer = setInterval(() => {
       const now = Date.now();
+      // Coach watchdog: a hung await inside runCoach (DB wedge, provider
+      // freeze past the fetch deadline) must never wedge the pipeline
+      // forever — coachBusy stuck true silently kills the coach AND the
+      // cache lookups that live inside it. Force-release after 45s; the
+      // next final re-arms everything naturally.
+      if (coachBusy && coachBusySince > 0 && now - coachBusySince > 45_000) {
+        log.warn("coach stuck >45s — force-releasing pipeline lock", { sessionId: session!.id, stuckMs: now - coachBusySince });
+        coachBusy = false;
+        coachBusySince = 0;
+        draftInFlight = false;
+      }
       for (const [channel, rec] of channelAudio) {
-        if (rec.lastPartialAt > rec.lastFinalAt && now - rec.lastPartialAt > 10_000) {
-          rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
-          const engine = sttEngines.get(channel);
-          if (engine) {
-            log.info("stale partial — forcing flush", { sessionId: session!.id, channel });
-            try {
-              engine.flush((r) => {
-                if (r.isFinal && r.text.trim()) {
-                  const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
-                  void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
-                  advanceTurn(channel);
-                }
-              });
-            } catch { /* engine already gone */ }
-          }
+        if (rec.lastPartialAt <= rec.lastFinalAt) continue;
+        const sinceChunk = now - rec.lastChunkAtMs;
+        const sincePartial = now - rec.lastPartialAt;
+        // Starvation: no chunk for 1.2s with a partial outstanding — the
+        // engine can't endpoint without chunks, flush now. (After the flush
+        // lastFinalAt > lastPartialAt, so this fires once per utterance.)
+        // Wedged: chunks still flowing but no final for 10s.
+        const starving = rec.lastChunkAtMs > 0 && sinceChunk > 1_200;
+        if (!starving && sincePartial <= 10_000) continue;
+        rec.lastFinalAt = now; // reset before flush to avoid re-trigger loops
+        const engine = sttEngines.get(channel);
+        if (engine) {
+          log.info(
+            starving ? "endpoint flush (chunk starvation)" : "stale partial — forcing flush",
+            { sessionId: session!.id, channel, sincePartialMs: sincePartial, sinceChunkMs: sinceChunk },
+          );
+          try {
+            engine.flush((r) => {
+              if (r.isFinal && r.text.trim()) {
+                const speaker = channel === "system" ? "interviewer" : channel === "mic" ? "user" : undefined;
+                void handleFinal(r.text, r.confidence, r.startedAtMs, r.endedAtMs, engine.source, speaker, utteranceId(channel));
+                advanceTurn(channel);
+              }
+            });
+          } catch { /* engine already gone */ }
         }
       }
-    }, 5_000);
+    }, 1_000);
 
     try {
       // STT engine warmup FIRST — before config/DB awaits, so model loading
@@ -262,6 +306,69 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       log.info("STT engine config", { hasDeepgram: !!sttOpts.deepgramKey, hasPersona: !!personaContext });
       await loadPrepMaterials();
+
+      // Session memory — fully warm from the first millisecond of a (re)opened
+      // session:
+      //   1. prepHash pinned now so every cache path agrees on the key.
+      //   2. Session-self hydration: this session's own past answers seed the
+      //      in-memory cache (drafts are NOT in the workspace cache rows —
+      //      see the draft seeding — so a reopened session would otherwise
+      //      start cold for exactly the questions it already answered).
+      //   3. Embedding backfill: entries seeded while the embedder was down
+      //      have empty vectors; backfill once in the background and persist,
+      //      so the vector tier serves them forever after.
+      activePrepHash = prepHashOf(prepContext, qaBank);
+      try {
+        const own = await db.sessionInsight.findMany({
+          where: { sessionId: session!.id, type: { in: ["suggested_answer", "auto_answer"] } },
+          orderBy: { createdAt: "asc" },
+        });
+        let hydrated = 0;
+        for (const ins of own) {
+          const cj = (ins.contentJson ?? {}) as Record<string, unknown>;
+          const q = String(cj.detected_question ?? cj.question ?? "").trim();
+          const answerText = Array.isArray(cj.talking_points)
+            ? (cj.talking_points as unknown[]).map(String).join(" ")
+            : String(cj.answer ?? "");
+          if (q.length < 8 || !answerText || answerCache.hasQuestion(q, sessionMode, sessionLength, activePrepHash)) continue;
+          answerCache.seed({
+            id: ins.id,
+            question: q,
+            tokens: questionTokens(q),
+            embedding: [],
+            frameworkJson: cj,
+            answerText,
+            mode: sessionMode,
+            length: sessionLength,
+            prepHash: activePrepHash,
+          });
+          hydrated += 1;
+        }
+        if (hydrated > 0) log.info("session memory hydrated", { sessionId: session!.id, entries: hydrated });
+      } catch (e) {
+        log.warn("session memory hydration skipped", { error: String(e) });
+      }
+      // Background vector backfill — never on the answer path.
+      void (async () => {
+        try {
+          const missing = answerCache.missingEmbeddings();
+          if (missing.length === 0) return;
+          for (let i = 0; i < missing.length; i += 32) {
+            const batch = missing.slice(i, i + 32);
+            const vecs = await embedder.embed(batch.map((b) => b.question)).catch(() => [] as number[][]);
+            for (let j = 0; j < batch.length; j++) {
+              const vec = vecs[j];
+              if (!vec || vec.length === 0) continue;
+              answerCache.setEmbedding(batch[j]!.id, vec);
+              await db.answerCacheEntry.update({ where: { id: batch[j]!.id }, data: { embeddingJson: vec } }).catch(() => {});
+            }
+          }
+          log.info("cache embeddings backfilled", { sessionId: session!.id, count: missing.length });
+        } catch { /* best-effort */ }
+      })();
+      // (Question radar kick moved to the END of the connection setup — the
+      // TDZ crash: this line ran before the `let radarBusy`/`coachBusy`
+      // declarations below had executed, killing the whole connection.)
 
       // Provider warmup: the first real coach call otherwise pays DNS + TLS +
       // auth handshake (~0.3-1s) on the critical path while the candidate is
@@ -354,7 +461,18 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       utteranceTurn[ch] = (utteranceTurn[ch] ?? 0) + 1;
     };
 
-    async function handleFinal(text: string, confidence: number, startedAtMs: number, endedAtMs: number, source: string, speaker?: "user" | "interviewer", segmentId?: string): Promise<void> {
+    async function handleFinal(
+      text: string,
+      confidence: number,
+      startedAtMs: number,
+      endedAtMs: number,
+      source: string,
+      speaker?: "user" | "interviewer",
+      segmentId?: string,
+      /** Pre-resolved framework (cache hit) — emitted as-is instead of running
+       *  the LLM coach. */
+      cachedFramework?: Record<string, unknown>,
+    ): Promise<void> {
       // Echo dedup (rival `ECHO_WINDOW` parity): the mic hears the speaker's
       // output acoustically — if a user final near-identically repeats the
       // last interviewer final within 8s, it's echo, drop it.
@@ -373,7 +491,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         }
       }
 
-      if (speaker === "interviewer") sawInterviewer = true;
+      // Manual (typed overlay) asks count as interviewer-perspective for the
+      // coach pipeline, but are NOT live interviewer audio — flipping
+      // sawInterviewer would silence mic-driven coaching in speakerphone/
+      // in-person sessions after the first typed question.
+      if (speaker === "interviewer" && source !== "manual") sawInterviewer = true;
 
       const sequenceNo = assembler.nextSequenceNo;
       const finalSegmentId = segmentId ?? randomUUID();
@@ -489,6 +611,45 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         void summarizeChunk();
       }
 
+      // Pre-resolved framework (cache fast path from coach.ask): emit as a
+      // suggested_answer with cached chips and return — no LLM, and the
+      // judge never gets a chance to swallow a manual ask as a duplicate.
+      if (cachedFramework) {
+        const insightId = randomUUID();
+        const contentJson: Record<string, unknown> = { ...cachedFramework, stt_confidence: confidence };
+        try {
+          await db.sessionInsight.create({
+            data: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "suggested_answer",
+              sourceSegmentIds: [finalSegmentId],
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+            },
+          });
+        } catch (e) {
+          log.warn("failed to persist cached insight", { error: String(e) });
+        }
+        emit({
+          type: "coach.suggestion",
+          eventId: randomUUID(),
+          sequenceNo: serverSeq++,
+          occurredAt: new Date().toISOString(),
+          sessionId: session!.id,
+          insight: {
+            id: insightId,
+            sessionId: session!.id,
+            type: "suggested_answer",
+            sourceSegmentIds: [finalSegmentId],
+            contentJson: contentJson as any,
+            modelTraceId: traceId,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+
       // Rival semantic (Cluely/LockedIn parity): the coach responds to the
       // interviewer's speech (loopback). Channel-less (browser mic) finals
       // count as interviewer. Until interviewer audio exists at all, mic
@@ -496,12 +657,70 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // speakerphone/in-person session. Once loopback interviewer audio
       // appears, mic speech stops coaching (it's the user's own voice).
       if (speaker !== "user" || !sawInterviewer) {
+        // CACHE/PREDICTED FIRST — when the answer is already known (asked
+        // before, or radar pre-computed), serve it in ~0ms: no draft claim,
+        // no coach call, no judge. This is the whole point of the session
+        // memory; the radar's pre-computed answers live here too.
+        if (!preparedServed && looksLikeQuestion(text) && answerCache.size() > 0) {
+          const pHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+          try {
+            const hit = await cachedLookup(text, { mode: sessionMode, length: sessionLength, prepHash: pHash });
+            if (hit && (hit.key === "exact" || hit.key === "fuzzy")) {
+              log.info("cache-first hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
+              await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
+              radarPreServes += hit.frameworkJson?.predicted === true ? 1 : 0;
+              const insightId = randomUUID();
+              const contentJson: Record<string, unknown> = {
+                ...hit.frameworkJson,
+                cached: true,
+                cache_tier: hit.key,
+                cache_score: hit.score,
+                cached_question: hit.matchedQuestion,
+                detected_question: text.slice(0, 300),
+              };
+              try {
+                await db.sessionInsight.create({
+                  data: {
+                    id: insightId,
+                    sessionId: session!.id,
+                    type: "suggested_answer",
+                    sourceSegmentIds: [finalSegmentId],
+                    contentJson: contentJson as any,
+                    modelTraceId: traceId,
+                  },
+                });
+              } catch (e) {
+                log.warn("failed to persist cache-first insight", { error: String(e) });
+              }
+              emit({
+                type: "coach.suggestion",
+                eventId: randomUUID(),
+                sequenceNo: serverSeq++,
+                occurredAt: new Date().toISOString(),
+                sessionId: session!.id,
+                insight: {
+                  id: insightId,
+                  sessionId: session!.id,
+                  type: "suggested_answer",
+                  sourceSegmentIds: [finalSegmentId],
+                  contentJson: contentJson as any,
+                  modelTraceId: traceId,
+                  createdAt: new Date().toISOString(),
+                },
+              });
+              return;
+            }
+          } catch (e) {
+            log.warn("cache-first lookup failed (continuing)", { error: String(e) });
+          }
+        }
         // Answer-first sequencing: a question-shaped final drafts the spoken
         // answer FIRST, then the framework coach runs after it settles. The
         // speakable answer lands after ONE LLM round-trip (instead of two
         // sequential ones), and there is never more than ONE concurrent call
         // — two concurrent calls trip free-tier 429s, which open breakers and
-        // stall the whole pipeline (the regression this replaces).
+        // stall the whole pipeline (the regression this replaces). Skipped
+        // entirely when the cache-first block above already served the answer.
         if (looksLikeQuestion(text) && !preparedServed && maybeClaimDraft(text)) {
           lastTriggerNorm = normalizeTrigger(text); // keep the coach gate in sync
           const tail = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n");
@@ -516,6 +735,9 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           scheduleCoaching();
         }
       }
+      // Radar re-arm: every final is a chance to refresh predictions (gates +
+      // cadence enforced inside maybeRadar — this call is free when idle).
+      void maybeRadar();
     }
 
     function sleepMs(ms: number): Promise<void> {
@@ -652,6 +874,8 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     let coachAbort: AbortController | null = null;
     let coachEpoch = 0;
     let coachBusy = false;
+    /** When the current runCoach started — drives the stuck watchdog. */
+    let coachBusySince = 0;
 
     /** Confirmation window: coaching fires only after the speaker has held
      *  still for this long. Every new final from the same conversation resets
@@ -659,8 +883,163 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
      *  answer. Wait-for-completion beats raw speed. */
     const COACH_CONFIRM_MS = 900;
 
+    // ── Question radar ─────────────────────────────────────────────────
+    // Predicts the NEXT likely interviewer questions and pre-computes their
+    // answers into the cache, so a predicted follow-up is served in ~0ms the
+    // moment it is actually asked. Strictly idle-window work: it fires only
+    // when the coach AND draft are quiet (≥8s since the last provider call),
+    // at most once per 3 minutes, as ONE batched LLM call — it never stacks
+    // with coaching and never touches Moonshine (network-bound JSON only).
+    const RADAR_MIN_INTERVAL_MS = 180_000;
+    const RADAR_IDLE_MS = 8_000;
+    let radarBusy = false;
+    /** coach.solve in flight — the radar must not stack a second provider call. */
+    let solveBusy = false;
+    let lastRadarAt = 0;
+    let radarPreServes = 0;
+
+    async function maybeRadar(force = false): Promise<void> {
+      if (!workspaceCfg || radarBusy) return;
+      const now = Date.now();
+      if (!force && now - lastRadarAt < RADAR_MIN_INTERVAL_MS) return;
+      if (coachBusy || draftInFlight || solveBusy) return;
+      if (now - lastCoachActivityAt < RADAR_IDLE_MS) return;
+      radarBusy = true;
+      lastRadarAt = now;
+      try {
+        const askedNorms = new Set(assembler.finals.map((s: { text: string }) => normalizeQuestion(s.text)));
+        const outcome = await executeRouted(
+          { db, breakers },
+          workspaceCfg,
+          session!.workspaceId,
+          session!.id,
+          {
+            taskClass: "question_radar",
+            privacyMode: workspaceCfg.privacyMode,
+            maxTokens: 700,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are an interview radar. Given the role, the candidate's prep materials and the conversation so far, predict the THREE questions the interviewer is MOST likely to ask next (spoken style, as an interviewer would say them), and for each write the best possible candidate answer grounded in the prep materials. Never repeat a question already asked. Output ONLY JSON: {\"qa\":[{\"question\":string,\"answer\":string,\"talking_points\":string[]}]} — exactly 3 items.",
+              },
+              {
+                role: "user",
+                content: [
+                  personaContext ?? "",
+                  prepContext ? `Prep materials:\n${headParagraphs(prepContext, 4000)}` : "",
+                  rollingSummary ? `Conversation so far (summary):\n${rollingSummary}` : "",
+                  `Already asked (do NOT repeat):\n${assembler.finals.slice(-6).map((s: { text: string }) => `- ${s.text}`).join("\n")}`,
+                ].filter(Boolean).join("\n\n"),
+              },
+            ],
+            responseSchema: {
+              type: "object",
+              properties: {
+                qa: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      question: { type: "string" },
+                      answer: { type: "string" },
+                      talking_points: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["question", "answer", "talking_points"],
+                  },
+                },
+              },
+              required: ["qa"],
+            },
+          } as never,
+        );
+        if (!outcome.ok) return;
+        let qa: Array<{ question?: unknown; answer?: unknown; talking_points?: unknown }> = [];
+        const raw = (outcome.structured as { qa?: unknown } | null)?.qa
+          ?? (() => { try { return (JSON.parse(outcome.text ?? "") as { qa?: unknown }).qa; } catch { return undefined; } })();
+        if (Array.isArray(raw)) qa = raw as typeof qa;
+        const pHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+        let seeded = 0;
+        const seededQs: string[] = [];
+        for (const item of qa.slice(0, 3)) {
+          const q = String(item.question ?? "").trim();
+          const a = String(item.answer ?? "").trim();
+          if (q.length < 12 || a.split(/\s+/).length < 6) continue;
+          if (askedNorms.has(normalizeQuestion(q))) continue; // already asked
+          if (answerCache.hasQuestion(q, sessionMode, sessionLength, pHash)) continue; // already cached
+          const tokens = questionTokens(q);
+          const [emb] = await embedder.embed([q]).catch(() => [[] as number[]]);
+          const frameworkJson = {
+            detected_question: q,
+            suggested_outline: [],
+            talking_points: Array.isArray(item.talking_points) ? (item.talking_points as unknown[]).map(String).slice(0, 4) : [a.slice(0, 160)],
+            confidence: 0.75,
+            predicted: true,
+          };
+          const entry = {
+            id: randomUUID(),
+            workspaceId: session!.workspaceId,
+            keyHash: keyHashFor({ question: q, mode: sessionMode, length: sessionLength, prepHash: pHash }),
+            question: q,
+            tokensJson: tokens,
+            embeddingJson: (emb ?? []) as unknown as Prisma.InputJsonValue,
+            frameworkJson: frameworkJson as unknown as Prisma.InputJsonValue,
+            answerText: a,
+            mode: sessionMode,
+            length: sessionLength,
+            prepHash: pHash,
+            hitCount: 0,
+            sourceSessionId: session!.id,
+          };
+          try {
+            await db.answerCacheEntry.upsert({
+              where: { workspaceId_keyHash: { workspaceId: session!.workspaceId, keyHash: entry.keyHash } },
+              create: entry,
+              update: { frameworkJson: entry.frameworkJson, answerText: a, embeddingJson: entry.embeddingJson, tokensJson: entry.tokensJson },
+            });
+          } catch (e) {
+            log.warn("radar cache upsert failed", { error: String(e) });
+          }
+          answerCache.seed({
+            id: entry.id,
+            question: q,
+            tokens,
+            embedding: emb ?? [],
+            frameworkJson: frameworkJson as Record<string, unknown>,
+            answerText: a,
+            mode: sessionMode,
+            length: sessionLength,
+            prepHash: pHash,
+          });
+          seededQs.push(q);
+          seeded += 1;
+        }
+        log.info("question radar refresh", { sessionId: session!.id, seeded, preServedSoFar: radarPreServes });
+        // Surface the horizon on the stealth overlay ("Up next") — the client
+        // forwards this to the overlay via the Rust emitter.
+        if (seededQs.length > 0) {
+          emit({
+            type: "radar.predicted",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            questions: seededQs.slice(0, 2),
+          } as never);
+        }
+      } catch (e) {
+        log.warn("question radar failed (non-fatal)", { error: String(e) });
+      } finally {
+        radarBusy = false;
+      }
+    }
+
     /** Junk-trigger gate state: the last normalized trigger text. */
     let lastTriggerNorm = "";
+
+    /** Manual-ask duplicate-bypass — set by coach.ask around its runCoach
+     *  invocation so the judge never swallows a typed question. */
+    let bypassDuplicateFilter = false;
 
     /** Timestamp of the last heuristic verbatim draft. The coach's own draft
      *  trigger defers to it — one draft per question, whichever path fires
@@ -697,6 +1076,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       coachAbort = abort;
       const epoch = ++coachEpoch;
       coachBusy = true;
+      coachBusySince = Date.now();
       lastCoachActivityAt = Date.now();
       const startedAt = Date.now();
       const verbatim = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n") || lastFinalIds.join(" ");
@@ -726,7 +1106,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       const lastQuestionLine = verbatim.split("\n").filter(Boolean).at(-1) ?? "";
       if (answerCache.size() > 0 && lastQuestionLine.length > 12) {
         try {
-          const hit = await answerCache.lookup(lastQuestionLine, { mode: sessionMode, length: sessionLength, prepHash });
+          const hit = await cachedLookup(lastQuestionLine, { mode: sessionMode, length: sessionLength, prepHash });
           if (hit) {
             log.info("answer cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
             await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
@@ -863,8 +1243,14 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           if (sttConfidence !== undefined) contentJson.stt_confidence = sttConfidence;
 
           // Auto-answer judge: filter weak/repetitive output before UI + persistence.
-          const verdict = judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
-          if (!verdict.accept) {
+          // Manual asks (bypass) skip the duplicate gate — the user explicitly
+          // typed this question; silence is the worst possible outcome.
+          const bypassJudge = bypassDuplicateFilter;
+          bypassDuplicateFilter = false;
+          const verdict = bypassJudge
+            ? { accept: true, reason: "manual_bypass" as string | undefined }
+            : judgeSuggestion(judge, contentJson as unknown as CoachFramework, Date.now());
+          if (!verdict.accept && !(verdict.reason === "duplicate_question" && bypassJudge)) {
             // Duplicates are correct suppression (same question already answered);
             // everything else still shows the offline scaffold so the panel is
             // never silently empty.
@@ -985,6 +1371,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           });
         } finally {
           coachBusy = false;
+          coachBusySince = 0;
           if (coachAbort === abort) coachAbort = null;
         }
     }
@@ -1155,6 +1542,48 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             createdAt: new Date().toISOString(),
           },
         });
+        // Seed the cache with the spoken draft — these are the answers the
+        // user actually reads aloud, yet only judge-accepted frameworks used
+        // to seed. Re-asking (or a radar-adjacent paraphrase) must hit cache.
+        try {
+          const seedPrepHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+          const seedTokens = questionTokens(question);
+          const [emb] = await embedder.embed([question]).catch(() => [[] as number[]]);
+          const seedFramework = { question, answer } as unknown as Prisma.InputJsonValue;
+          const seedEntry = {
+            id: randomUUID(),
+            workspaceId: session!.workspaceId,
+            keyHash: keyHashFor({ question, mode: sessionMode, length: sessionLength, prepHash: seedPrepHash }),
+            question,
+            tokensJson: seedTokens,
+            embeddingJson: (emb ?? []) as unknown as Prisma.InputJsonValue,
+            frameworkJson: seedFramework,
+            answerText: answer,
+            mode: sessionMode,
+            length: sessionLength,
+            prepHash: seedPrepHash,
+            hitCount: 0,
+            sourceSessionId: session!.id,
+          };
+          await db.answerCacheEntry.upsert({
+            where: { workspaceId_keyHash: { workspaceId: session!.workspaceId, keyHash: seedEntry.keyHash } },
+            create: seedEntry,
+            update: { frameworkJson: seedFramework, answerText: answer, embeddingJson: seedEntry.embeddingJson, tokensJson: seedTokens },
+          });
+          answerCache.seed({
+            id: seedEntry.id,
+            question,
+            tokens: seedTokens,
+            embedding: emb ?? [],
+            frameworkJson: { question, answer },
+            answerText: answer,
+            mode: sessionMode,
+            length: sessionLength,
+            prepHash: seedPrepHash,
+          });
+        } catch (e) {
+          log.warn("draft cache seed failed (non-fatal)", { error: String(e) });
+        }
       } catch (e) {
         log.warn("auto-answer failed", { error: String(e) });
       }
@@ -1176,7 +1605,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       }
       const frame = frameResult.data;
       if ("eventId" in frame && seenClientIds.has(frame.eventId)) return;
-      if ("eventId" in frame) seenClientIds.add(frame.eventId);
+      if ("eventId" in frame) {
+        seenClientIds.add(frame.eventId);
+        if (seenClientIds.size > SEEN_CLIENT_IDS_MAX) {
+          // Sets iterate in insertion order — evict the oldest fifth.
+          let evict = SEEN_CLIENT_IDS_MAX / 5;
+          for (const id of seenClientIds) {
+            seenClientIds.delete(id);
+            if (--evict <= 0) break;
+          }
+        }
+      }
 
       if (frame.type === "ping") {
         emit({ type: "pipeline.warning", eventId: randomUUID(), sequenceNo: serverSeq++, occurredAt: new Date().toISOString(), code: "pong", message: frame.eventId });
@@ -1210,12 +1649,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         const nowMs = Date.now();
         const engine = engineFor(frame.channel);
         const speaker = frame.channel === "system" ? "interviewer" : frame.channel === "mic" ? "user" : undefined;
+        // Chunk recency — the endpoint watchdog keys off this to distinguish
+        // "engine wedged" from "loopback delivered nothing to endpoint on".
+        const rec0 = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0, lastChunkAtMs: 0 };
+        rec0.lastChunkAtMs = nowMs;
+        channelAudio.set(frame.channel ?? "default", rec0);
         engine.feed(pcm, nowMs, (result) => {
           // Defer socket writes out of the engine's synchronous decode loop —
           // sync sends from inside a native (napi) callback stack corrupt the
           // recognizer's decode state.
           queueMicrotask(() => {
-            const rec = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0 };
+            const rec = channelAudio.get(frame.channel ?? "default") ?? { lastPartialAt: 0, lastFinalAt: 0, lastChunkAtMs: 0 };
             channelAudio.set(frame.channel ?? "default", rec);
             if (!result.isFinal) {
               rec.lastPartialAt = nowMs;
@@ -1256,6 +1700,139 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       if (frame.type === "transcript.client_final") {
         const s = frame.segment;
         await handleFinal(s.text, s.confidence ?? 0.9, s.startedAtMs, s.endedAtMs, s.source, s.speaker);
+        return;
+      }
+
+      if (frame.type === "coach.ask") {
+        // Written ask from the stealth overlay: a typed/pasted question or a
+        // direction for the coach. handleFinal exempts source "manual" from
+        // the sawInterviewer flip — a typed ask is not live interviewer
+        // audio, and flipping it would silence mic-driven coaching in
+        // speakerphone/in-person sessions after the first typed question.
+        const text = frame.text.trim();
+        if (!text || !workspaceCfg) return;
+        log.info("coach.ask received", { sessionId: session!.id, chars: text.length });
+
+        // CACHE FAST PATH — check before handleFinal so a repeated question
+        // is answered instantly and never risked to the duplicate filter.
+        // (The verbatim path also checks, but its duplicate_question swallow
+        // would silently drop a manual ask — unacceptable for typed input.)
+        const askPrepHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
+        if (answerCache.size() > 0 && text.length > 12) {
+          try {
+            const hit = await cachedLookup(text, { mode: sessionMode, length: sessionLength, prepHash: askPrepHash });
+            if (hit) {
+              log.info("coach.ask cache hit", { sessionId: session!.id, tier: hit.key, score: hit.score });
+              await db.answerCacheEntry.update({ where: { id: hit.id }, data: { hitCount: { increment: 1 } } }).catch(() => {});
+              await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer", undefined, {
+                cached: true,
+                cache_tier: hit.key,
+                cache_score: hit.score,
+                cached_question: hit.matchedQuestion,
+                detected_question: text.slice(0, 300),
+                ...hit.frameworkJson,
+              });
+              return;
+            }
+          } catch (e) {
+            log.warn("coach.ask cache lookup failed (continuing normal path)", { error: String(e) });
+          }
+        }
+
+        // No cache hit — normal pipeline (persist segment, LLM coach).
+        // The judge's duplicate_question filter must not swallow a manual
+        // ask: arm the bypass so the next runCoach keeps the result.
+        bypassDuplicateFilter = true;
+        await handleFinal(text, 1.0, Date.now(), Date.now(), "manual", "interviewer");
+        return;
+      }
+
+      if (frame.type === "coach.solve") {
+        // Direct LLM prompt from the overlay "Solve" mode: evaluate, analyze,
+        // compare, draft — answered AS-IS (no coach framing, no prep context,
+        // no cache). The user pasted the full prompt; the model just solves.
+        // Result lands as a `solver` insight rendered in the answer zone of
+        // both the overlay and the Live session panel.
+        const text = frame.text.trim();
+        if (!text || !workspaceCfg) return;
+        if (solveBusy) {
+          // One solve at a time — two concurrent provider calls trip
+          // free-tier 429s and open breakers for the whole pipeline.
+          emit({
+            type: "pipeline.warning",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            code: "solver_busy",
+            message: "A prompt is already running — wait for it to finish",
+          });
+          return;
+        }
+        log.info("coach.solve received", { sessionId: session!.id, chars: text.length });
+        solveBusy = true;
+        try {
+          const outcome = await executeRouted(
+            { db, breakers },
+            workspaceCfg,
+            session!.workspaceId,
+            session!.id,
+            {
+              taskClass: "solver",
+              privacyMode: workspaceCfg.privacyMode,
+              maxLatencyMs: 60_000, // analyze/evaluate prompts run long
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a precise assistant embedded in a live interview copilot. The user sends tasks such as evaluate, analyze, compare, summarize, draft or solve. Answer directly and completely in plain text — short paragraphs or dash lists, no markdown headers. No preamble, no restating the task.",
+                },
+                { role: "user", content: text },
+              ],
+            } as never,
+          );
+          const answer = outcome.ok ? (outcome.text ?? "").trim() : "";
+          const insightId = randomUUID();
+          const contentJson: Record<string, unknown> = {
+            question: text.slice(0, 500),
+            answer,
+            ...(outcome.ok ? {} : { offline: true, error: String(outcome.error ?? "LLM unavailable") }),
+          };
+          try {
+            await db.sessionInsight.create({
+              data: {
+                id: insightId,
+                sessionId: session!.id,
+                type: "solver",
+                sourceSegmentIds: [],
+                contentJson: contentJson as any,
+                modelTraceId: traceId,
+              },
+            });
+          } catch (e) {
+            log.warn("failed to persist solver result", { error: String(e) });
+          }
+          emit({
+            type: "coach.suggestion",
+            eventId: randomUUID(),
+            sequenceNo: serverSeq++,
+            occurredAt: new Date().toISOString(),
+            sessionId: session!.id,
+            insight: {
+              id: insightId,
+              sessionId: session!.id,
+              type: "solver",
+              sourceSegmentIds: [],
+              contentJson: contentJson as any,
+              modelTraceId: traceId,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        } catch (e) {
+          log.warn("coach.solve failed", { error: String(e) });
+        } finally {
+          solveBusy = false;
+        }
         return;
       }
     });
@@ -1305,6 +1882,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     socket.on("error", (err: unknown) => {
       log.warn("realtime socket error", { error: String(err), traceId });
     });
+
+    // Question radar initial kick — placed HERE at the very end of the
+    // connection setup, after every `let` in the callback body has been
+    // initialized (the previous position mid-setup crashed with a TDZ
+    // ReferenceError and took the whole connection down).
+    void maybeRadar();
   });
 }
 

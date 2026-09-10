@@ -54,6 +54,10 @@
       }
       .btn:hover { background: rgba(255, 255, 255, 0.12); }
       .btn.on { background: var(--accent); border-color: transparent; color: #fff; }
+      /* Passthrough toggle: green = click-through ON (can't write over the
+         overlay), red = OFF (fully clickable/writable). */
+      .btn.pt-on { background: #14532d; border-color: rgba(52, 211, 153, 0.6); color: #34d399; }
+      .btn.pt-off { background: #7f1d1d; border-color: rgba(248, 113, 113, 0.6); color: #f87171; }
       .sec { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
       .sec label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
       .q { font-size: 15px; font-weight: 600; line-height: 1.35; }
@@ -85,7 +89,44 @@
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
       }
       .qstrip.empty { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+      /* Up next — question radar horizon: the predicted follow-ups whose
+         answers are ALREADY computed and cached. Serves in ~0ms when asked. */
+      .upnext { display: flex; flex-direction: column; gap: 4px; }
+      .upnext-item {
+        display: flex; gap: 8px; align-items: baseline;
+        font-size: 12.5px; line-height: 1.4; color: var(--text);
+      }
+      .upnext-item .ready { color: #34d399; font-size: 10px; flex: none; font-weight: 600; letter-spacing: 0.04em; }
+      .upnext-item .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Corner grip — drag to resize the overlay. Sits above everything in
+         the bottom-right corner; visible on hover, faint otherwise. */
+      #resizeGrip {
+        position: fixed; right: 0; bottom: 0; width: 18px; height: 18px;
+        cursor: nwse-resize; z-index: 50;
+        background:
+          linear-gradient(135deg, transparent 0 50%, rgba(255, 255, 255, 0.25) 50% 55%, transparent 55% 65%, rgba(255, 255, 255, 0.25) 65% 70%, transparent 70% 80%, rgba(255, 255, 255, 0.25) 80% 85%, transparent 85%);
+        border-radius: 0 0 10px 0;
+        touch-action: none;
+      }
+      #resizeGrip:hover {
+        background:
+          linear-gradient(135deg, transparent 0 50%, var(--accent) 50% 55%, transparent 55% 65%, var(--accent) 65% 70%, transparent 70% 80%, var(--accent) 80% 85%, transparent 85%);
+      }
+      /* Written ask — type or paste a question / direction for the coach.
+         Collapsed by default (stealth first); ⌘/Ctrl+K or the ✎ button opens. */
+      .ask-row { display: flex; gap: 6px; align-items: flex-start; }
+      .ask-row textarea {
+        flex: 1; font: inherit; font-size: 12.5px; line-height: 1.4; color: var(--text);
+        background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border); border-radius: 8px;
+        padding: 7px 9px; resize: none; outline: none;
+      }
+      .ask-row textarea:focus { border-color: var(--accent); }
+      .ask-row .btn { flex: none; padding: 6px 10px; }
+      .ask-mode { display: flex; flex-direction: column; gap: 4px; flex: none; }
+      .ask-mode .mode-btn { padding: 3px 8px; font-size: 10.5px; opacity: 0.75; }
+      .ask-mode .mode-btn.on { background: var(--accent); border-color: transparent; color: #fff; opacity: 1; }
       .muted { color: var(--muted); }
+      .small { font-size: 11px; }
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
       .resp-stack { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 84px; }
@@ -148,6 +189,7 @@
         <span class="spacer" data-tauri-drag-region></span>
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
+      <div id="resizeGrip" title="Drag to resize"></div>
       <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
       <section class="sec" style="flex: 1;">
         <label>Responses — newest first</label>
@@ -158,6 +200,21 @@
       <section class="sec">
         <label>Interviewer</label>
         <div id="qstrip" class="qstrip empty">Listening for the interviewer…</div>
+      </section>
+      <section class="sec" id="upnextSec" style="display:none">
+        <label>Up next — radar</label>
+        <div id="upnext" class="upnext"></div>
+      </section>
+      <section class="sec" id="askSec" style="display:none">
+        <div class="ask-row">
+          <div class="ask-mode">
+            <button class="btn mode-btn on" id="askModeBtn" title="Ask = interview coach pipeline (cache, prep, draft). Ctrl+Enter sends.">Ask</button>
+            <button class="btn mode-btn" id="solveModeBtn" title="Solve = send the prompt straight to the LLM — evaluate, analyze, compare, draft. Ctrl+Enter or Enter sends.">Solve</button>
+          </div>
+          <textarea id="askInput" rows="2" placeholder="Ask the coach — paste a question or a direction… (Enter to send, Shift+Enter for a new line)"></textarea>
+          <button class="btn" id="askSendBtn" title="Send (Enter)">Ask ↵</button>
+        </div>
+        <span class="small muted" id="askStatus" style="display:none"></span>
       </section>
     </div>
     <script>
@@ -214,6 +271,19 @@
         if (isUser) return; // only the interviewer side is shown
         const looksQuestion = t.includes("?") || /^(tell|what|how|why|when|walk|describe|explain|give|can you|could you|do you|have you)\b/i.test(t);
         const backchannel = t.split(/\s+/).length <= 2 && !t.includes("?");
+        // When a predicted question gets asked for real, drop it from the
+        // Up next list (match on the first 4 words — paraphrase-tolerant).
+        const askedHead = t.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
+        document.querySelectorAll("#upnext .upnext-item").forEach((el) => {
+          const q = String(el.dataset?.q ?? "").toLowerCase();
+          if (q && (q.split(/\s+/).slice(0, 4).join(" ") === askedHead || t.toLowerCase().includes(q.slice(0, 40)))) {
+            el.remove();
+          }
+        });
+        if ($("upnext") && $("upnext").childElementCount === 0 && $("upnextSec")) {
+          $("upnextSec").style.display = "none";
+          reportHeight();
+        }
         if (looksQuestion || (!currentQuestion && !backchannel)) {
           currentQuestion = t;
           const strip = $("qstrip");
@@ -237,7 +307,8 @@
         const stack = $("responses");
         const empty = stack.querySelector(".resp-empty");
         if (empty) empty.remove();
-        const isAnswer = e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
+        const isSolve = e.payload.type === "solver";
+        const isAnswer = isSolve || e.payload.type === "auto_answer" || e.payload.type === "prepared_answer" || Boolean(c.answer && !c.detected_question);
         const isPrepared = e.payload.type === "prepared_answer";
         const card = document.createElement("div");
         card.className = "resp-card insight-arrive";
@@ -245,11 +316,13 @@
         if (lowConf) card.classList.add("lowconf");
         const badge = document.createElement("div");
         badge.className = "resp-kind";
-        badge.textContent = isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
+        badge.textContent = isSolve ? "Solved" : isPrepared ? "Prepared answer" : isAnswer ? "Drafted answer" : "Coach";
         card.appendChild(badge);
         const q = document.createElement("div");
         q.className = "resp-q";
-        q.textContent = c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer");
+        q.textContent = isSolve
+          ? (c.question || "Your prompt")
+          : (c.detected_question || c.question || (isPrepared ? String(c.title ?? "") : "Auto-drafted answer"));
         card.appendChild(q);
         if (lowConf) {
           const chip = document.createElement("span");
@@ -257,21 +330,32 @@
           chip.textContent = "low confidence — verify";
           card.appendChild(chip);
         }
+        if (c.offline === true) {
+          const chip = document.createElement("span");
+          chip.className = "chip offline";
+          chip.textContent = isSolve ? "LLM unavailable" : "scaffold — LLM unavailable";
+          card.appendChild(chip);
+        }
         if (c.cached === true) {
           const chip = document.createElement("span");
           chip.className = "chip cached";
-          chip.textContent = "cached";
+          chip.textContent = c.predicted === true ? "pre-answered ✓" : "cached";
           card.appendChild(chip);
         }
         if (c.offline === true) {
           const chip = document.createElement("span");
           chip.className = "chip offline";
-          chip.textContent = "scaffold — LLM unavailable";
+          chip.textContent = isSolve ? "LLM unavailable" : "scaffold — LLM unavailable";
           card.appendChild(chip);
         }
         const body = document.createElement("div");
         body.className = "resp-body";
-        if (isAnswer || isPrepared) {
+        if (isSolve) {
+          // Solver results keep their line breaks — pasted prompts often ask
+          // for structured output (lists, steps, tables of pros/cons).
+          body.style.whiteSpace = "pre-wrap";
+          body.textContent = c.answer ?? "";
+        } else if (isAnswer || isPrepared) {
           body.textContent = c.answer ?? "";
           // Crimson "extra info" block: optional CV-grounded instance —
           // annotation, not part of the rehearsed answer.
@@ -344,6 +428,40 @@
       // session tail (recent transcript + latest response) on open.
       event.emit("overlay://ready", {});
 
+      // ── Up next (question radar): predicted follow-ups whose answers are
+      // already computed. Cleared item-by-item as they get asked.
+      function renderUpNext(questions) {
+        const sec = $("upnextSec");
+        const box = $("upnext");
+        if (!sec || !box) return;
+        box.innerHTML = "";
+        const items = (questions ?? []).filter((q) => String(q ?? "").trim().length > 0).slice(0, 2);
+        if (items.length === 0) {
+          sec.style.display = "none";
+          return;
+        }
+        for (const q of items) {
+          const row = document.createElement("div");
+          row.className = "upnext-item";
+          row.dataset.q = String(q);
+          const ready = document.createElement("span");
+          ready.className = "ready";
+          ready.textContent = "READY";
+          const qEl = document.createElement("span");
+          qEl.className = "q";
+          qEl.textContent = String(q);
+          qEl.title = String(q);
+          row.appendChild(ready);
+          row.appendChild(qEl);
+          box.appendChild(row);
+        }
+        sec.style.display = "flex";
+        reportHeight();
+      }
+      event.listen("overlay://predicted", (e) => {
+        try { renderUpNext(e.payload?.questions ?? []); } catch { /* non-fatal */ }
+      });
+
       $("hideBtn").addEventListener("click", async () => {
         try {
           await invoke("overlay_hide", { verticalId: "interview-intelligence" });
@@ -351,6 +469,147 @@
           console.error("hide failed", e);
         }
       });
+
+      // ── Written ask: type/paste a question or a direction for the coach,
+      // or flip to SOLVE and send a prompt straight to the LLM (evaluate,
+      // analyze, compare, draft — answered as-is).
+      // Enter sends; Shift+Enter inserts a newline; Escape closes the box.
+      let askMode = "ask"; // "ask" | "solve"
+      function setAskMode(mode) {
+        askMode = mode;
+        const ask = $("askModeBtn"), solve = $("solveModeBtn");
+        if (ask) ask.classList.toggle("on", mode === "ask");
+        if (solve) solve.classList.toggle("on", mode === "solve");
+        const input = $("askInput");
+        if (input) input.placeholder = mode === "solve"
+          ? "Solve — evaluate, analyze, summarize, draft… (Enter to send)"
+          : "Ask the coach — paste a question or a direction… (Enter to send, Shift+Enter for a new line)";
+        const send = $("askSendBtn");
+        if (send) send.textContent = mode === "solve" ? "Solve ↵" : "Ask ↵";
+      }
+      function sendAsk() {
+        const input = $("askInput");
+        const status = $("askStatus");
+        const text = (input?.value ?? "").trim();
+        if (!text) return;
+        try {
+          // overlay://user_ask → main window listener (LiveSession) → WS
+          // coach.ask / coach.solve. MUST go through the Rust emitter —
+          // JS-to-JS cross-webview emit silently drops messages in the field
+          // (the reason asks got stuck on the overlay).
+          invoke("overlay_emit", { event: "overlay://user_ask", payload: { text, mode: askMode } });
+          if (input) input.value = "";
+          if (status) {
+            status.textContent = askMode === "solve"
+              ? "Sent to AI — result will appear above."
+              : "Sent to coach — answer will appear above.";
+            status.style.display = "block";
+            setTimeout(() => { if (status) status.style.display = "none"; }, 4000);
+          }
+        } catch (e) {
+          if (status) {
+            status.textContent = "Send failed — is the app running?";
+            status.style.display = "block";
+          }
+        }
+      }
+      $("askSendBtn")?.addEventListener("click", sendAsk);
+      $("askInput")?.addEventListener("keydown", (e) => {
+        // Enter sends; Shift+Enter is a plain newline (default behavior).
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendAsk();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          toggleAsk(false);
+        }
+      });
+      $("askModeBtn")?.addEventListener("click", () => setAskMode("ask"));
+      $("solveModeBtn")?.addEventListener("click", () => setAskMode("solve"));
+      // Global shortcut (while overlay focused): Ctrl/Cmd+K toggles the ask box.
+      window.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          toggleAsk();
+        }
+      });
+      function toggleAsk(force) {
+        const sec = $("askSec");
+        if (!sec) return;
+        const show = force !== undefined ? force : sec.style.display === "none";
+        sec.style.display = show ? "flex" : "none";
+        // Typing mode: lift smart passthrough + WS_EX_NOACTIVATE while the
+        // ask box is open — otherwise the bottom half of the window is
+        // click-through (textarea/buttons dead) and can't take keystrokes.
+        try {
+          const label = window.__TAURI__.window.getCurrentWindow().label;
+          const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+          void invoke("overlay_set_typing", { verticalId, enabled: show });
+        } catch { /* label unavailable */ }
+        if (show) {
+          setTimeout(() => $("askInput")?.focus(), 30);
+        } else {
+          reportHeight();
+        }
+      }
+      // ── Click-through toggle (●): red = OFF (overlay clickable/writable —
+      // the DEFAULT), green = ON (body passes clicks to apps beneath; the
+      // header band stays interactive so this button can always switch it
+      // back). Ctrl+Shift+B does the same thing from anywhere.
+      let passthroughOn = false;
+      function renderPassthrough() {
+        const b = $("ptBtn");
+        if (!b) return;
+        b.className = "btn " + (passthroughOn ? "pt-on" : "pt-off");
+        b.title = passthroughOn
+          ? "Click-through ON — clicks pass to apps beneath. Click here (or Ctrl+Shift+B) to disable."
+          : "Click-through OFF — the overlay is fully clickable. Click here (or Ctrl+Shift+B) to enable.";
+      }
+      function setPassthrough(enabled) {
+        try {
+          const label = window.__TAURI__.window.getCurrentWindow().label;
+          const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+          void invoke("overlay_set_passthrough", { verticalId, enabled });
+        } catch { /* label unavailable */ }
+      }
+      // Start collapsed but let the ✎ button open it. Add the toggle button
+      // to the header next to the hide button.
+      const askToggle = document.createElement("button");
+      askToggle.className = "btn";
+      askToggle.id = "askToggleBtn";
+      askToggle.title = "Ask the coach (Ctrl+K)";
+      askToggle.textContent = "✎";
+      $("hideBtn")?.parentElement?.insertBefore(askToggle, $("hideBtn"));
+      askToggle.addEventListener("click", () => toggleAsk());
+      // Click-through toggle sits between ✎ and ✕ — red by default.
+      const ptBtn = document.createElement("button");
+      ptBtn.className = "btn pt-off";
+      ptBtn.id = "ptBtn";
+      ptBtn.textContent = "●";
+      $("hideBtn")?.parentElement?.insertBefore(ptBtn, $("hideBtn"));
+      ptBtn.addEventListener("click", () => {
+        passthroughOn = !passthroughOn;
+        renderPassthrough();
+        setPassthrough(passthroughOn);
+      });
+      renderPassthrough();
+      // Keep the button in sync when Ctrl+Shift+B is pressed from the app
+      // (Rust emits the new state) or when the overlay re-shows (resets OFF).
+      event.listen("overlay://passthrough", (e) => {
+        passthroughOn = e.payload === true;
+        renderPassthrough();
+      });
+      event.listen("overlay://visibility", (e) => {
+        if (e.payload === true) {
+          passthroughOn = false; // re-show resets to fully interactive
+          renderPassthrough();
+          const sec = $("askSec");
+          if (sec && sec.style.display !== "none") toggleAsk(true);
+        }
+      });
+      // Height re-report when the ask box opens (ResizeObserver covers content growth).
+      new MutationObserver(() => reportHeight()).observe($("askSec") ?? document.body, { attributes: true, attributeFilter: ["style"] });
 
       // Auto-height (reference parity): report panel height so the window fits content.
       function reportHeight() {
@@ -361,11 +620,61 @@
           void window.__TAURI__.core.invoke("overlay_resize", { verticalId, height: Math.ceil(h) });
         } catch { /* label unavailable */ }
       }
-      const resizeObs = new ResizeObserver(() => reportHeight());
+      // ── Corner grip resize: pointer-drag scales the window live. Once the
+      // user has grabbed the grip, auto-height stands down for the session —
+      // the user owns the geometry now (content reflows via the 100% panel).
+      let userSized = false;
+      let gripDrag = null; // { startW, startH, startX, startY, scale, lastX, lastY }
+      let gripRaf = 0;
+      function initGripResize() {
+        const grip = $("resizeGrip");
+        if (!grip) return;
+        grip.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          grip.setPointerCapture(e.pointerId);
+          const w = window.__TAURI__.window.getCurrentWindow();
+          void w.innerSize().then((s) => {
+            const scale = s.width / (window.innerWidth || s.width); // physical/logical
+            gripDrag = {
+              startW: window.innerWidth,
+              startH: window.innerHeight,
+              startX: e.screenX,
+              startY: e.screenY,
+              lastX: e.screenX,
+              lastY: e.screenY,
+              scale: isFinite(scale) && scale > 0 ? scale : 1,
+            };
+            userSized = true;
+          });
+        });
+        grip.addEventListener("pointermove", (e) => {
+          if (!gripDrag) return;
+          // Track the latest position; commit at most one set_size per frame
+          // — pointermove fires at input rate and the IPC would churn.
+          gripDrag.lastX = e.screenX;
+          gripDrag.lastY = e.screenY;
+          if (gripRaf) return;
+          gripRaf = requestAnimationFrame(() => {
+            gripRaf = 0;
+            if (!gripDrag) return;
+            const w = Math.round(gripDrag.startW + (gripDrag.lastX - gripDrag.startX) / gripDrag.scale);
+            const h = Math.round(gripDrag.startH + (gripDrag.lastY - gripDrag.startY) / gripDrag.scale);
+            try {
+              const label = window.__TAURI__.window.getCurrentWindow().label;
+              const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
+              void window.__TAURI__.core.invoke("overlay_set_size", { verticalId, width: w, height: h });
+            } catch { /* label unavailable */ }
+          });
+        });
+        grip.addEventListener("pointerup", () => { gripDrag = null; });
+        grip.addEventListener("pointercancel", () => { gripDrag = null; });
+      }
+      const resizeObs = new ResizeObserver(() => { if (!userSized) reportHeight(); });
       window.addEventListener("DOMContentLoaded", () => {
         const panel = document.querySelector(".panel");
         if (panel) resizeObs.observe(panel);
         reportHeight();
+        initGripResize();
       });
       function setWave(active) { const w = $("wave"); if (w) w.style.display = active ? "flex" : "none"; }
       function pulseTiming() {

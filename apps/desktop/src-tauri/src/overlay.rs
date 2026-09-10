@@ -75,8 +75,13 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
     let mode = OverlayMode::from_str(&params.mode);
 
     if let Some(existing) = app.get_webview_window(&label) {
-        // Re-showing resets passthrough so the panel is interactive by default.
-        let _ = overlay_set_passthrough(app.clone(), params.vertical_id.clone(), false);
+        // Re-show resets to the DEFAULT interaction state: fully interactive
+        // (click-through OFF) until the user explicitly re-enables it. NOTE:
+        // overlay_set_passthrough/typing are async commands — they MUST be
+        // awaited here or the reset silently never runs (the pre-fix bug
+        // that made Ctrl+Shift+B behave inconsistently across re-shows).
+        let _ = overlay_set_passthrough(app.clone(), params.vertical_id.clone(), false).await;
+        let _ = overlay_set_typing(app.clone(), params.vertical_id.clone(), false).await;
         let _ = existing.show();
         return Ok(());
     }
@@ -94,7 +99,7 @@ pub async fn overlay_show(app: AppHandle, params: OverlayParams) -> Result<(), S
     .decorations(false)
     .always_on_top(mode.always_on_top())
     .skip_taskbar(mode.skip_taskbar())
-    .resizable(false)
+    .resizable(true)
     .shadow(false)
     .focused(false)
     .position(x, y)
@@ -223,6 +228,59 @@ pub async fn overlay_emit(app: AppHandle, event: String, payload: serde_json::Va
     app.emit(&event, payload).map_err(|e| e.to_string())
 }
 
+/// Typing mode — the overlay ask box is open. The window must become FULLY
+/// interactive: smart passthrough otherwise holds WS_EX_TRANSPARENT over
+/// everything below the 48px header band, so the ask textarea, its button
+/// AND response scrolling are dead (clicks/wheel go to the app beneath).
+/// Stealth windows also carry WS_EX_NOACTIVATE — without dropping it the
+/// textarea can never take keyboard focus and typing is impossible.
+/// Disabling restores smart passthrough + non-activating stealth.
+#[tauri::command]
+pub async fn overlay_set_typing(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    PASSTHROUGH_MODE.store(
+        if enabled { PASSTHROUGH_OFF } else { PASSTHROUGH_SMART },
+        Ordering::Relaxed,
+    );
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        let raw = windows::Win32::Foundation::HWND(hwnd.0);
+        unsafe {
+            let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
+            let next = if enabled {
+                // Typing mode: interactive + focusable. CRITICALLY also clear
+                // WS_EX_TRANSPARENT — if Smart passthrough had left the body
+                // click-through when the ask box opened, the textarea (and
+                // every click) stayed dead. This was the "can't write on the
+                // overlay" half of the bug.
+                (current & !(WS_EX_NOACTIVATE.0 as isize)) & !PASSTHROUGH_MASK
+            } else {
+                (current | WS_EX_NOACTIVATE.0 as isize) & !PASSTHROUGH_MASK
+            };
+            if next != current {
+                SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
+            }
+        }
+        if enabled {
+            let _ = window.set_focus();
+        }
+    }
+    let _ = app.emit("overlay://typing", enabled);
+    Ok(())
+}
+
+/// WS_EX_TRANSPARENT | WS_EX_LAYERED as one bitmask — the click-through pair
+/// the smart poller / passthrough setters manage.
+#[cfg(windows)]
+const PASSTHROUGH_MASK: isize = (0x00000020) | (0x00080000); // WS_EX_TRANSPARENT | WS_EX_LAYERED
+
 /// Authoritative overlay toggle: checks REAL window visibility, not JS state.
 /// Registered app-wide in Rust (Ctrl+Shift+O) so it works from any screen —
 /// the previous JS-side toggle died whenever LiveSession was unmounted.
@@ -252,49 +310,60 @@ pub async fn overlay_toggle(app: AppHandle, vertical_id: String) -> Result<bool,
     }
 }
 
+/// Chord-side passthrough toggle — runs in RUST so Ctrl+Shift+B works from
+/// EVERY screen. The old handler lived in the Live session React component:
+/// unmount it (any screen except live) and the chord went dead. No JS
+/// involved anymore; the overlay button syncs via the emitted event.
+pub fn chord_toggle_passthrough(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("overlay:interview-intelligence") else {
+        return;
+    };
+    let enabled = PASSTHROUGH_MODE.load(Ordering::Relaxed) != PASSTHROUGH_SMART;
+    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_SMART } else { PASSTHROUGH_OFF }, Ordering::Relaxed);
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        // Reset the ex-style to interactive; the smart poller re-adds
+        // click-through on its next tick while Smart mode is on.
+        set_overlay_click_through(windows::Win32::Foundation::HWND(hwnd.0), false);
+    }
+    let _ = app.emit("overlay://passthrough", enabled);
+    println!("[overlay] passthrough toggled to: {enabled}");
+}
+
 /// Mouse passthrough (reference `syncOverlayInteractionPolicy` parity): when
 /// enabled the overlay ignores all clicks (WS_EX_TRANSPARENT) so it floats
-/// over a meeting without stealing input; the header 40px band stays live via
-/// the frontend calling this again with `enabled:false` — the tray/Show chord
-/// also disengages it. Ctrl+Shift+B toggles.
+/// over a meeting without stealing input; the header band stays live via the
+/// smart poller. Ctrl+Shift+B toggles (Rust-side); the ● button in the
+/// overlay header mirrors the same state.
 #[tauri::command]
 pub async fn overlay_set_passthrough(app: AppHandle, vertical_id: String, enabled: bool) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
-    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_FULL } else { PASSTHROUGH_SMART }, Ordering::Relaxed);
+    // enabled=false (the DEFAULT) = fully interactive window. enabled=true =
+    // Smart mode: body click-through, header + right-edge strip interactive.
+    PASSTHROUGH_MODE.store(if enabled { PASSTHROUGH_SMART } else { PASSTHROUGH_OFF }, Ordering::Relaxed);
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_LAYERED,
-        };
         let raw = windows::Win32::Foundation::HWND(hwnd.0);
-        unsafe {
-            let current = GetWindowLongPtrW(raw, GWL_EXSTYLE);
-            let next = if enabled {
-                current | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize
-            } else {
-                current & !(WS_EX_TRANSPARENT.0 as isize)
-            };
-            if next != current {
-                SetWindowLongPtrW(raw, GWL_EXSTYLE, next);
-            }
-        }
+        set_overlay_click_through(raw, false); // smart poller re-adds it when Smart mode is on
     }
     let _ = app.emit("overlay://passthrough", enabled);
     Ok(())
 }
 
-/// Overlay passthrough mode: Smart (body click-through, header interactive —
-/// the default so the user can scroll/operate apps beneath the overlay),
-/// Full (everything click-through, Ctrl+Shift+B), Off.
+/// Overlay interaction policy (user-facing): **click-through OFF by default**
+/// — the overlay is fully clickable/writable until the user enables
+/// passthrough (Ctrl+Shift+B or the ● button in the overlay header). While
+/// ON, the smart poller keeps the body click-through but the header band and
+/// right-edge strip interactive, so the toggle button stays reachable.
+/// Typing mode (ask box open) always forces full interactivity.
 static PASSTHROUGH_MODE: AtomicU8 = AtomicU8::new(0);
 
 const PASSTHROUGH_OFF: u8 = 0;
 const PASSTHROUGH_SMART: u8 = 1;
-const PASSTHROUGH_FULL: u8 = 2;
 
 #[cfg(windows)]
 fn set_overlay_click_through(hwnd: windows::Win32::Foundation::HWND, transparent: bool) {
@@ -327,8 +396,13 @@ fn spawn_smart_passthrough_poller(app: tauri::AppHandle) {
         if PASSTHROUGH_MODE.load(Ordering::Relaxed) != PASSTHROUGH_SMART {
             continue;
         }
+        // NOTE: continue (NOT return) on a missing window — the poller is
+        // spawned once at window creation and must survive transient None
+        // lookups (dev-server reloads, rebuilds). A `return` here killed it
+        // permanently and Smart mode silently stopped enforcing click-through
+        // (the "I can still write when it's green" bug).
         let Some(w) = app.get_webview_window("overlay:interview-intelligence") else {
-            return; // overlay destroyed — poller exits
+            continue;
         };
         if !w.is_visible().unwrap_or(false) {
             continue;
@@ -345,10 +419,17 @@ fn spawn_smart_passthrough_poller(app: tauri::AppHandle) {
             && cursor.x < pos.x + size.width as i32
             && cursor.y >= pos.y
             && cursor.y < pos.y + size.height as i32;
-        // Header band: top 48 logical px of the panel = buttons + drag region.
-        let header_px = (48.0 * w.scale_factor().unwrap_or(1.0)) as i32;
+        // Interactive regions in Smart mode:
+        //  - Header band: top 48 logical px = buttons + drag.
+        //  - Right-edge strip: ~16 logical px = the response stack's
+        //    scrollbar, so previous answers stay scrollable while the body
+        //    stays click-through (the whole point of Smart mode).
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let header_px = (48.0 * scale) as i32;
+        let edge_px = (16.0 * scale) as i32;
         let over_header = within && (cursor.y - pos.y) < header_px;
-        set_overlay_click_through(raw, !over_header);
+        let over_edge = within && (pos.x + size.width as i32 - cursor.x) < edge_px;
+        set_overlay_click_through(raw, !(over_header || over_edge));
     });
 }
 
@@ -364,7 +445,7 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
-    let h = height.clamp(220.0, 700.0);
+    let h = height.clamp(220.0, 880.0); // headroom for the radar "Up next" section
     let size = window
         .inner_size()
         .map_err(|e| e.to_string())?;
@@ -373,6 +454,22 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
         .set_size(tauri::LogicalSize::new(size.width as f64 / scale, h))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Manual size from the overlay's corner grip — the user took explicit
+/// control of the geometry. Width AND height clamped; the content reflows
+/// (panel is 100% of the window, the response stack flexes).
+#[tauri::command]
+pub async fn overlay_set_size(app: AppHandle, vertical_id: String, width: f64, height: f64) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("overlay window not found".into());
+    };
+    let w = width.clamp(360.0, 1200.0);
+    let h = height.clamp(240.0, 880.0);
+    window
+        .set_size(tauri::LogicalSize::new(w, h))
+        .map_err(|e| e.to_string())
 }
 
 /// Overlay placement modes: TopCenter (default), Right (top-right, where the

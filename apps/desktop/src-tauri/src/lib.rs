@@ -182,8 +182,10 @@ pub fn run() {
             overlay::overlay_hide,
             overlay::overlay_toggle,
             overlay::overlay_emit,
+            overlay::overlay_set_typing,
             overlay::overlay_set_passthrough,
             overlay::overlay_resize,
+            overlay::overlay_set_size,
             overlay::overlay_cycle_position,
             tts::tts_piper_available,
             tts::tts_speak,
@@ -236,13 +238,19 @@ pub fn run() {
             // Global chords registered app-wide (independent of any screen):
             //   Ctrl+Shift+O — overlay show/hide (authoritative Rust toggle)
             //   Ctrl+Shift+P — cycle overlay position (handled by JS screens)
-            //   Ctrl+Shift+B — overlay mouse passthrough (handled by JS)
+            //   Ctrl+Shift+B — passthrough toggle (Rust-side: works on every
+            //                  screen; the overlay ● button shares the state)
             //   Ctrl+Shift+H — main-window show/hide (handled here in Rust so
             //                  it works even when no screen is listening)
             let _ = stealth::keybind::register_chord(
                 &handle,
                 "Ctrl+Shift+O".into(),
                 "overlay-toggle".into(),
+            );
+            let _ = stealth::keybind::register_chord(
+                &handle,
+                "Ctrl+Shift+B".into(),
+                "passthrough-toggle".into(),
             );
             let _ = stealth::keybind::register_chord(
                 &handle,
@@ -274,6 +282,15 @@ pub fn run() {
                                     )
                                     .await;
                                 });
+                            }
+                            // Passthrough toggle handled HERE in Rust so
+                            // Ctrl+Shift+B works on every screen — the old
+                            // handler lived in the Live session component and
+                            // went dead the moment that screen unmounted
+                            // ("sometimes doesn't work" bug). The overlay's
+                            // ● button and the chord share one state source.
+                            "passthrough-toggle" => {
+                                overlay::chord_toggle_passthrough(&h);
                             }
                             _ => {}
                         }

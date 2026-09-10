@@ -18,7 +18,10 @@
  */
 import { createHash } from "node:crypto";
 
-const STOPWORDS = new Set(["a", "an", "the", "is", "are", "was", "were", "be", "been", "to", "of", "in", "on", "for", "and", "or", "with", "what", "how", "do", "does", "did", "you", "your", "i", "me", "my", "it", "that", "this", "would", "should", "could", "using", "use", "about", "tell"]);
+const STOPWORDS = new Set(["a", "an", "the", "is", "are", "was", "were", "be", "been", "to", "of", "in", "on", "for", "and", "or", "with", "what", "how", "do", "does", "did", "you", "your", "i", "me", "my", "it", "that", "this", "would", "should", "could", "using", "use", "in", "at", "as"]);
+// NOTE: "tell" and "about" were REMOVED from stopwords — they are the core
+// content of interview questions ("Tell me about yourself"), and stripping
+// them collapsed short questions into 1-2 weak tokens that never fuzzy-hit.
 
 /** Normalize: lowercase, strip punctuation, collapse whitespace, unify quotes. */
 export function normalizeQuestion(q: string): string {
@@ -63,6 +66,18 @@ export function jaccard(a: string[], b: string[]): number {
   for (const t of new Set(a)) if (sb.has(t)) shared += 1;
   const union = new Set([...a, ...b]).size;
   return shared / union;
+}
+
+/** Containment: how much of the SMALLER set is inside the larger (0..1).
+ *  Catches "tell me about yourself in details" ⊃ "Tell us about yourself" —
+ *  a strict superset phrasing Jaccard under-scores (extra details dilute the
+ *  union). Guarded by a min token-set size at the call site. */
+export function containment(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const sb = new Set(b);
+  let shared = 0;
+  for (const t of new Set(a)) if (sb.has(t)) shared += 1;
+  return shared / Math.min(new Set(a).size, sb.size);
 }
 
 export function keyHashFor(parts: { question: string; mode: string; length: string; prepHash: string }): string {
@@ -176,12 +191,19 @@ export class AnswerCache {
       return { key: "exact", score: 1, matchedQuestion: exactRec.question, frameworkJson: exactRec.frameworkJson, answerText: exactRec.answerText, id: exactRec.id };
     }
 
-    // Tier 1 — token-overlap fuzzy (same mode/length/prep only).
+    // Tier 1 — token-overlap fuzzy (same mode/length/prep only). Two signals:
+    //   Jaccard      — symmetric overlap (≥0.8 confident hit, ≥0.65 plausible)
+    //   Containment  — subset phrasings ("…in details?" ⊃ the base question)
+    // A hit needs jaccard ≥ 0.8, OR jaccard ≥ 0.35 with containment ≥ 0.65
+    // and both token sets ≥ 2 (stops 1-token coincidences).
     let bestFuzzy: { rec: CacheRecord; score: number } | null = null;
     for (const rec of this.records) {
       if (rec.mode !== opts.mode || rec.length !== opts.length || rec.prepHash !== opts.prepHash) continue;
-      const score = jaccard(qTokens, rec.tokens);
-      if (score >= this.thresholds.exactFuzzy && (!bestFuzzy || score > bestFuzzy.score)) bestFuzzy = { rec, score };
+      const jac = jaccard(qTokens, rec.tokens);
+      const cont = containment(qTokens, rec.tokens);
+      const minTokens = Math.min(qTokens.length, rec.tokens.length);
+      const hit = jac >= this.thresholds.exactFuzzy || (jac >= this.thresholds.fuzzyFloor && minTokens >= 3) || (cont >= 0.65 && jac >= 0.35 && minTokens >= 2);
+      if (hit && (!bestFuzzy || Math.max(jac, cont) > bestFuzzy.score)) bestFuzzy = { rec, score: Math.round(Math.max(jac, cont) * 100) / 100 };
     }
     if (bestFuzzy) {
       return { key: "fuzzy", score: Math.round(bestFuzzy.score * 100) / 100, matchedQuestion: bestFuzzy.rec.question, frameworkJson: bestFuzzy.rec.frameworkJson, answerText: bestFuzzy.rec.answerText, id: bestFuzzy.rec.id };
@@ -239,5 +261,22 @@ export class AnswerCache {
     }
     this.records.push(entry);
     if (this.records.length > this.maxRecords) this.records.shift();
+  }
+
+  /** Entries with no vector — the connect-time backfill target. */
+  missingEmbeddings(): { id: string; question: string }[] {
+    return this.records.filter((r) => r.embedding.length === 0).map((r) => ({ id: r.id, question: r.question }));
+  }
+
+  /** Store a backfilled vector so the vector tier serves this entry. */
+  setEmbedding(id: string, embedding: number[]): void {
+    const rec = this.records.find((r) => r.id === id);
+    if (rec) rec.embedding = embedding;
+  }
+
+  /** Read-only projection for session-self hydration dedup. */
+  hasQuestion(question: string, mode: string, length: string, prepHash: string): boolean {
+    const exact = keyHashFor({ question, mode, length, prepHash });
+    return this.records.some((r) => keyHashFor({ question: r.question, mode: r.mode, length: r.length, prepHash: r.prepHash }) === exact);
   }
 }

@@ -46,8 +46,6 @@ mod imp {
     pub const HID_BACKSPACE: u32 = 51;
     const MAC_FLAG_SHIFT: u32 = 1 << 17;
     const MAC_FLAG_CAPS: u32 = 1 << 16;
-    const LLKHF_INJECTED: u32 = 0x10;
-    const LLKHF_EXTENDED: u32 = 0x01;
 
     pub struct CapturedKey {
         pub key_code: u32,
@@ -113,9 +111,8 @@ mod imp {
     /// F1-F24, arrows, Tab, and lock keys pass through to the foreground app.
     pub fn is_pass_through(vk: u32) -> bool {
         matches!(vk,
-            0x10 | 0xA0..=0xA5          // shift variants
-            | 0x11 | 0xA2 | 0xA3        // ctrl
-            | 0x12 | 0xA4               // alt / alt-gr
+            0x10..=0x12                 // shift / ctrl / alt (base VKs)
+            | 0xA0..=0xA5               // shift / ctrl / alt (L/R variants)
             | 0x5B | 0x5C               // win keys
             | 0x14 | 0x90 | 0x91        // caps/num/scroll lock
             | 0x70..=0x87               // F1-F24
@@ -239,7 +236,7 @@ mod imp {
 
     pub fn start_tap(app: AppHandle) -> Result<(), String> {
         let s = state();
-        let mut st = s.lock().map_err(|e| e.to_string())?;
+        let st = s.lock().map_err(|e| e.to_string())?;
         if st.active.load(Ordering::Acquire) {
             return Err("stealth keyboard tap already running".into());
         }
@@ -274,7 +271,7 @@ mod imp {
                     WINEVENT_OUTOFCONTEXT,
                 );
                 {
-                    let Ok(mut st) = state().lock() else { return };
+                    let Ok(st) = state().lock() else { return };
                     *st.keyboard_hook.lock().unwrap() = hook.0 as isize;
                     *st.foreground_hook.lock().unwrap() = fg.0 as isize;
                     st.worker_thread_id.store(GetCurrentThreadId(), Ordering::Release);
@@ -309,7 +306,7 @@ mod imp {
 
     pub fn stop_tap() {
         let s = state();
-        let Ok(mut st) = s.lock() else { return };
+        let Ok(st) = s.lock() else { return };
         st.active.store(false, Ordering::SeqCst);
         let thread_id = st.worker_thread_id.load(Ordering::Acquire);
         if thread_id != 0 {
@@ -374,7 +371,7 @@ pub fn stealth_keyboard_stop() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 mod tests {
     use super::imp::{is_pass_through, vk_to_hid, HID_BACKSPACE, HID_ESC, HID_NUMPAD_RETURN, HID_RETURN};
 
