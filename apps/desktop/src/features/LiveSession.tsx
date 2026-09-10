@@ -113,7 +113,7 @@ function useRealtime(sessionId: string | null) {
 
     function handleMessage(ev: MessageEvent) {
       try {
-        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; type?: string; contentJson: Record<string, unknown>; createdAt: string } };
+        const msg = JSON.parse(ev.data as string) as { type: string; code?: string; message?: string; questions?: string[]; segment?: { id: string; sequenceNo: number; text: string; isFinal: boolean; confidence?: number; speaker?: string; source?: string }; insight?: { id: string; type?: string; contentJson: Record<string, unknown>; createdAt: string } };
         if (msg.type === "transcript.final" || msg.type === "transcript.partial") {
           const s = msg.segment!;
           pushTranscript({ id: s.id, sequenceNo: s.sequenceNo, text: s.text, isFinal: s.isFinal, confidence: s.confidence, speaker: s.speaker === "user" || s.speaker === "interviewer" ? s.speaker : undefined, source: s.source });
@@ -123,6 +123,12 @@ function useRealtime(sessionId: string | null) {
         } else if (msg.type === "coach.working") {
           // First token from the coach — replace dead air with a live indicator.
           setCoachWorking(true);
+        } else if (msg.type === "radar.predicted" && Array.isArray(msg.questions)) {
+          // Question radar horizon → the stealth overlay's "Up next" section.
+          // Rust emitter: the only cross-window path that never drops.
+          if (isTauri()) {
+            void invoke("overlay_emit", { event: "overlay://predicted", payload: { questions: msg.questions.slice(0, 2) } }).catch(() => {});
+          }
         } else if (msg.type === "pipeline.warning" && msg.code && msg.code !== "pong" && msg.code !== "session_not_live") {
           // Surface backend trouble instead of swallowing it (throttled per code).
           const now = Date.now();

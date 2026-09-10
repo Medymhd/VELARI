@@ -445,7 +445,7 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
-    let h = height.clamp(220.0, 700.0);
+    let h = height.clamp(220.0, 880.0); // headroom for the radar "Up next" section
     let size = window
         .inner_size()
         .map_err(|e| e.to_string())?;

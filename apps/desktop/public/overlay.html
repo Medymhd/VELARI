@@ -89,6 +89,15 @@
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
       }
       .qstrip.empty { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+      /* Up next — question radar horizon: the predicted follow-ups whose
+         answers are ALREADY computed and cached. Serves in ~0ms when asked. */
+      .upnext { display: flex; flex-direction: column; gap: 4px; }
+      .upnext-item {
+        display: flex; gap: 8px; align-items: baseline;
+        font-size: 12.5px; line-height: 1.4; color: var(--text);
+      }
+      .upnext-item .ready { color: #34d399; font-size: 10px; flex: none; font-weight: 600; letter-spacing: 0.04em; }
+      .upnext-item .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       /* Written ask — type or paste a question / direction for the coach.
          Collapsed by default (stealth first); ⌘/Ctrl+K or the ✎ button opens. */
       .ask-row { display: flex; gap: 6px; align-items: flex-start; }
@@ -177,6 +186,10 @@
         <label>Interviewer</label>
         <div id="qstrip" class="qstrip empty">Listening for the interviewer…</div>
       </section>
+      <section class="sec" id="upnextSec" style="display:none">
+        <label>Up next — radar</label>
+        <div id="upnext" class="upnext"></div>
+      </section>
       <section class="sec" id="askSec" style="display:none">
         <div class="ask-row">
           <div class="ask-mode">
@@ -243,6 +256,19 @@
         if (isUser) return; // only the interviewer side is shown
         const looksQuestion = t.includes("?") || /^(tell|what|how|why|when|walk|describe|explain|give|can you|could you|do you|have you)\b/i.test(t);
         const backchannel = t.split(/\s+/).length <= 2 && !t.includes("?");
+        // When a predicted question gets asked for real, drop it from the
+        // Up next list (match on the first 4 words — paraphrase-tolerant).
+        const askedHead = t.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
+        document.querySelectorAll("#upnext .upnext-item").forEach((el) => {
+          const q = String(el.dataset?.q ?? "").toLowerCase();
+          if (q && (q.split(/\s+/).slice(0, 4).join(" ") === askedHead || t.toLowerCase().includes(q.slice(0, 40)))) {
+            el.remove();
+          }
+        });
+        if ($("upnext") && $("upnext").childElementCount === 0 && $("upnextSec")) {
+          $("upnextSec").style.display = "none";
+          reportHeight();
+        }
         if (looksQuestion || (!currentQuestion && !backchannel)) {
           currentQuestion = t;
           const strip = $("qstrip");
@@ -298,7 +324,7 @@
         if (c.cached === true) {
           const chip = document.createElement("span");
           chip.className = "chip cached";
-          chip.textContent = "cached";
+          chip.textContent = c.predicted === true ? "pre-answered ✓" : "cached";
           card.appendChild(chip);
         }
         if (c.offline === true) {
@@ -386,6 +412,40 @@
       // Announce readiness — the app-level forwarder backfills the current
       // session tail (recent transcript + latest response) on open.
       event.emit("overlay://ready", {});
+
+      // ── Up next (question radar): predicted follow-ups whose answers are
+      // already computed. Cleared item-by-item as they get asked.
+      function renderUpNext(questions) {
+        const sec = $("upnextSec");
+        const box = $("upnext");
+        if (!sec || !box) return;
+        box.innerHTML = "";
+        const items = (questions ?? []).filter((q) => String(q ?? "").trim().length > 0).slice(0, 2);
+        if (items.length === 0) {
+          sec.style.display = "none";
+          return;
+        }
+        for (const q of items) {
+          const row = document.createElement("div");
+          row.className = "upnext-item";
+          row.dataset.q = String(q);
+          const ready = document.createElement("span");
+          ready.className = "ready";
+          ready.textContent = "READY";
+          const qEl = document.createElement("span");
+          qEl.className = "q";
+          qEl.textContent = String(q);
+          qEl.title = String(q);
+          row.appendChild(ready);
+          row.appendChild(qEl);
+          box.appendChild(row);
+        }
+        sec.style.display = "flex";
+        reportHeight();
+      }
+      event.listen("overlay://predicted", (e) => {
+        try { renderUpNext(e.payload?.questions ?? []); } catch { /* non-fatal */ }
+      });
 
       $("hideBtn").addEventListener("click", async () => {
         try {
