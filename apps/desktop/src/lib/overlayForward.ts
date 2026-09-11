@@ -14,6 +14,7 @@ import { useStore } from "../state/store";
 
 let lastTranscriptId: string | null = null;
 let lastInsightId: string | null = null;
+let lastConnected: boolean | null = null;
 let unlistenReady: (() => void) | null = null;
 
 /** Rust-emitter broadcast — the proven event path into the overlay. */
@@ -26,7 +27,7 @@ function overlayEmit(event: string, payload: unknown): void {
 
 /** Backfill a freshly opened overlay with the current tail of the session. */
 async function backfill(): Promise<void> {
-  const { transcript, insights } = useStore.getState();
+  const { transcript, insights, connected } = useStore.getState();
   for (const t of transcript.slice(-4)) {
     overlayEmit("overlay://transcript", { id: t.id, speaker: t.speaker ?? null, text: t.text, isFinal: t.isFinal });
   }
@@ -34,10 +35,15 @@ async function backfill(): Promise<void> {
   if (ins) {
     overlayEmit("overlay://insight", { type: ins.type, contentJson: ins.contentJson });
   }
+  overlayEmit("overlay://connection", { connected });
 }
 
 export function startOverlayForwarding(): void {
   useStore.subscribe((s) => {
+    if (s.connected !== lastConnected) {
+      lastConnected = s.connected;
+      overlayEmit("overlay://connection", { connected: s.connected });
+    }
     const t = s.transcript[s.transcript.length - 1];
     if (t && t.id !== lastTranscriptId) {
       lastTranscriptId = t.id;

@@ -315,6 +315,23 @@ const [overlayOn, setOverlayOn] = useState(false);
   // that is ON but receives no audio for 12s means a dead/busy device.
   const lastNativeBatchAt = useRef<{ mic: number; system: number }>({ mic: 0, system: 0 });
   const watchdogWarned = useRef<{ mic: boolean; system: boolean }>({ mic: false, system: false });
+  /** Overlay speaking-animation: last emitted state + throttle timestamp. */
+  const overlaySpeech = useRef<{ speaking: boolean; levelAt: number }>({ speaking: false, levelAt: 0 });
+
+  /** Forward capture activity to the stealth overlay (transitions + a ~5Hz
+   *  level meter). The overlay goes idle on its own 1.2s timeout, so the
+   *  common case (silence) costs zero IPC. */
+  function emitOverlaySpeech(speaking: boolean, level: number) {
+    if (!nativeAvailable) return;
+    const now = Date.now();
+    const prev = overlaySpeech.current.speaking;
+    if (speaking === prev && now - overlaySpeech.current.levelAt < 200) return;
+    overlaySpeech.current = { speaking, levelAt: now };
+    void invoke("overlay_emit", {
+      event: "overlay://speaking",
+      payload: { speaking, level: Math.max(0, Math.min(1, level)) },
+    }).catch(() => {});
+  }
   useEffect(() => {
     const t = setInterval(() => {
       const now = Date.now();
@@ -523,6 +540,9 @@ const [overlayOn, setOverlayOn] = useState(false);
 
   function sendPcm(pcm: Int16Array, channel?: "mic" | "system") {
     const b64 = pcmToBase64(pcm);
+    // Browser-mic path has no suppressor speech flag — chunk flow itself is
+    // the activity signal (overlay idles out on its own timeout).
+    emitOverlaySpeech(true, 0.5);
     const frame = JSON.stringify({
       type: "audio.chunk",
       eventId: Math.random().toString(36).slice(2),
@@ -539,6 +559,9 @@ const [overlayOn, setOverlayOn] = useState(false);
     try {
       lastNativeBatchAt.current[batch.channel] = Date.now();
       watchdogWarned.current[batch.channel] = false;
+      // Speaking animation: suppressor speech flag + RMS → throttled
+      // overlay events. RMS ~0-4000 speech-scale → 0..1 level.
+      emitOverlaySpeech(batch.speech === true, (batch.rms ?? 0) / 4000);
       // Native batch is already 16kHz PCM base64 — forward without decode/re-encode
       const frame = JSON.stringify({
         type: "audio.chunk",

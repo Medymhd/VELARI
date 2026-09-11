@@ -179,14 +179,36 @@
       .confidence-meter.high > div { background: #34d399; }
       .confidence-meter.med > div { background: #fbbf24; }
       .confidence-meter.low > div { background: #f87171; }
+      /* Connection + capture status: LIVE green, reconnecting amber,
+         idle muted. The dot pulses on real audio activity. */
+      .status-text { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+      .status-text.live { color: #34d399; }
+      .status-text.reconnecting { color: #fbbf24; animation: blink 1.1s ease-in-out infinite; }
+      @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+      .dot.idle { background: #5b6070; box-shadow: none; }
+      .dot.speaking { animation: dotPulse 0.9s ease-in-out infinite; }
+      @keyframes dotPulse { 0%,100% { box-shadow: 0 0 6px rgba(52, 211, 153, 0.6); } 50% { box-shadow: 0 0 16px rgba(52, 211, 153, 1); } }
+      .level { width: 44px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; flex: none; }
+      .level > div { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, #34d399, var(--accent)); transition: width 0.12s linear; }
+      .icon-btn { font-size: 13px; padding: 4px 8px; }
+      /* Interviewer strip glows while audio is actively arriving. */
+      .qstrip.hearing { border-color: rgba(52, 211, 153, 0.55); box-shadow: 0 0 8px rgba(52, 211, 153, 0.18); }
+      /* Bigger, premium card type scale. */
+      .resp-q { font-size: 14.5px; }
+      .resp-body { font-size: 13px; line-height: 1.5; }
+      .resp-empty { font-size: 12.5px; }
     </style>
   </head>
   <body>
     <div class="panel hud">
       <header data-tauri-drag-region>
-        <span class="dot"></span><b>Live coach</b>
+        <span class="dot idle" id="statusDot"></span><b>Live coach</b>
+        <span class="status-text" id="statusText">connecting…</span>
+        <div class="level" id="levelMeter" title="Capture level"><div id="levelFill"></div></div>
         <div class="waveform" id="wave" style="margin-left: 8px; display: none;"><span></span><span></span><span></span><span></span><span></span></div>
         <span class="spacer" data-tauri-drag-region></span>
+        <button class="btn icon-btn" id="speakBtn" title="Speak the newest answer aloud">🔊</button>
+        <button class="btn icon-btn" id="copyBtn" title="Copy the newest answer">⧉</button>
         <button class="btn" id="hideBtn" title="Hide">✕</button>
       </header>
       <div id="resizeGrip" title="Drag to resize"></div>
@@ -251,6 +273,57 @@
         } catch { /* keep current palette */ }
       });
 
+      // ── Live status: connection + capture activity. The header answers
+      // "is it listening or dead?" at a glance — no trip to the app needed.
+      let wsConnected = false;
+      let hearTimer = 0;
+      let lastActivityAt = 0;
+      function renderStatus() {
+        const dot = $("statusDot");
+        const text = $("statusText");
+        if (!dot || !text) return;
+        if (!wsConnected) {
+          dot.className = "dot idle";
+          text.className = "status-text reconnecting";
+          text.textContent = "reconnecting…";
+          return;
+        }
+        const hearing = Date.now() - lastActivityAt < 1200;
+        dot.className = "dot" + (hearing ? " speaking" : "");
+        text.className = "status-text live";
+        text.textContent = hearing ? "listening" : "live";
+      }
+      function markHeard(level) {
+        lastActivityAt = Date.now();
+        const fill = $("levelFill");
+        if (fill && typeof level === "number") fill.style.width = `${Math.round(level * 100)}%`;
+        renderStatus();
+        window.clearTimeout(hearTimer);
+        hearTimer = window.setTimeout(() => {
+          renderStatus();
+          const fill2 = $("levelFill");
+          if (fill2) fill2.style.width = "0%";
+        }, 1200);
+      }
+      event.listen("overlay://connection", (e) => {
+        try {
+          wsConnected = e.payload?.connected === true;
+          renderStatus();
+        } catch { /* non-fatal */ }
+      });
+      event.listen("overlay://speaking", (e) => {
+        try {
+          // Real capture activity: suppressor speech flag + RMS level.
+          if (e.payload?.speaking === true) markHeard(Number(e.payload?.level ?? 0.5));
+          const strip = $("qstrip");
+          if (strip && e.payload?.speaking === true) {
+            strip.classList.add("hearing");
+            window.clearTimeout(strip.__hearT);
+            strip.__hearT = window.setTimeout(() => strip.classList.remove("hearing"), 900);
+          }
+        } catch { /* non-fatal */ }
+      });
+
       // EVENT LISTENERS FIRST — they must attach before anything else in this
       // block can throw. (A speak-button listener on a removed element used to
       // kill the script here and leave the overlay permanently deaf.)
@@ -263,8 +336,21 @@
       event.listen("overlay://transcript", (e) => {
         try {
         const { speaker, text, isFinal } = e.payload;
+        // Partial = audio streaming in: pulse the strip + status in both
+        // capture paths (native batches feed the speaking event; the browser
+        // mic fallback only surfaces as server partials).
+        if (!isFinal) {
+          markHeard(0.6);
+          const stripP = $("qstrip");
+          if (stripP && String(text ?? "").trim()) {
+            stripP.classList.add("hearing");
+            window.clearTimeout(stripP.__hearT);
+            stripP.__hearT = window.setTimeout(() => stripP.classList.remove("hearing"), 900);
+          }
+          setWave(true);
+          return;
+        }
         setWave(!isFinal);
-        if (!isFinal) return;
         const t = String(text ?? "").trim();
         if (!t) return;
         const isUser = speaker === "user";
@@ -399,11 +485,15 @@
         } else {
           stack.insertBefore(card, firstFramework ?? null); // head of framework zone
         }
-        while (stack.childElementCount > 3) {
+        while (stack.childElementCount > 8) {
+          // Capacity for a full conversation: keep 8 cards, always scrollable.
           // Never drop the card we just inserted — trim the oldest sibling.
           const victim = stack.lastElementChild === card ? card.previousElementSibling : stack.lastElementChild;
           if (victim) stack.removeChild(victim); else break;
         }
+        // New answer leads: scroll the stack back to the top so the green
+        // card is visible without hunting.
+        stack.scrollTop = 0;
         // Ring ranking: newest overall card is green, the rest blue/yellow —
         // with answer-first insertion, that is the speakable answer 95% of
         // the time.
@@ -732,6 +822,33 @@
           audio.play();
         } catch { webSpeak(speakText); }
       }
+
+      // Copy the newest card's answer to the clipboard — the fastest path to
+      // paste a point into chat without leaving the meeting.
+      $("copyBtn")?.addEventListener("click", async () => {
+        try {
+          const c = lastInsight;
+          if (!c) return;
+          const text = c.answer || [c.detected_question, ...(c.suggested_outline ?? []), ...(c.talking_points ?? [])].filter(Boolean).join("\n") || "";
+          if (!text) return;
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+          }
+          const btn = $("copyBtn");
+          if (btn) {
+            const prev = btn.textContent;
+            btn.textContent = "✓";
+            setTimeout(() => { if ($("copyBtn")) $("copyBtn").textContent = prev; }, 900);
+          }
+        } catch { /* clipboard unavailable */ }
+      });
       }
     </script>
   </body>

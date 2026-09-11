@@ -49,8 +49,8 @@ impl OverlayMode {
     }
 }
 
-const DEFAULT_WIDTH: f64 = 732.0; // reference OVERLAY_DEFAULT_WIDTH parity
-const DEFAULT_HEIGHT: f64 = 430.0;
+const DEFAULT_WIDTH: f64 = 820.0; // reference OVERLAY_DEFAULT_WIDTH parity
+const DEFAULT_HEIGHT: f64 = 560.0; // roomier: status header + up-next + scrollable cards
 const MARGIN: f64 = 24.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -445,7 +445,7 @@ pub async fn overlay_resize(app: AppHandle, vertical_id: String, height: f64) ->
     let Some(window) = app.get_webview_window(&label) else {
         return Err("overlay window not found".into());
     };
-    let h = height.clamp(220.0, 880.0); // headroom for the radar "Up next" section
+    let h = height.clamp(240.0, 1080.0); // room for ask box + up-next + 8 scrollable cards
     let size = window
         .inner_size()
         .map_err(|e| e.to_string())?;
@@ -466,7 +466,7 @@ pub async fn overlay_set_size(app: AppHandle, vertical_id: String, width: f64, h
         return Err("overlay window not found".into());
     };
     let w = width.clamp(360.0, 1200.0);
-    let h = height.clamp(240.0, 880.0);
+    let h = height.clamp(240.0, 1080.0);
     window
         .set_size(tauri::LogicalSize::new(w, h))
         .map_err(|e| e.to_string())
