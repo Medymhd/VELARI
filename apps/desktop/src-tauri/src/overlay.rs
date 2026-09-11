@@ -207,6 +207,26 @@ pub async fn overlay_cycle_position(app: AppHandle, vertical_id: String, width: 
     Ok(next.as_str().to_string())
 }
 
+/// Destroy and recreate the overlay window — recovery path when the renderer
+/// freezes (heartbeats stop arriving). Content backfills automatically via
+/// overlay://ready, and interaction state resets to the safe default
+/// (fully interactive, typing off), so a recovered window is never stuck
+/// click-through or unfocusable.
+#[tauri::command]
+pub async fn overlay_recover(app: AppHandle, vertical_id: String) -> Result<(), String> {
+    let label = format!("overlay:{}", vertical_id);
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.close();
+    }
+    // Let the old webview fully release before rebuilding on the same label.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    overlay_show(
+        app,
+        OverlayParams { mode: "stealth".into(), vertical_id, width: None, height: None },
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn overlay_hide(app: AppHandle, vertical_id: String) -> Result<(), String> {
     let label = format!("overlay:{}", vertical_id);

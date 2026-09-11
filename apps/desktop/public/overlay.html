@@ -191,6 +191,20 @@
       .level { width: 44px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; flex: none; }
       .level > div { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, #34d399, var(--accent)); transition: width 0.12s linear; }
       .icon-btn { font-size: 13px; padding: 4px 8px; }
+      .btn.icon-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 28px; height: 28px; padding: 0; flex: none;
+      }
+      .btn.icon-btn svg { width: 15px; height: 15px; display: block; }
+      .btn.icon-btn:active:not(:disabled) { transform: translateY(1px) scale(0.96); }
+      .btn.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      /* Hairline group dividers in the action cluster. */
+      .hdiv { width: 1px; align-self: stretch; margin: 2px 1px; background: var(--border); flex: none; }
+      /* Inline action feedback — every header button confirms or explains
+         here, so a failed backend call is never silent. */
+      .action-status { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; flex: none; }
+      .action-status.ok { color: #34d399; }
+      .action-status.err { color: #f87171; }
       /* Interviewer strip glows while audio is actively arriving. */
       .qstrip.hearing { border-color: rgba(52, 211, 153, 0.55); box-shadow: 0 0 8px rgba(52, 211, 153, 0.18); }
       /* Bigger, premium card type scale. */
@@ -207,9 +221,24 @@
         <div class="level" id="levelMeter" title="Capture level"><div id="levelFill"></div></div>
         <div class="waveform" id="wave" style="margin-left: 8px; display: none;"><span></span><span></span><span></span><span></span><span></span></div>
         <span class="spacer" data-tauri-drag-region></span>
-        <button class="btn icon-btn" id="speakBtn" title="Speak the newest answer aloud">🔊</button>
-        <button class="btn icon-btn" id="copyBtn" title="Copy the newest answer">⧉</button>
-        <button class="btn" id="hideBtn" title="Hide">✕</button>
+        <span class="action-status" id="actionStatus" role="status" aria-live="polite"></span>
+        <button class="btn icon-btn" id="askToggleBtn" title="Ask the coach (Ctrl+K)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+        <button class="btn icon-btn pt-off" id="ptBtn" title="Click-through OFF — the overlay is fully clickable. Click here (or Ctrl+Shift+B) to enable.">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3l7.5 18 2.5-7.5L21.5 11z"/></svg>
+        </button>
+        <span class="hdiv" aria-hidden="true"></span>
+        <button class="btn icon-btn" id="speakBtn" title="Speak the newest answer aloud">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+        </button>
+        <button class="btn icon-btn" id="copyBtn" title="Copy the newest answer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <span class="hdiv" aria-hidden="true"></span>
+        <button class="btn icon-btn" id="hideBtn" title="Hide overlay">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </header>
       <div id="resizeGrip" title="Drag to resize"></div>
       <div class="timing-bar"><div id="timingFill" style="width: 0%"></div></div>
@@ -262,8 +291,30 @@
           stack.style.border = "1px solid #f87171";
         }
       } else {
-      const { invoke, event } = window.__TAURI__;
+      // Tauri v2 exposes invoke under __TAURI__.core — there is NO top-level
+      // __TAURI__.invoke (that was v1). Destructuring it yields `undefined`
+      // and every backend call throws TypeError, which the per-button
+      // try/catch blocks then swallow: buttons that only touch the DOM
+      // (ask-box open, passthrough color) LOOK alive while hide/speak/copy/
+      // send silently die. Bind once, correctly, and never touch this line.
+      // If the bridge is ever missing, degrade to rejecting shims (never
+      // throw): every call site already funnels failures to the status line.
+      const event = window.__TAURI__.event ?? {
+        listen: () => Promise.resolve(() => {}),
+        emit: () => {},
+      };
+      const rawInvoke = window.__TAURI__.core?.invoke;
+      const invoke = typeof rawInvoke === "function"
+        ? rawInvoke.bind(window.__TAURI__.core)
+        : () => Promise.reject(new Error("invoke unavailable"));
       const $ = (id) => document.getElementById(id);
+      if (typeof rawInvoke !== "function" || !window.__TAURI__.event) {
+        const stack = document.getElementById("responses");
+        if (stack) {
+          stack.textContent = "Overlay bridge broken (invoke/event missing) — restart the app.";
+          stack.style.border = "1px solid #f87171";
+        }
+      }
 
       // Live theme switch: the Settings screen forwards the new palette here.
       event.listen("theme://changed", (e) => {
@@ -553,8 +604,10 @@
       $("hideBtn").addEventListener("click", async () => {
         try {
           await invoke("overlay_hide", { verticalId: "interview-intelligence" });
+          say("Hidden — Ctrl+Shift+O to bring back", "ok");
         } catch (e) {
           console.error("hide failed", e);
+          say("Hide failed — press Ctrl+Shift+O", "err");
         }
       });
 
@@ -580,26 +633,24 @@
         const status = $("askStatus");
         const text = (input?.value ?? "").trim();
         if (!text) return;
-        try {
-          // overlay://user_ask → main window listener (LiveSession) → WS
-          // coach.ask / coach.solve. MUST go through the Rust emitter —
-          // JS-to-JS cross-webview emit silently drops messages in the field
-          // (the reason asks got stuck on the overlay).
-          invoke("overlay_emit", { event: "overlay://user_ask", payload: { text, mode: askMode } });
-          if (input) input.value = "";
-          if (status) {
-            status.textContent = askMode === "solve"
-              ? "Sent to AI — result will appear above."
-              : "Sent to coach — answer will appear above.";
-            status.style.display = "block";
-            setTimeout(() => { if (status) status.style.display = "none"; }, 4000);
-          }
-        } catch (e) {
-          if (status) {
-            status.textContent = "Send failed — is the app running?";
-            status.style.display = "block";
-          }
-        }
+        // overlay://user_ask → main window listener (LiveSession) → WS
+        // coach.ask / coach.solve. MUST go through the Rust emitter —
+        // JS-to-JS cross-webview emit silently drops messages in the field
+        // (the reason asks got stuck on the overlay). The promise rejection
+        // is caught explicitly: a bare invoke() without await/catch is an
+        // UNHANDLED rejection, invisible to try/catch.
+        invoke("overlay_emit", { event: "overlay://user_ask", payload: { text, mode: askMode } })
+          .then(() => {
+            if (input) input.value = "";
+            say(askMode === "solve" ? "Sent to AI — result will appear above." : "Sent to coach — answer will appear above.", "ok");
+          })
+          .catch(() => {
+            say("Send failed — is the app running?", "err");
+            if (status) {
+              status.textContent = "Send failed — is the app running?";
+              status.style.display = "block";
+            }
+          });
       }
       $("askSendBtn")?.addEventListener("click", sendAsk);
       $("askInput")?.addEventListener("keydown", (e) => {
@@ -633,7 +684,9 @@
         try {
           const label = window.__TAURI__.window.getCurrentWindow().label;
           const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
-          void invoke("overlay_set_typing", { verticalId, enabled: show });
+          invoke("overlay_set_typing", { verticalId, enabled: show }).catch(() => {
+            say("Overlay control unreachable — restart the app", "err");
+          });
         } catch { /* label unavailable */ }
         if (show) {
           setTimeout(() => $("askInput")?.focus(), 30);
@@ -649,7 +702,7 @@
       function renderPassthrough() {
         const b = $("ptBtn");
         if (!b) return;
-        b.className = "btn " + (passthroughOn ? "pt-on" : "pt-off");
+        b.className = "btn icon-btn " + (passthroughOn ? "pt-on" : "pt-off");
         b.title = passthroughOn
           ? "Click-through ON — clicks pass to apps beneath. Click here (or Ctrl+Shift+B) to disable."
           : "Click-through OFF — the overlay is fully clickable. Click here (or Ctrl+Shift+B) to enable.";
@@ -658,25 +711,16 @@
         try {
           const label = window.__TAURI__.window.getCurrentWindow().label;
           const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
-          void invoke("overlay_set_passthrough", { verticalId, enabled });
+          invoke("overlay_set_passthrough", { verticalId, enabled }).catch(() => {
+            say("Passthrough unreachable — use Ctrl+Shift+B", "err");
+          });
         } catch { /* label unavailable */ }
       }
-      // Start collapsed but let the ✎ button open it. Add the toggle button
-      // to the header next to the hide button.
-      const askToggle = document.createElement("button");
-      askToggle.className = "btn";
-      askToggle.id = "askToggleBtn";
-      askToggle.title = "Ask the coach (Ctrl+K)";
-      askToggle.textContent = "✎";
-      $("hideBtn")?.parentElement?.insertBefore(askToggle, $("hideBtn"));
-      askToggle.addEventListener("click", () => toggleAsk());
-      // Click-through toggle sits between ✎ and ✕ — red by default.
-      const ptBtn = document.createElement("button");
-      ptBtn.className = "btn pt-off";
-      ptBtn.id = "ptBtn";
-      ptBtn.textContent = "●";
-      $("hideBtn")?.parentElement?.insertBefore(ptBtn, $("hideBtn"));
-      ptBtn.addEventListener("click", () => {
+      // Header buttons are static in the DOM (ask + passthrough live beside
+      // hide). Just wire them — no dynamic creation (duplicate IDs broke
+      // listeners once before).
+      $("askToggleBtn")?.addEventListener("click", () => toggleAsk());
+      $("ptBtn")?.addEventListener("click", () => {
         passthroughOn = !passthroughOn;
         renderPassthrough();
         setPassthrough(passthroughOn);
@@ -699,13 +743,46 @@
       // Height re-report when the ask box opens (ResizeObserver covers content growth).
       new MutationObserver(() => reportHeight()).observe($("askSec") ?? document.body, { attributes: true, attributeFilter: ["style"] });
 
-      // Auto-height (reference parity): report panel height so the window fits content.
-      function reportHeight() {
+      // ── Shared action feedback: every header button confirms or explains
+      // itself here, so a failed backend call is never silent again.
+      let sayTimer = 0;
+      function say(msg, kind) {
+        const el = $("actionStatus");
+        if (!el) return;
+        el.textContent = msg;
+        el.className = "action-status" + (kind === "ok" ? " ok" : kind === "err" ? " err" : "");
+        window.clearTimeout(sayTimer);
+        sayTimer = window.setTimeout(() => {
+          const s = $("actionStatus");
+          if (s) { s.textContent = ""; s.className = "action-status"; }
+        }, 2600);
+      }
+
+      // ── Heartbeat: proves the renderer is alive. The main window watches
+      // for gaps and rebuilds the overlay (overlay_recover) if it freezes.
+      // Cheap: one tiny Rust-emit IPC every 5s, no DOM work.
+      window.setInterval(() => {
+        try {
+          void invoke("overlay_emit", { event: "overlay://heartbeat", payload: { ts: Date.now() } });
+        } catch { /* emitter down — watchdog will notice the silence */ }
+      }, 5000);
+
+      // Auto-height (reference parity): report panel height so the window fits
+      // content. Debounced AND change-gated: without this, the resize observer
+      // + window resize echo each other into a CPU-spinning feedback loop
+      // that freezes the panel (the reported overlay freezes).
+      let lastReportedH = 0;
+      let lastReportAt = 0;
+      function reportHeight(force) {
         try {
           const label = window.__TAURI__.window.getCurrentWindow().label;
           const verticalId = label.startsWith("overlay:") ? label.slice(8) : "interview-intelligence";
-          const h = document.querySelector(".panel")?.getBoundingClientRect().height ?? 430;
-          void window.__TAURI__.core.invoke("overlay_resize", { verticalId, height: Math.ceil(h) });
+          const h = Math.ceil(document.querySelector(".panel")?.getBoundingClientRect().height ?? 430);
+          const now = Date.now();
+          if (!force && (Math.abs(h - lastReportedH) < 2 || now - lastReportAt < 150)) return;
+          lastReportedH = h;
+          lastReportAt = now;
+          void window.__TAURI__.core.invoke("overlay_resize", { verticalId, height: h });
         } catch { /* label unavailable */ }
       }
       // ── Corner grip resize: pointer-drag scales the window live. Once the
@@ -780,7 +857,7 @@
       // kill this script (that class of crash left the overlay deaf once).
       let speakText = "";
       $("speakBtn")?.addEventListener("click", async () => {
-        if (!lastInsight) return;
+        if (!lastInsight) { say("Nothing to speak yet", "err"); return; }
         const parts = [];
         if (lastInsight.answer) {
           if (lastInsight.question) parts.push(lastInsight.question);
@@ -791,9 +868,10 @@
           if (lastInsight.talking_points?.length) parts.push(lastInsight.talking_points.join(". "));
         }
         speakText = parts.join(". ");
-        if (!speakText) return;
+        if (!speakText) { say("Nothing to speak yet", "err"); return; }
 
         // Try Piper (premium local voice) → fallback to Web Speech API.
+        say("Speaking…", "ok");
         try {
           const b64 = await invoke("tts_speak", { text: speakText });
           playWav(b64);
@@ -824,30 +902,44 @@
       }
 
       // Copy the newest card's answer to the clipboard — the fastest path to
-      // paste a point into chat without leaving the meeting.
+      // paste a point into chat without leaving the meeting. The stealth
+      // window often can't take focus, which makes clipboard.writeText
+      // reject — on failure the text routes to the (focusable) main window
+      // via Rust emit, which writes it and confirms back.
       $("copyBtn")?.addEventListener("click", async () => {
         try {
           const c = lastInsight;
-          if (!c) return;
+          if (!c) { say("Nothing to copy yet", "err"); return; }
           const text = c.answer || [c.detected_question, ...(c.suggested_outline ?? []), ...(c.talking_points ?? [])].filter(Boolean).join("\n") || "";
-          if (!text) return;
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-          } else {
-            const ta = document.createElement("textarea");
-            ta.value = text;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand("copy");
-            ta.remove();
+          if (!text) { say("Nothing to copy yet", "err"); return; }
+          try {
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              throw new Error("no clipboard API");
+            }
+          } catch {
+            // Fallback: main window writes it (focusable) and confirms.
+            await invoke("overlay_emit", { event: "overlay://copy-request", payload: { text } });
+            say("Copying via app…", "ok");
+            return;
           }
+          say("Copied ✓", "ok");
           const btn = $("copyBtn");
           if (btn) {
-            const prev = btn.textContent;
-            btn.textContent = "✓";
-            setTimeout(() => { if ($("copyBtn")) $("copyBtn").textContent = prev; }, 900);
+            btn.classList.add("on");
+            setTimeout(() => $("copyBtn")?.classList.remove("on"), 900);
           }
-        } catch { /* clipboard unavailable */ }
+        } catch {
+          say("Copy failed", "err");
+        }
+      });
+      // Main-window confirmation for the routed copy path.
+      event.listen("overlay://copy-done", (e) => {
+        try {
+          if (e.payload?.ok === true) say("Copied ✓", "ok");
+          else say("Copy failed", "err");
+        } catch { /* non-fatal */ }
       });
       }
     </script>

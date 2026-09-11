@@ -423,6 +423,48 @@ const [overlayOn, setOverlayOn] = useState(false);
     return () => un?.();
   }, [nativeAvailable, sessionId, notify]);
 
+  // Overlay freeze watchdog: the overlay heartbeats every 5s; if beats stop
+  // for 15s while the overlay is visible, the renderer is wedged — rebuild
+  // it via Rust (content backfills automatically). Capped at 2 auto-recovers
+  // per mount so a broken loop can't thrash; also serves overlay copy
+  // requests (the stealth window often can't take clipboard focus).
+  const overlayBeatRef = useRef<{ last: number; recovers: number }>({ last: 0, recovers: 0 });
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let unBeat: UnlistenFn | null = null;
+    let unCopy: UnlistenFn | null = null;
+    void listen<{ ts: number }>("overlay://heartbeat", () => {
+      overlayBeatRef.current.last = Date.now();
+    }).then((u) => (unBeat = u));
+    void listen<{ text: string }>("overlay://copy-request", (e) => {
+      const text = (e.payload?.text ?? "").trim();
+      const done = (ok: boolean) => {
+        void invoke("overlay_emit", { event: "overlay://copy-done", payload: { ok } }).catch(() => {});
+      };
+      if (!text) { done(false); return; }
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
+      } else done(false);
+    }).then((u) => (unCopy = u));
+    const t = window.setInterval(() => {
+      const { last, recovers } = overlayBeatRef.current;
+      if (!overlayOnRef.current || last === 0 || recovers >= 2) return;
+      if (Date.now() - last > 15_000) {
+        overlayBeatRef.current.recovers = recovers + 1;
+        overlayBeatRef.current.last = Date.now();
+        notify("info", "Overlay froze — restarting it (answers are safe)");
+        void invoke("overlay_recover", { verticalId: "interview-intelligence" }).catch((err) =>
+          notify("error", `Overlay restart failed: ${errText(err)}`),
+        );
+      }
+    }, 12_000);
+    return () => {
+      window.clearInterval(t);
+      unBeat?.();
+      unCopy?.();
+    };
+  }, [nativeAvailable, notify]);
+
   // Stealth overlay forwarding is app-level now (lib/overlayForward.ts) —
   // it works from every screen and backfills the panel when it opens.
 
