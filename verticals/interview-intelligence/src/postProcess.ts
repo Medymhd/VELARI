@@ -94,12 +94,16 @@ export function sanitizeCoachFramework(fw: CoachFramework): CoachFramework | nul
     .map((p) => speakable(p, 2))
     .filter((p) => p.length > 2)
     .slice(0, 3);
+  // The conversational reply (greetings/clarifications/statements carry ONLY
+  // this; questions also embed it as the polished spoken answer).
+  const response = stripLeakage(fw.response ?? "").trim();
 
-  if (!question && outline.length === 0 && points.length === 0) return null;
+  if (!question && outline.length === 0 && points.length === 0 && !response) return null;
   return {
     detected_question: question,
     suggested_outline: outline,
     talking_points: points,
+    ...(response ? { response } : {}),
     confidence: fw.confidence,
     requires_user_review: fw.requires_user_review,
   };

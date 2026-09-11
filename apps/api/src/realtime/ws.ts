@@ -15,6 +15,7 @@ import {
   sanitizeCoachFramework,
   stripLeakage,
   isInterviewMode,
+  classifyUtterance,
   matchPreparedQa,
   type CoachFramework,
 } from "@app/vertical-interview-intelligence";
@@ -729,11 +730,15 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       // speakerphone/in-person session. Once loopback interviewer audio
       // appears, mic speech stops coaching (it's the user's own voice).
       if (speaker !== "user" || !sawInterviewer) {
+        // Utterance classification: real interviews are conversations —
+        // questions, greetings, clarifications and statements. Backchannel
+        // ("mm-hm", "okay") never wakes the coach; everything else does.
+        const utteranceType = classifyUtterance(text);
         // CACHE/PREDICTED FIRST — when the answer is already known (asked
         // before, or radar pre-computed), serve it in ~0ms: no draft claim,
-        // no coach call, no judge. This is the whole point of the session
-        // memory; the radar's pre-computed answers live here too.
-        if (!preparedServed && looksLikeQuestion(text) && answerCache.size() > 0) {
+        // no coach call, no judge. Questions only — greetings and statements
+        // are answered fresh every time, never cached.
+        if (!preparedServed && utteranceType === "question" && answerCache.size() > 0) {
           const pHash = activePrepHash || (activePrepHash = prepHashOf(prepContext, qaBank));
           try {
             const hit = await cachedLookup(text, { mode: sessionMode, length: sessionLength, prepHash: pHash });
@@ -793,15 +798,17 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         // — two concurrent calls trip free-tier 429s, which open breakers and
         // stall the whole pipeline (the regression this replaces). Skipped
         // entirely when the cache-first block above already served the answer.
-        if (looksLikeQuestion(text) && !preparedServed && maybeClaimDraft(text)) {
+        // Greetings/statements/clarifications go straight to the conversational
+        // framework coach — no verbatim draft needed for them.
+        if (utteranceType === "question" && !preparedServed && maybeClaimDraft(text)) {
           lastTriggerNorm = normalizeTrigger(text); // keep the coach gate in sync
           const tail = assembler.finals.slice(-6).map((s: { text: string }) => s.text).join("\n");
-          const draft = draftAutoAnswer(text, tail.slice(-2000))
+          const draft = draftAutoAnswer(text, tail.slice(-2000), utteranceType)
             .catch(() => {})
             .finally(() => { draftInFlight = false; });
           void Promise.race([draft, sleepMs(7_000)]).then(() => {
             if (coachBusy) scheduleCoaching(); // another framework is in flight — normal path
-            else void runCoach();
+            else void runCoach(utteranceType);
           });
         } else {
           scheduleCoaching();
@@ -1128,17 +1135,18 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
      *  first. */
     let lastParallelDraftAt = 0;
 
-    function scheduleCoaching(): void {
-      // Junk-trigger gate: backchannel fragments ("Love", "About yourself.")
-      // and exact consecutive repeats burn provider quota and end as scaffolds
-      // on rate-limited tiers. A subsequent substantive final re-schedules;
-      // an in-flight coach call is left running (its context is still valid).
+    function scheduleCoaching(utteranceType?: ReturnType<typeof classifyUtterance>): void {
+      // Conversation gate: backchannel ("mm-hm", "okay", short fragments)
+      // never coaches; greetings, clarifications, statements and questions
+      // always do — a greeting is not junk and must be answered in kind.
       const latest = String(assembler.finals.at(-1)?.text ?? "").trim();
+      const type = utteranceType ?? (latest ? classifyUtterance(latest) : "statement");
+      if (type === "backchannel") return;
       if (latest) {
         const norm = latest.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-        const words = norm.split(" ").filter(Boolean);
-        if (words.length < 3 && !latest.includes("?")) return;
-        if (norm && norm === lastTriggerNorm) return;
+        // Consecutive identical triggers burn quota — except greetings, which
+        // are answered fresh every time (a repeated hello is never a repeat).
+        if (norm && norm === lastTriggerNorm && type !== "greeting") return;
         lastTriggerNorm = norm;
       }
       // Preempt immediately: whatever the coach is crafting is already stale —
@@ -1147,11 +1155,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
       coachAbort = null;
       if (coachTimer) clearTimeout(coachTimer);
       coachTimer = setTimeout(() => {
-        void runCoach();
+        void runCoach(type);
       }, COACH_CONFIRM_MS);
     }
 
-    async function runCoach(): Promise<void> {
+    async function runCoach(utteranceType?: ReturnType<typeof classifyUtterance>): Promise<void> {
       if (!workspaceCfg) return;
       coachAbort?.abort();
       const abort = new AbortController();
@@ -1177,6 +1185,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
         roleDescription: personaContext,
         prepContext,
         length: sessionLength,
+        utteranceType,
       });
       if (styleProfile) {
         messages[0] = { ...messages[0]!, content: withStyle(messages[0]!.content as string, styleProfile) };
@@ -1251,7 +1260,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
             taskClass: "live_coach",
             privacyMode: workspaceCfg.privacyMode,
             messages,
-            maxTokens: 512,
+            maxTokens: 900,
             signal: abort.signal,
             onDelta: () => {
               if (workingEmitted || abort.signal.aborted) return;
@@ -1270,10 +1279,11 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
                 detected_question: { type: "string" },
                 suggested_outline: { type: "array", items: { type: "string" } },
                 talking_points: { type: "array", items: { type: "string" } },
+                response: { type: "string" },
                 confidence: { type: "number" },
                 requires_user_review: { type: "boolean" },
               },
-              required: ["detected_question", "suggested_outline", "talking_points", "confidence", "requires_user_review"],
+              required: ["detected_question", "suggested_outline", "talking_points", "response", "confidence", "requires_user_review"],
             },
           } as never,
         );
@@ -1323,6 +1333,12 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
           }
           contentJson = sanitized as unknown as Record<string, unknown>;
           if (sttConfidence !== undefined) contentJson.stt_confidence = sttConfidence;
+          // The conversational reply is the speakable answer — mapping it to
+          // `answer` makes every downstream path work unchanged: overlay
+          // answer cards, Live panel, speak-aloud, cache seeding.
+          if (typeof contentJson.response === "string" && (contentJson.response as string).trim()) {
+            contentJson.answer = (contentJson.response as string).trim();
+          }
 
           // Auto-answer judge: filter weak/repetitive output before UI + persistence.
           // Manual asks (bypass) skip the duplicate gate — the user explicitly
@@ -1521,7 +1537,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
     /** Question dedup for auto-answer — one draft per question text. */
     let lastAnsweredQuestion = "";
 
-    async function draftAutoAnswer(question: string, transcriptTail: string): Promise<void> {
+    async function draftAutoAnswer(question: string, transcriptTail: string, utteranceType: ReturnType<typeof classifyUtterance> = "question"): Promise<void> {
       if (!workspaceCfg) return;
       const key = question.toLowerCase().replace(/[^a-z0-9 ]/g, "").slice(0, 120);
       if (key === lastAnsweredQuestion) return;
@@ -1543,6 +1559,7 @@ export function registerRealtime(app: FastifyInstance, db: PrismaClient): void {
               rollingSummary,
               mode: sessionMode,
               length: sessionLength,
+              utteranceType,
               // The verbatim answer is what the interviewer hears — it must
               // speak AS the candidate their CV describes (CV > JD > notes).
               // Trimmed to the head budget: CV leads the joined string so it

@@ -9,6 +9,9 @@ export interface CoachFramework {
   detected_question: string;
   suggested_outline: string[];
   talking_points: string[];
+  /** The full natural conversational reply — greetings, clarifications and
+   *  statements carry ONLY this (no framework); questions carry it too. */
+  response?: string;
   confidence: number;
   requires_user_review: boolean;
 }
@@ -43,6 +46,14 @@ export function judgeSuggestion(
 
   if (typeof fw.confidence !== "number" || fw.confidence < minConfidence) {
     return { accept: false, reason: "low_confidence" };
+  }
+  // Conversational replies (greetings, clarifications, statements) carry a
+  // full `response` with an empty skeleton — accept them on their own.
+  const hasResponse = typeof fw.response === "string" && fw.response.trim().length > 0;
+  if (hasResponse) {
+    if (fw.detected_question) state.lastQuestion = fw.detected_question;
+    state.lastAcceptedAtMs = atMs;
+    return { accept: true, reason: "ok" };
   }
   if (!Array.isArray(fw.suggested_outline) || fw.suggested_outline.length === 0) {
     return { accept: false, reason: "empty_outline" };
